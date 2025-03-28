@@ -1,4 +1,4 @@
-# AI_MAL: Advanced Intelligent Machine-Aided Learning for Network Penetration
+# AI_MAL: Artificial Intelligence Machine-Aided Learning for Network Penetration
 
 AI_MAL is a cutting-edge autonomous network reconnaissance and exploitation system that combines adaptive Nmap scanning with Ollama AI and Metasploit to automatically discover networks, identify vulnerabilities, and exploit them without human intervention.
 
