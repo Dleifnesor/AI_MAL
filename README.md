@@ -37,8 +37,8 @@ For detailed installation instructions, see [INSTALL.md](INSTALL.md).
 ### Quick Install
 
 ```bash
-git clone https://github.com/yourusername/AI_MAL.git
-cd AI_MAL
+git clone https://github.com/Dleifnesor/AIMAL.git
+cd AIMAL
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -79,8 +79,8 @@ sudo msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
 
 5. Install AI_MAL as a system command:
 ```bash
-sudo ln -s $(pwd)/AI_MAL /usr/local/bin/AI_MAL
-chmod +x AI_MAL
+sudo ln -s $(pwd)/AIMAL /usr/local/bin/AIMAL
+chmod +x AIMAL
 ```
 
 ## Usage
