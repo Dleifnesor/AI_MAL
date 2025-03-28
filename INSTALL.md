@@ -26,7 +26,7 @@ cd AI_MAL
 
 2. Run the installation script:
 ```bash
-chmod +x install.sh
+sudo chmod +x install.sh
 sudo ./install.sh
 ```
 
