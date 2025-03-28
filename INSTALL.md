@@ -20,7 +20,7 @@ Kali Linux comes with most of the required tools pre-installed, but we'll need t
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/AI_MAL.git
+git clone https://github.com/Dleifnesor/AI_MAL.git
 cd AI_MAL
 ```
 
