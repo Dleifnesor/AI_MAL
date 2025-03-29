@@ -90,7 +90,7 @@ install_python_deps() {
     
     # Install system packages via apt
     apt update
-    apt install -y python3-nmap python3-requests python3-netifaces python3-ipaddress
+    apt install -y python3-nmap python3-requests python3-netifaces
     
     # Install additional packages via pip with --break-system-packages flag
     pip install pymetasploit3 --break-system-packages
