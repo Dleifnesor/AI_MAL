@@ -142,18 +142,56 @@ EOL
 install_ollama() {
     echo "Installing Ollama..."
     
-    # Download and install Ollama
-    curl -fsSL https://ollama.com/install.sh | sh
+    # Check if Ollama is already installed
+    if command_exists ollama; then
+        echo "Ollama is already installed."
+    else
+        # Download and install Ollama
+        echo "Downloading and installing Ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh
+    fi
     
-    # Start Ollama service
-    ollama serve &
+    # Check if Ollama is running, start if it's not
+    if ! pgrep -x "ollama" > /dev/null; then
+        echo "Starting Ollama service..."
+        ollama serve &
+        
+        # Wait for Ollama service to start
+        echo "Waiting for Ollama service to start..."
+        sleep 5
+    else
+        echo "Ollama service is already running."
+    fi
     
-    # Pull required models
-    echo "Pulling required Ollama models..."
-    ollama pull llama3
-    ollama pull qwen2.5-coder:7b
+    # Check if Qwen2.5-coder:7b model is already installed
+    if ollama list | grep -q "qwen2.5-coder:7b"; then
+        echo "Qwen2.5-coder:7b model is already installed."
+    else
+        # Pull Qwen2.5-coder:7b model
+        echo "Pulling Qwen2.5-coder:7b model (this may take some time)..."
+        ollama pull qwen2.5-coder:7b
+    fi
     
-    echo "Ollama installed successfully."
+    # Check if llama3 model is already installed
+    if ollama list | grep -q "llama3"; then
+        echo "llama3 backup model is already installed."
+    else
+        # Pull llama3 as a backup model
+        echo "Pulling llama3 as a backup model..."
+        ollama pull llama3
+    fi
+    
+    # Test that Qwen model is working
+    echo "Testing Qwen2.5-coder:7b model..."
+    ollama run qwen2.5-coder:7b "Hello, can you write a short Python function to check if a number is prime?" > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo "Qwen2.5-coder:7b model is working correctly!"
+    else
+        echo "Warning: Qwen2.5-coder:7b model test failed. You may need to manually test it after installation."
+    fi
+    
+    echo "Ollama setup completed successfully."
 }
 
 # Function to configure AI_MAL
@@ -180,8 +218,13 @@ configure_ai_mal() {
     # Create directory for generated scripts
     mkdir -p generated_scripts
     
-    # Create system-wide link
+    # Create system-wide link with absolute path
+    echo "Creating system-wide symlink..."
+    rm -f /usr/local/bin/AI_MAL
     ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
+    
+    # Create a separate symlink for the Python script if needed
+    ln -sf "$INSTALL_DIR/adaptive_nmap_scan.py" /usr/local/bin/adaptive_nmap_scan.py
     
     echo "AI_MAL configured successfully."
 }

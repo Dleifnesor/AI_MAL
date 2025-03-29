@@ -36,18 +36,12 @@ chmod +x install.sh
 This script will:
 - Install all required dependencies system-wide
 - Configure Metasploit and its database
-- Install Ollama and download required models
+- Install Ollama and download the Qwen2.5-coder:7b model (default)
+- Fix line ending issues (converts Windows CRLF to Unix LF)
 - Create the necessary directories
 - Set up AI_MAL system-wide
-- Fix line ending issues (converts Windows CRLF to Unix LF)
 
-### 4. Pull the Qwen2.5-coder:7b Model
-
-After installation, pull the Qwen2.5-coder:7b model:
-
-```bash
-ollama pull qwen2.5-coder:7b
-```
+The installation script automatically pulls and tests the Qwen2.5-coder:7b model, which is now the default model for AI_MAL.
 
 ## Manual Installation
 

@@ -298,7 +298,7 @@ class AdaptiveNmapScanner:
     def __init__(
         self,
         target=None,
-        ollama_model="llama3",
+        ollama_model="qwen2.5-coder:7b",
         max_iterations=3,
         continuous=False,
         delay=2,
@@ -1452,8 +1452,8 @@ def main():
     parser = argparse.ArgumentParser(description="Adaptive Nmap scanner with Ollama and Metasploit integration")
     # Optional target
     parser.add_argument("target", nargs="?", help="Target IP address or hostname (optional if --auto-discover is used)")
-    parser.add_argument("--model", default="llama3", 
-                        help="Ollama model to use (default: llama3, recommended: qwen2.5-coder:7b, llama3)")
+    parser.add_argument("--model", default="qwen2.5-coder:7b",
+                        help="Ollama model to use (default: qwen2.5-coder:7b, alternatives: llama3)")
     parser.add_argument("--iterations", type=int, default=3, help="Maximum number of scan iterations (default: 3)")
     parser.add_argument("--continuous", action="store_true", help="Run in continuous mode until manually stopped")
     parser.add_argument("--delay", type=int, default=2, help="Delay in seconds between scans (default: 2)")
