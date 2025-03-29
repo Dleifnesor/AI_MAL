@@ -34,57 +34,6 @@ Unlike basic scanning tools or simple automation scripts, AI_MAL brings intellig
 
 For detailed installation instructions, see [INSTALL.md](INSTALL.md).
 
-### Quick Install
-
-```bash
-git clone https://github.com/yourusername/AI_MAL.git
-cd AI_MAL
-chmod +x install.sh
-sudo ./install.sh
-```
-
-### Manual Installation
-
-1. Install required Python packages:
-```bash
-pip install python-nmap requests pymetasploit3 netifaces ipaddress
-```
-
-2. Ensure Nmap is installed (should be pre-installed on Kali):
-```bash
-sudo apt update
-sudo apt install nmap
-```
-
-3. Install and configure Ollama:
-```bash
-# Download and install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull the llama3 model (or another compatible model)
-ollama pull llama3
-```
-
-4. Set up Metasploit (should be pre-installed on Kali):
-```bash
-# Start PostgreSQL service for Metasploit
-sudo systemctl start postgresql
-
-# Initialize the Metasploit database
-sudo msfdb init
-
-# Start msfrpcd service for API access
-sudo msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
-```
-
-5. Install AI_MAL as a system command:
-```bash
-sudo ln -s $(pwd)/AI_MAL /usr/local/bin/AI_MAL
-chmod +x AI_MAL
-```
-
-## Usage
-
 ### Basic Usage
 
 ```bash
