@@ -1,4 +1,4 @@
-# AI_MAL: Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration
+# AI_MAL: Autonomous Infiltration Method Analysis Library
 
 AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
 
