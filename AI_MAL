@@ -1,0 +1,303 @@
+#!/bin/bash
+
+# AI_MAL: Advanced Intelligent Machine-Aided Learning for Network Penetration
+# Bash wrapper script for adaptive_nmap_scan.py
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Banner
+display_banner() {
+echo -e "${RED}"
+echo "                               @@@@@@@@                         "
+echo "                              @@@@@@@@@@                        "
+echo "                              @@@     @@@                       "
+echo "                             @@@@     @@@                       "
+echo "                             @@@@     @@@                       "
+echo "                             @@@@     @@@                       "
+echo "                             @@@@     @@@                       "
+echo "                       @@@@@@@@@@     @@@                       "
+echo "                      @@@@@@@@@@@     @@@@@@@@@                 "
+echo "                     @@@     @@@@     @@@@@@@@@@@               "
+echo "                     @@@      @@@     @@@@    @@@               "
+echo "                     @@@      @@@     @@@      @@@@@@@@@        "
+echo "        @@@@@@@@@    @@@      @@@     @@@      @@@@@@@@@@       "
+echo "       @@@@@@@@@@@@  @@@      @@@     @@@      @@@     @@@      "
+echo "      @@@@@       @@@@@@      @@@     @@@      @@@     @@@      "
+echo "        @@@@        @@@@      @@@     @@@      @@@     @@@      "
+echo "         @@@@@       @@@@     @@@     @@@      @@@     @@@      "
+echo "           @@@@       @@@                              @@@      "
+echo "            @@@@                                       @@@      "
+echo "              @@@@                                     @@@      "
+echo "                @@@@                                   @@@      "
+echo "                  @@@@                                 @@@      "
+echo "                    @@@@@@                             @@@      "
+echo "                      @@@@                           @@@@@      "
+echo "                      @@@                          @@@@@@       "
+echo "                      @@@@                       @@@@@@         "
+echo "                       @@@                         @@@          "
+echo "                        @@@@                     @@@@           "
+echo "                         @@@@@@@@@@@@@@@@@@@@@@@@@@@            "
+echo "                           @@@@@@@@@@@@@@@@@@@@@@               "
+    echo " Advanced Intelligent Machine-Aided Learning"
+    echo " for Network Penetration"
+    echo -e " v${VERSION}${NC}"
+    echo ""
+}
+
+# Help function
+display_help() {
+    display_banner
+    echo -e "${BLUE}USAGE:${NC}"
+    echo -e "  AI_MAL [options] [target]"
+    echo ""
+    echo -e "${BLUE}OPTIONS:${NC}"
+    echo "  -h, --help                Show this help message and exit"
+    echo "  -v, --version             Show version information"
+    echo ""
+    echo -e "${YELLOW}Target Options:${NC}"
+    echo "  -t, --target TARGET       Target IP address or hostname"
+    echo "  --auto-discover           Automatically discover network and hosts"
+    echo "  --scan-all                Scan all discovered hosts"
+    echo "  --interface INTERFACE     Network interface to use for discovery"
+    echo "  --network NETWORK         Specific network to scan (CIDR notation)"
+    echo ""
+    echo -e "${YELLOW}Scan Options:${NC}"
+    echo "  -m, --model MODEL         Ollama model to use (default: llama3)"
+    echo "                            Recommended models: qwen2.5-coder:7b, llama3"
+    echo "  -i, --iterations NUM      Maximum number of scan iterations (default: 3)"
+    echo "  -c, --continuous          Run in continuous mode until manually stopped"
+    echo "  -d, --delay SECONDS       Delay in seconds between scans (default: 2)"
+    echo "  --stealth                 Enable stealth mode for scans to avoid detection"
+    echo ""
+    echo -e "${YELLOW}Metasploit Options:${NC}"
+    echo "  --msf                     Enable Metasploit integration"
+    echo "  --exploit                 Automatically attempt exploitation using Metasploit"
+    echo "  --workspace WORKSPACE     Name of Metasploit workspace (default: adaptive_scan)"
+    echo "  --auto-script             Auto-generate and run Metasploit resource scripts"
+    echo ""
+    echo -e "${YELLOW}Script Generation Options:${NC}"
+    echo "  --custom-scripts          Enable AI-powered custom script generation"
+    echo "  --script-type TYPE        Type of script to generate (bash, python, ruby)"
+    echo "  --execute-scripts         Automatically execute generated scripts (use with caution)"
+    echo ""
+    echo -e "${YELLOW}Advanced Options:${NC}"
+    echo "  --full-auto               Full autonomous mode"
+    echo "  --quiet                   Reduce verbosity of output"
+    echo "  --debug                   Enable debug logging"
+    echo "  --host-timeout TIMEOUT    Timeout in seconds for host discovery (default: 1)"
+    echo ""
+    echo -e "${BLUE}EXAMPLES:${NC}"
+    echo "  AI_MAL --auto-discover"
+    echo "  AI_MAL --target 192.168.1.1 --stealth --msf"
+    echo "  AI_MAL --full-auto --scan-all"
+    echo "  AI_MAL --auto-discover --continuous --msf --exploit"
+    echo "  AI_MAL --target 192.168.1.1 --custom-scripts --script-type python"
+    echo "  AI_MAL --auto-discover --model qwen2.5-coder:7b --msf"
+    echo ""
+    echo -e "${BLUE}SECURITY NOTICE:${NC}"
+    echo "  This tool is designed for legitimate security testing and network"
+    echo "  administration purposes only. Always ensure you have proper authorization"
+    echo "  before scanning or exploiting any network or system."
+    echo ""
+}
+
+# Version information
+display_version() {
+    echo "AI_MAL version ${VERSION}"
+    echo "Python script: $(basename ${PYTHON_SCRIPT})"
+    echo ""
+}
+
+# Check if Python script exists
+if [ ! -f "${PYTHON_SCRIPT}" ]; then
+    echo -e "${RED}ERROR: Cannot find the Python script at ${PYTHON_SCRIPT}${NC}"
+    echo "Make sure you're running this script from the correct directory."
+    exit 1
+fi
+
+# Check Python version
+python_version=$(python3 --version 2>&1 | awk '{print $2}')
+if [ -z "$python_version" ]; then
+    echo -e "${RED}ERROR: Python 3 is not installed or not in path${NC}"
+    echo "Please install Python 3.6+ to run this tool."
+    exit 1
+fi
+
+# No arguments, display help
+if [ $# -eq 0 ]; then
+    display_banner
+    echo -e "${YELLOW}No arguments provided. Use -h or --help for usage information.${NC}"
+    echo ""
+    echo -e "Basic usage: ${GREEN}AI_MAL --auto-discover${NC}"
+    echo ""
+    exit 0
+fi
+
+# Parse special help and version arguments
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    display_help
+    exit 0
+fi
+
+if [[ "$1" == "-v" || "$1" == "--version" ]]; then
+    display_version
+    exit 0
+fi
+
+# Check if running as root when needed
+if [[ "$*" == *"--auto-discover"* || "$*" == *"--scan-all"* || "$*" == *"--stealth"* || "$*" == *"--execute-scripts"* ]] && [ "$EUID" -ne 0 ]; then
+    echo -e "${YELLOW}WARNING: You may need root privileges for some operations.${NC}"
+    echo -e "Consider running with: ${GREEN}sudo AI_MAL $*${NC}"
+    echo ""
+    # Continue anyway - it's just a warning
+fi
+
+# Additional warning for script execution
+if [[ "$*" == *"--execute-scripts"* ]]; then
+    echo -e "${RED}CAUTION: You have enabled automatic execution of AI-generated scripts.${NC}"
+    echo -e "${RED}This could potentially run unpredictable code on your system.${NC}"
+    echo ""
+    read -p "Are you sure you want to continue? (y/n) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Operation aborted."
+        exit 1
+    fi
+fi
+
+# Pass all arguments to the Python script
+display_banner
+echo -e "${GREEN}Starting AI_MAL...${NC}"
+echo ""
+
+# Build the command
+COMMAND="python3 ${PYTHON_SCRIPT}"
+
+# Special argument handling and conversion
+args=()
+target=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        # Target options
+        -t|--target)
+            target="$2"
+            shift 2
+            ;;
+        --auto-discover|--scan-all)
+            args+=("$1")
+            shift
+            ;;
+        --interface|--network)
+            args+=("$1" "$2")
+            shift 2
+            ;;
+        
+        # Scan options
+        -m|--model)
+            args+=("--model" "$2")
+            shift 2
+            ;;
+        -i|--iterations)
+            args+=("--iterations" "$2")
+            shift 2
+            ;;
+        -c|--continuous)
+            args+=("--continuous")
+            shift
+            ;;
+        -d|--delay)
+            args+=("--delay" "$2")
+            shift 2
+            ;;
+        --stealth)
+            args+=("--stealth")
+            shift
+            ;;
+            
+        # Metasploit options
+        --msf)
+            args+=("--msf")
+            shift
+            ;;
+        --exploit)
+            args+=("--exploit")
+            shift
+            ;;
+        --workspace)
+            args+=("--workspace" "$2")
+            shift 2
+            ;;
+        --auto-script)
+            args+=("--auto-script")
+            shift
+            ;;
+            
+        # Script generation options
+        --custom-scripts)
+            args+=("--custom-scripts")
+            shift
+            ;;
+        --script-type)
+            args+=("--script-type" "$2")
+            shift 2
+            ;;
+        --execute-scripts)
+            args+=("--execute-scripts")
+            shift
+            ;;
+            
+        # Advanced options
+        --full-auto)
+            args+=("--full-auto")
+            shift
+            ;;
+        --quiet)
+            args+=("--quiet")
+            shift
+            ;;
+        --debug)
+            args+=("--debug")
+            shift
+            ;;
+        --host-timeout)
+            args+=("--host-timeout" "$2")
+            shift 2
+            ;;
+            
+        # Default case - treat as target if it doesn't start with -
+        *)
+            if [[ "$1" != -* && -z "$target" ]]; then
+                target="$1"
+            else
+                args+=("$1")  # Pass through any unrecognized options
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Add target as first positional argument if specified
+if [[ -n "$target" ]]; then
+    final_args=("$target" "${args[@]}")
+else
+    final_args=("${args[@]}")
+fi
+
+# Execute the command
+echo -e "${BLUE}Executing: ${COMMAND} ${final_args[*]}${NC}"
+echo -e "${YELLOW}Press Ctrl+C to stop the scan${NC}"
+echo ""
+${COMMAND} "${final_args[@]}"
+
+# Exit with the same status as the Python script
+exit $? 
