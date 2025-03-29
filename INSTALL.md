@@ -11,7 +11,7 @@ This guide provides step-by-step instructions for installing and configuring AI_
 - Ollama
 - Root/sudo privileges
 
-## Automated Installation (Recommended)
+# Automated Installation (Recommended)
 
 ### 1. Switch to Root User
 
@@ -39,6 +39,7 @@ This script will:
 - Install Ollama and download required models
 - Create the necessary directories
 - Set up AI_MAL system-wide
+- Fix line ending issues (converts Windows CRLF to Unix LF)
 
 ### 4. Pull the Qwen2.5-coder:7b Model
 
@@ -62,13 +63,30 @@ sudo su
 
 ```bash
 # Install system packages
-apt install python3-nmap python3-requests python3-netifaces python3-ipaddress
+apt install -y python3-nmap python3-requests python3-netifaces dos2unix
 
 # Install additional packages via pip with --break-system-packages flag
 pip install pymetasploit3 --break-system-packages
 ```
 
-### 3. Configure Metasploit
+### 3. Fix Line Ending Issues
+
+Windows-style line endings can cause issues on Linux. Fix them with:
+
+```bash
+# Install dos2unix if not already done
+apt install -y dos2unix
+
+# Convert line endings
+dos2unix adaptive_nmap_scan.py
+dos2unix AI_MAL
+
+# Make scripts executable
+chmod +x adaptive_nmap_scan.py
+chmod +x AI_MAL
+```
+
+### 4. Configure Metasploit
 
 ```bash
 # Start PostgreSQL service
@@ -82,7 +100,7 @@ msfdb init
 msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
 ```
 
-### 4. Create a Systemd Service for Metasploit RPC (Optional but Recommended)
+### 5. Create a Systemd Service for Metasploit RPC (Optional but Recommended)
 
 Create a service file for Metasploit RPC:
 
@@ -115,7 +133,7 @@ systemctl enable msfrpcd.service
 systemctl start msfrpcd.service
 ```
 
-### 5. Install and Configure Ollama
+### 6. Install and Configure Ollama
 
 ```bash
 # Download and install Ollama
@@ -128,7 +146,7 @@ ollama serve &
 ollama pull qwen2.5-coder:7b
 ```
 
-### 6. Configure AI_MAL
+### 7. Configure AI_MAL
 
 ```bash
 # Make scripts executable
@@ -176,13 +194,26 @@ docker run --net=host --privileged -v $(pwd)/scripts:/opt/ai_mal/generated_scrip
 
 ## Troubleshooting
 
+### Line Ending Issues
+
+If you see the error `bad interpreter: /bin/bash^M: no such file or directory`:
+
+```bash
+# Fix line endings
+apt install -y dos2unix
+dos2unix AI_MAL
+dos2unix adaptive_nmap_scan.py
+chmod +x AI_MAL
+chmod +x adaptive_nmap_scan.py
+```
+
 ### Python Package Issues
 
 If you encounter issues with Python packages:
 
 ```bash
 # Reinstall system packages
-apt install --reinstall python3-nmap python3-requests python3-netifaces python3-ipaddress
+apt install --reinstall python3-nmap python3-requests python3-netifaces
 
 # Reinstall additional packages
 pip install pymetasploit3 --break-system-packages

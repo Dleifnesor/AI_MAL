@@ -1,12 +1,132 @@
-# AI_MAL: Advanced Intelligent Machine-Aided Learning for Network Penetration
+# AI_MAL: Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration
 
-AI_MAL is a cutting-edge autonomous network reconnaissance and exploitation system that combines adaptive Nmap scanning with Ollama AI and Metasploit to automatically discover networks, identify vulnerabilities, and exploit them without human intervention.
+AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.6%2B-blue" alt="Python 3.6+">
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
-  <img src="https://img.shields.io/badge/Platform-Linux-orange" alt="Platform: Linux">
-</p>
+## Features
+
+- **AI-Powered Adaptive Scanning**: Uses Ollama to analyze scan results and adapt scanning strategies in real-time
+- **Network Discovery**: Automatically discovers hosts and networks without manual target specification
+- **Stealth Mode**: Various techniques to evade detection while scanning
+- **Metasploit Integration**: Automatic exploitation of vulnerabilities through Metasploit
+- **Resource Script Generation**: Generates custom Metasploit resource scripts based on scan results
+- **Custom Script Generation**: Uses Ollama to generate and optionally execute custom scripts based on reconnaissance data
+- **Continuous Monitoring**: Option to continuously scan and monitor for changes in network topology
+
+## Requirements
+
+- Kali Linux (recommended) or other Linux distribution
+- Python 3.6+
+- Nmap
+- Metasploit Framework
+- Ollama (with recommended models: qwen2.5-coder:7b or llama3)
+
+## Installation
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+
+For quick installation on Kali Linux:
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/AI_MAL.git
+cd AI_MAL
+
+# Switch to root user (recommended)
+sudo su
+
+# Run the installation script
+chmod +x install.sh
+./install.sh
+```
+
+### Common Installation Issues
+
+If you encounter the error `bad interpreter: /bin/bash^M: no such file or directory` when running the AI_MAL script, it's due to Windows-style line endings (CRLF). Fix it with:
+
+```bash
+# Install dos2unix if not already installed
+apt install -y dos2unix
+
+# Convert line endings
+dos2unix AI_MAL
+dos2unix adaptive_nmap_scan.py
+
+# Make scripts executable
+chmod +x AI_MAL
+chmod +x adaptive_nmap_scan.py
+```
+
+## Usage
+
+Basic usage:
+
+```bash
+AI_MAL --target 192.168.1.0/24
+```
+
+Auto-discovery mode:
+
+```bash
+AI_MAL --auto-discover
+```
+
+Full autonomous mode:
+
+```bash
+AI_MAL --full-auto
+```
+
+Run continuously in stealth mode:
+
+```bash
+AI_MAL --auto-discover --stealth --continuous
+```
+
+Using the Qwen2.5-coder:7b model:
+
+```bash
+AI_MAL --auto-discover --model qwen2.5-coder:7b --msf
+```
+
+For all available options:
+
+```bash
+AI_MAL --help
+```
+
+## Running in Docker
+
+Build the Docker image:
+
+```bash
+docker build -t ai_mal .
+```
+
+Run with auto-discovery:
+
+```bash
+docker run --net=host --privileged -v $(pwd)/scripts:/opt/ai_mal/generated_scripts -it ai_mal --auto-discover
+```
+
+Target a specific host:
+
+```bash
+docker run --net=host --privileged -it ai_mal --target 192.168.1.100 --msf --exploit
+```
+
+Full autonomous mode:
+
+```bash
+docker run --net=host --privileged -it ai_mal --full-auto
+```
+
+## Security Notice
+
+This tool is intended for legitimate security testing and educational purposes only. Unauthorized scanning and exploitation of systems is illegal and unethical. Always obtain proper authorization before testing any systems.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Key Features
 
@@ -33,6 +153,57 @@ Unlike basic scanning tools or simple automation scripts, AI_MAL brings intellig
 ## Installation on Kali Linux
 
 For detailed installation instructions, see [INSTALL.md](INSTALL.md).
+
+### Quick Install
+
+```bash
+git clone https://github.com/yourusername/AI_MAL.git
+cd AI_MAL
+chmod +x install.sh
+sudo ./install.sh
+```
+
+### Manual Installation
+
+1. Install required Python packages:
+```bash
+pip install python-nmap requests pymetasploit3 netifaces ipaddress
+```
+
+2. Ensure Nmap is installed (should be pre-installed on Kali):
+```bash
+sudo apt update
+sudo apt install nmap
+```
+
+3. Install and configure Ollama:
+```bash
+# Download and install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull the llama3 model (or another compatible model)
+ollama pull llama3
+```
+
+4. Set up Metasploit (should be pre-installed on Kali):
+```bash
+# Start PostgreSQL service for Metasploit
+sudo systemctl start postgresql
+
+# Initialize the Metasploit database
+sudo msfdb init
+
+# Start msfrpcd service for API access
+sudo msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
+```
+
+5. Install AI_MAL as a system command:
+```bash
+sudo ln -s $(pwd)/AI_MAL /usr/local/bin/AI_MAL
+chmod +x AI_MAL
+```
+
+## Usage
 
 ### Basic Usage
 
@@ -145,24 +316,6 @@ Quickly identify and exploit vulnerable machines in Capture The Flag competition
 
 ```bash
 AI_MAL --auto-discover --full-auto --scan-all --delay 1
-```
-
-### Running in Docker
-
-For isolated and portable execution:
-
-```bash
-# Build the Docker image
-docker build -t ai_mal .
-
-# Run with auto-discovery
-docker run --net=host --privileged -v $(pwd)/scripts:/opt/ai_mal/generated_scripts -it ai_mal --auto-discover
-
-# Target a specific host
-docker run --net=host --privileged -it ai_mal --target 192.168.1.100 --msf --exploit
-
-# Use full autonomous mode
-docker run --net=host --privileged -it ai_mal --full-auto
 ```
 
 ## Comparison to Other Tools

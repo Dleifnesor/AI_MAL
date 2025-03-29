@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # ASCII Art Banner
-echo -e "\n                                                     
+echo -e "\n                               @@@@@@@@                         
                               @@@@@@@@@@                        
                               @@@     @@@                       
                              @@@@     @@@                       
@@ -159,6 +159,19 @@ install_ollama() {
 # Function to configure AI_MAL
 configure_ai_mal() {
     echo "Configuring AI_MAL..."
+    
+    # Convert Windows line endings to Unix
+    echo "Converting line endings..."
+    if command_exists dos2unix; then
+        dos2unix adaptive_nmap_scan.py
+        dos2unix AI_MAL
+    else
+        echo "dos2unix not found, using tr command instead"
+        tr -d '\r' < adaptive_nmap_scan.py > adaptive_nmap_scan.py.unix
+        mv adaptive_nmap_scan.py.unix adaptive_nmap_scan.py
+        tr -d '\r' < AI_MAL > AI_MAL.unix
+        mv AI_MAL.unix AI_MAL
+    fi
     
     # Make scripts executable
     chmod +x adaptive_nmap_scan.py
