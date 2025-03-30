@@ -9,9 +9,33 @@ NC='\033[0m' # No Color
 
 VERSION="1.0.0"
 
-# Get the directory of this script
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
+# Find the right Python script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+INSTALL_DIR="/opt/ai_mal"
+
+if [ -f "${SCRIPT_DIR}/adaptive_nmap_scan.py" ]; then
+    # Running from the same directory
+    PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
+    VENV_DIR="${SCRIPT_DIR}/venv"
+elif [ -f "${INSTALL_DIR}/adaptive_nmap_scan.py" ]; then
+    # Running from installed location
+    PYTHON_SCRIPT="${INSTALL_DIR}/adaptive_nmap_scan.py"
+    VENV_DIR="${INSTALL_DIR}/venv"
+else
+    echo -e "${RED}ERROR: Cannot find the adaptive_nmap_scan.py script${NC}"
+    exit 1
+fi
+
+# Verify virtual environment exists
+if [ ! -d "$VENV_DIR" ]; then
+    echo -e "${RED}Error: Python virtual environment not found at $VENV_DIR${NC}"
+    echo -e "Please reinstall AI_MAL or create the virtual environment manually:"
+    echo -e "  cd $INSTALL_DIR"
+    echo -e "  python3 -m venv venv"
+    echo -e "  source venv/bin/activate"
+    echo -e "  pip install nmap requests pymetasploit3 psutil netifaces"
+    exit 1
+fi
 
 # Check if running as root (required for many scans)
 if [ "$EUID" -ne 0 ]; then
@@ -349,9 +373,9 @@ fi
 
 # Execute the Python script with all arguments passed to this script
 if [ "${display_version}" = true ]; then
-    python3 "${PYTHON_SCRIPT}" --version
+    ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" --version
 else
-    python3 "${PYTHON_SCRIPT}" "$@"
+    ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" "$@"
 fi
 
 # Clean up temp file

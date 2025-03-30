@@ -31,27 +31,31 @@ For a quick setup, follow these steps:
    ollama pull qwen2.5-coder:7b
    ```
 
-4. Install required Python modules:
-   ```bash
-   pip install pymetasploit3 netifaces
-   ```
-
-Note: If you encounter a "module 'pymetasploit3' has no attribute 'msfrpc'" error when using MSF integration, try reinstalling the module with:
-```bash
-pip uninstall -y pymetasploit3
-pip install --force-reinstall pymetasploit3
-```
-
-The installation script will set up the necessary dependencies and configure the system for AI_MAL.
+The installation script will:
+- Set up a Python virtual environment with all required packages
+- Configure the Metasploit RPC service
+- Install and configure Ollama
+- Install the AI_MAL tool system-wide
 
 ## Manual Installation
 
 If you prefer to install components manually, follow these steps:
 
-### 1. Install Python Dependencies
+### 1. Install Python Dependencies in a Virtual Environment
 
 ```bash
-pip install nmap netifaces requests psutil pymetasploit3
+# Create installation directory
+sudo mkdir -p /opt/ai_mal
+
+# Create and activate virtual environment
+sudo python3 -m venv /opt/ai_mal/venv
+source /opt/ai_mal/venv/bin/activate
+
+# Install Python packages
+pip install nmap requests pymetasploit3 psutil netifaces
+
+# Deactivate when done
+deactivate
 ```
 
 ### 2. Configure Metasploit
@@ -60,7 +64,7 @@ Set up the Metasploit RPC service:
 
 ```bash
 # Create a systemd service for msfrpcd
-cat > /etc/systemd/system/msfrpcd.service << EOL
+sudo bash -c 'cat > /etc/systemd/system/msfrpcd.service << EOL
 [Unit]
 Description=Metasploit rpc daemon
 After=network.target
@@ -75,11 +79,12 @@ ExecStart=/usr/bin/msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOL'
 
 # Enable and start the service
-systemctl enable msfrpcd.service
-systemctl start msfrpcd.service
+sudo systemctl daemon-reload
+sudo systemctl enable msfrpcd.service
+sudo systemctl start msfrpcd.service
 ```
 
 ### 3. Install and Configure Ollama
@@ -88,32 +93,53 @@ systemctl start msfrpcd.service
 # Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Start the Ollama service and keep it running
-systemctl enable ollama.service    # If it's installed as a systemd service
-systemctl start ollama.service     # If it's installed as a systemd service
+# Start the Ollama service
+sudo systemctl enable ollama.service    # If it's installed as a systemd service
+sudo systemctl start ollama.service     # If it's installed as a systemd service
 
-# Alternative: Start Ollama manually if not using systemd
+# OR start Ollama manually if not using systemd
 nohup ollama serve > /var/log/ollama.log 2>&1 &
 ```
 
-Then pull the Qwen2.5-coder:7b model:
+Then pull the required models:
 
 ```bash
 # Verify Ollama is running before pulling models
 curl -s http://localhost:11434/
 
-# Pull models once Ollama is confirmed running
+# Pull models
 ollama pull qwen2.5-coder:7b
 ollama pull llama3  # Backup model for systems with limited resources
+```
+
+### 4. Install AI_MAL Files
+
+```bash
+# Copy files to installation directory
+sudo cp adaptive_nmap_scan.py /opt/ai_mal/
+sudo cp AI_MAL /opt/ai_mal/
+
+# Fix line endings if needed
+sudo dos2unix /opt/ai_mal/adaptive_nmap_scan.py
+sudo dos2unix /opt/ai_mal/AI_MAL
+
+# Make executable
+sudo chmod +x /opt/ai_mal/adaptive_nmap_scan.py
+sudo chmod +x /opt/ai_mal/AI_MAL
+
+# Create symlink
+sudo ln -sf /opt/ai_mal/AI_MAL /usr/local/bin/AI_MAL
 ```
 
 ## Verifying Installation
 
 Verify that all components are working correctly:
 
-1. Check Python dependencies:
+1. Check Python dependencies (using the virtual environment):
    ```bash
-   python3 -c "import nmap, netifaces, requests, pymetasploit3; print('Dependencies OK')"
+   source /opt/ai_mal/venv/bin/activate
+   python -c "import nmap, netifaces, requests, pymetasploit3; print('Dependencies OK')"
+   deactivate
    ```
 
 2. Verify Ollama installation:
@@ -200,9 +226,43 @@ You can always run AI_MAL without waiting for a system restart - it will detect 
 
 ## Troubleshooting
 
+### Virtual Environment Issues
+
+- If you see errors related to missing Python modules:
+  ```bash
+  # Recreate the virtual environment
+  sudo rm -rf /opt/ai_mal/venv
+  sudo python3 -m venv /opt/ai_mal/venv
+  sudo /opt/ai_mal/venv/bin/pip install nmap requests pymetasploit3 psutil netifaces
+  ```
+
+- If you get permission errors with the virtual environment:
+  ```bash
+  # Fix ownership
+  sudo chown -R root:root /opt/ai_mal/venv
+  sudo chmod -R 755 /opt/ai_mal/venv
+  ```
+
 ### Ollama Model Problems
 - If Ollama fails to load models, ensure you have enough RAM (8GB+ recommended).
 - For systems with limited RAM, use the smaller `llama3` model instead of `qwen2.5-coder:7b`.
+
+### Python Installation Errors
+
+- If you encounter "externally-managed-environment" errors:
+  ```bash
+  # This happens in newer Python versions that are managed by the system package manager
+  # Add the --break-system-packages flag to pip commands:
+  sudo pip3 install --break-system-packages <package-name>
+  ```
+
+- If packages fail to install:
+  ```bash
+  # Try installing dev packages that might be needed for compilation
+  sudo apt install -y python3-dev build-essential
+  sudo pip3 install --break-system-packages --upgrade pip setuptools wheel
+  sudo pip3 install --break-system-packages <package-name>
+  ```
 
 ### Ollama Connection Issues
 - If you see "Cannot connect to Ollama API" or similar errors:
@@ -239,8 +299,8 @@ You can always run AI_MAL without waiting for a system restart - it will detect 
   ```
 - If you encounter a "module 'pymetasploit3' has no attribute 'msfrpc'" error, reinstall the module:
   ```bash
-  pip uninstall -y pymetasploit3
-  pip install --force-reinstall pymetasploit3
+  sudo pip3 uninstall -y pymetasploit3
+  sudo pip3 install --break-system-packages --force-reinstall pymetasploit3
   ```
 
 ### Permission Issues

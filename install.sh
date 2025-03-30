@@ -78,22 +78,30 @@ mkdir -p $INSTALL_DIR
 
 echo -e "\n${GREEN}Step 1: Installing system dependencies...${NC}"
 apt update
-apt install -y python3 python3-pip nmap metasploit-framework dos2unix netifaces
+# Install required system packages
+apt install -y python3 python3-pip python3-venv nmap metasploit-framework dos2unix
 
-echo -e "\n${GREEN}Step 2: Installing Python dependencies...${NC}"
-# First try to uninstall existing pymetasploit3 to ensure clean installation
-pip3 uninstall -y pymetasploit3
-pip3 install nmap requests pymetasploit3 psutil netifaces
+echo -e "\n${GREEN}Step 2: Setting up Python virtual environment...${NC}"
+# Create virtual environment
+python3 -m venv $INSTALL_DIR/venv
+
+# Activate virtual environment
+source $INSTALL_DIR/venv/bin/activate
+
+# Install Python dependencies in the virtual environment
+echo -e "Installing Python packages in virtual environment..."
+pip install --upgrade pip
+pip install nmap requests pymetasploit3 psutil netifaces
 
 # Verify pymetasploit3 installation
 echo -e "\n${YELLOW}Verifying pymetasploit3 installation...${NC}"
-if ! python3 -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
+if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
   echo -e "${RED}Warning: pymetasploit3 not properly installed. Trying alternative method...${NC}"
-  pip3 uninstall -y pymetasploit3
-  pip3 install --force-reinstall pymetasploit3
+  pip uninstall -y pymetasploit3
+  pip install --force-reinstall pymetasploit3
   
   # Verify again
-  if ! python3 -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
+  if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
     echo -e "${RED}Error: Could not properly install pymetasploit3.${NC}"
     echo "You may need to manually fix this issue before using Metasploit integration."
   else
@@ -102,6 +110,9 @@ if ! python3 -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetaspl
 else
   echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
 fi
+
+# Deactivate virtual environment
+deactivate
 
 echo -e "\n${GREEN}Step 3: Setting up Metasploit...${NC}"
 # Start PostgreSQL and initialize Metasploit database
