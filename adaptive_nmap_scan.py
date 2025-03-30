@@ -26,6 +26,12 @@ import stat
 import signal
 import pymetasploit3
 
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 from typing import List, Dict, Any, Optional, Tuple
 
 # Set up logging
@@ -631,10 +637,16 @@ class AdaptiveNmapScanner:
         self.metasploit = None
         
         # Network discovery
-        if auto_discover:
-            self.network_discovery = NetworkDiscovery(interface=interface)
+        if auto_discover or network or interface:
+            self.network_discovery = NetworkDiscovery(
+                interface=interface,
+                network=network,
+                timeout=host_timeout
+            )
         else:
-            self.network_discovery = None
+            # Initialize with a minimal NetworkDiscovery for ping functionality
+            # even when auto-discovery is not enabled
+            self.network_discovery = NetworkDiscovery(timeout=host_timeout)
         
         # Create terminal viewer
         self.viewer = TerminalViewer(quiet=quiet)
@@ -1141,6 +1153,12 @@ class AdaptiveNmapScanner:
         self.viewer.header(f"DENIAL OF SERVICE ATTACK: {target}", "=")
         
         try:
+            # Check if network_discovery is properly initialized
+            if not self.network_discovery:
+                self.logger.error("Network discovery is not initialized")
+                self.viewer.error("Cannot perform DoS attack: Network discovery is not initialized")
+                return False
+                
             # First, check if the target is still up
             if not self.network_discovery.ping_host(target):
                 self.logger.warning(f"Target {target} is already unreachable")
@@ -1426,6 +1444,13 @@ class AdaptiveNmapScanner:
             # Display start banner
             scan_type = "Full-Auto" if self.continuous else f"Limited ({self.max_iterations} iterations)"
             self.viewer.display_start_banner(self.target or "Auto-discovery", scan_type, self.ollama_model)
+            
+            # Check if system has enough resources for Ollama
+            if HAS_PSUTIL:
+                mem_gb = psutil.virtual_memory().total / (1024 * 1024 * 1024)
+                if mem_gb < 8:
+                    self.viewer.warning(f"System has only {mem_gb:.1f}GB RAM. Ollama may be slow or unresponsive.")
+                    self.viewer.warning("Consider using a smaller model or increasing system resources.")
             
             # Set up Metasploit if enabled
             if self.msf_integration:
@@ -1835,42 +1860,62 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
 
     def call_ollama(self, prompt):
         """
-        Call the Ollama API with a prompt and return the response
+        Call the Ollama API to generate a response
         
         Args:
             prompt (str): The prompt to send to Ollama
             
         Returns:
-            str: The response text from Ollama
+            str: The generated response
         """
         try:
-            self.logger.debug(f"Sending prompt to Ollama model {self.ollama_model}")
+            # Check if Ollama process is running
+            if os.name == 'posix':  # Unix/Linux
+                ollama_running = subprocess.run(["pgrep", "ollama"], stdout=subprocess.PIPE).returncode == 0
+            else:  # Windows and others
+                ollama_running = "ollama" in subprocess.run(["tasklist"], stdout=subprocess.PIPE, text=True).stdout.lower()
+                
+            if not ollama_running:
+                self.logger.warning("Ollama process not detected, service may not be running")
+                self.viewer.warning("Ollama service not detected - scanning may be limited")
             
-            # Make API request to local Ollama instance
-            response = requests.post(
-                'http://localhost:11434/api/generate',
-                json={
-                    'model': self.ollama_model,
-                    'prompt': prompt,
-                    'stream': False
-                },
-                timeout=60
-            )
+            # Configure API timeout based on available system memory
+            timeout = 60  # Default timeout
+            if HAS_PSUTIL:
+                total_mem = psutil.virtual_memory().total / (1024 * 1024 * 1024)  # GB
+                if total_mem < 12:  # Less than 12GB RAM
+                    timeout = 120  # Longer timeout for systems with less RAM
+                    self.logger.info(f"Limited system memory detected ({total_mem:.1f}GB), increasing Ollama timeout to {timeout}s")
             
-            # Check for success
+            ollama_url = f"http://localhost:11434/api/generate"
+            payload = {
+                "model": self.ollama_model,
+                "prompt": prompt,
+                "stream": False
+            }
+            
+            self.logger.debug(f"Calling Ollama API with model: {self.ollama_model}")
+            self.viewer.status(f"Getting AI recommendations using {self.ollama_model}...")
+            
+            response = requests.post(ollama_url, json=payload, timeout=timeout)
+            
             if response.status_code == 200:
-                data = response.json()
-                return data.get('response', '')
+                result = response.json()
+                return result.get("response", "")
             else:
-                self.logger.error(f"Error from Ollama API: {response.status_code} - {response.text}")
+                self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
                 return ""
                 
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error connecting to Ollama API: {str(e)}")
-            self.logger.debug(traceback.format_exc())
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Ollama API request timed out after {timeout}s. This may be due to limited system resources.")
+            self.viewer.warning(f"Ollama timeout - try with a smaller model or increase system resources")
+            return ""
+        except requests.exceptions.ConnectionError:
+            self.logger.error("Failed to connect to Ollama API. Make sure Ollama is running.")
+            self.viewer.error("Cannot connect to Ollama service. Check if it's running with 'pgrep ollama'")
             return ""
         except Exception as e:
-            self.logger.error(f"Unexpected error in Ollama API call: {str(e)}")
+            self.logger.error(f"Error calling Ollama: {str(e)}")
             self.logger.debug(traceback.format_exc())
             return ""
 

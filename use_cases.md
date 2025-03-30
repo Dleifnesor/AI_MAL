@@ -282,6 +282,53 @@ AI_MAL --version
 
 **Use case**: Checking the current version of the tool.
 
+## System Resource and Memory Considerations
+
+AI_MAL's performance is heavily influenced by available system resources, particularly when using AI models through Ollama.
+
+### Memory Requirements
+
+| Configuration | RAM Required | Performance | Recommended Model |
+|---------------|-------------|-------------|-------------------|
+| Optimal | 16GB+ | Full capabilities | qwen2.5-coder:7b |
+| Standard | 8-16GB | Good performance | qwen2.5-coder:7b |
+| Minimal | 4-8GB | Limited performance | llama3 |
+| VM/Container | Varies | Depends on allocation | llama3 |
+
+### Low Memory Systems
+
+If you're running AI_MAL on a system with limited memory (under 8GB RAM), consider these options:
+
+```bash
+# Use the lightweight model
+AI_MAL --auto-discover --model llama3
+
+# Reduce the number of iterations to minimize resource usage
+AI_MAL 192.168.1.100 --iterations 2 --model llama3
+
+# Disable features that require more memory
+AI_MAL 192.168.1.100 --msf  # Without --custom-scripts or --exploit
+```
+
+**Use case**: Running AI_MAL on virtual machines, containers, or older hardware with limited resources.
+
+### Resource-Related Issues and Solutions
+
+1. **Ollama Timeouts**: If you see "Error connecting to Ollama API: Read timed out" errors:
+   - Switch to a lighter model: `--model llama3`
+   - The tool automatically increases timeout on low-memory systems
+   - Close other memory-intensive applications
+   
+2. **Slow Performance**: If scanning progresses very slowly:
+   - Use the `--iterations` parameter to limit the number of scans
+   - Increase the `--delay` between scans to allow the system to recover
+   - Disable features like `--custom-scripts` that require significant resources
+
+3. **Out of Memory Errors**: If the system runs out of memory:
+   - Consider adding swap space to your system
+   - Run with the `--quiet` option to reduce output processing overhead
+   - Restart AI_MAL and limit the scan scope with specific targets
+
 ## Advanced Use Case Examples
 
 ### Basic Network Reconnaissance
@@ -338,4 +385,11 @@ This integrates with Metasploit in a specific workspace and generates scripts bu
 ```bash
 AI_MAL 192.168.1.100 --dos --stealth --iterations 2 --delay 10
 ```
-This performs targeted DoS testing against a specific host with a stealthy approach, attempting 2 iterations with 10-second delays between attempts to evaluate the effectiveness of security controls. 
+This performs targeted DoS testing against a specific host with a stealthy approach, attempting 2 iterations with 10-second delays between attempts to evaluate the effectiveness of security controls.
+
+### Low Memory System Scan
+
+```bash
+AI_MAL --auto-discover --model llama3 --stealth --iterations 2 --msf --quiet
+```
+This runs a focused scan with the lightweight llama3 model, limiting to 2 iterations and reduced output to minimize memory usage while still leveraging Metasploit for results analysis. 

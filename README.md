@@ -20,6 +20,37 @@ AI_MAL combines the power of AI with network scanning and penetration testing to
 - Metasploit Framework
 - Ollama (with recommended model: qwen2.5-coder:7b)
 
+(The install.sh script will autoinstall MSF and ollama)
+
+## System Requirements and Memory Considerations
+
+AI_MAL relies on Ollama to run AI models, which have different memory requirements:
+
+- **Recommended**: 16GB+ RAM for optimal performance with all models
+- **Minimum**: 8GB RAM (with some performance limitations)
+- **Low Memory Systems**: 4-8GB RAM (use lightweight model options)
+
+For systems with limited resources:
+
+1. Use the `--model llama3` option instead of the default qwen2.5-coder:7b model:
+   ```bash
+   AI_MAL --auto-discover --model llama3
+   ```
+
+2. Close other memory-intensive applications while running AI_MAL
+
+3. If you experience timeouts or performance issues:
+   - The tool automatically increases timeouts on low-memory systems
+   - Consider adding a swap file to your system:
+     ```bash
+     sudo fallocate -l 4G /swapfile
+     sudo chmod 600 /swapfile
+     sudo mkswap /swapfile
+     sudo swapon /swapfile
+     ```
+
+4. For virtual machines, consider allocating more RAM if possible
+
 ## Installation
 
 See [INSTALL.md](INSTALL.md) for detailed installation instructions.
@@ -28,7 +59,7 @@ For quick installation on Kali Linux:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/AI_MAL.git
+git clone https://github.com/Dleifnesor/AI_MAL.git
 cd AI_MAL
 
 # Switch to root user (recommended)

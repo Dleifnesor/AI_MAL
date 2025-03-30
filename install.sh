@@ -93,7 +93,7 @@ install_python_deps() {
     apt install -y python3-nmap python3-requests python3-netifaces
     
     # Install additional packages via pip with --break-system-packages flag
-    pip install pymetasploit3 --break-system-packages
+    pip install pymetasploit3 psutil --break-system-packages
     
     if [ $? -eq 0 ]; then
         echo "Python dependencies installed successfully."
@@ -310,6 +310,20 @@ echo -e "Please note that you may need to start the Metasploit RPC service manua
 echo -e "${YELLOW}sudo msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553${NC}"
 echo -e "To check if the service is already running: ${YELLOW}netstat -tuln | grep 55553${NC}"
 echo ""
+
+# Check system memory and provide recommendations for low-memory systems
+MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
+if [ "$MEM_GB" -lt 8 ]; then
+    echo -e "${YELLOW}LOW MEMORY WARNING:${NC}"
+    echo -e "Your system has ${MEM_GB}GB of RAM, which may cause performance issues with Ollama models."
+    echo -e "Recommendations for low-memory systems:"
+    echo -e "  - Use a smaller model with --model llama3 instead of qwen2.5-coder"
+    echo -e "  - Increase Ollama timeout in the code if you experience timeouts"
+    echo -e "  - Consider adding a swap file if you have less than 8GB RAM"
+    echo -e "  - Close other memory-intensive applications before running AI_MAL"
+    echo -e ""
+fi
+
 echo -e "${RED}IMPORTANT SECURITY NOTICE:${NC}"
 echo -e "This tool is designed for legitimate security testing only."
 echo -e "Always ensure you have proper authorization before scanning or exploiting any network or system."
