@@ -24,6 +24,7 @@ import multiprocessing
 import tempfile
 import stat
 import signal
+import pymetasploit3
 
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -739,53 +740,118 @@ class AdaptiveNmapScanner:
         self.running = False
     
     def setup_metasploit(self):
-        """Set up Metasploit connection and workspace."""
+        """Set up the Metasploit connection."""
+        if not self.msf_integration:
+            return
+            
+        self.logger.info("Setting up Metasploit connection...")
+        self.viewer.status("Connecting to Metasploit RPC daemon...")
+        
+        # Default connection parameters
+        host = "127.0.0.1"
+        port = 55553
+        user = "msf"
+        password = "msf_password"
+        
+        # Try to connect to msfrpcd
         try:
-            # Import pymetasploit3 only when needed
-            from pymetasploit3.msfrpc import MsfRpcClient
+            # Set a timeout for connection attempts
+            connection_timeout = 10  # seconds
             
-            logger.info("Connecting to Metasploit RPC server...")
+            # Display connection info
+            self.viewer.status(f"Trying to connect to msfrpcd at {host}:{port} (timeout: {connection_timeout}s)")
             
-            # Try to connect to Metasploit RPC
+            # Try to connect with timeout
+            import socket
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(connection_timeout)
+            
             try:
-                self.metasploit = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
-                logger.info("Connected to Metasploit RPC server")
-            except:
-                # If connection fails, try to start msfrpcd
-                logger.info("Could not connect to msfrpcd. Starting msfrpcd service...")
-                subprocess.run(
-                    ["msfrpcd", "-P", "msf_password", "-S", "-a", "127.0.0.1", "-p", "55553"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    start_new_session=True
+                self.metasploit = pymetasploit3.msfrpc.MsfRpcClient(
+                    password,
+                    server=host,
+                    port=port,
+                    ssl=True
                 )
+                self.logger.info("Successfully connected to msfrpcd")
+                self.viewer.success("Connected to Metasploit RPC daemon")
+            except Exception as e:
+                self.logger.info(f"Could not connect to msfrpcd. Error: {str(e)}")
+                self.viewer.warning(f"Could not connect to msfrpcd: {str(e)}")
                 
-                # Wait for service to start
-                time.sleep(5)
+                # Try to start msfrpcd service
+                self.viewer.status("Starting msfrpcd service...")
+                try:
+                    # Try both systemd and direct command approaches
+                    if os.path.exists("/etc/systemd/system/msfrpcd.service"):
+                        subprocess.run(["systemctl", "start", "msfrpcd.service"], 
+                                      check=False, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                        self.viewer.status("Waiting for msfrpcd service to start (via systemd)...")
+                    else:
+                        # Start msfrpcd directly
+                        subprocess.Popen(
+                            ["msfrpcd", "-P", password, "-S", "-a", host, "-p", str(port)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True
+                        )
+                        self.viewer.status("Waiting for msfrpcd service to start (direct launch)...")
+                    
+                    # Wait for service to start with timeout and feedback
+                    start_time = time.time()
+                    max_wait_time = 15  # seconds
+                    
+                    while time.time() - start_time < max_wait_time:
+                        try:
+                            # Show countdown
+                            remaining = max_wait_time - int(time.time() - start_time)
+                            self.viewer.status(f"Connecting to msfrpcd, timeout in {remaining}s...")
+                            
+                            # Try to connect
+                            self.metasploit = pymetasploit3.msfrpc.MsfRpcClient(
+                                password,
+                                server=host,
+                                port=port,
+                                ssl=True
+                            )
+                            self.logger.info("Successfully connected to msfrpcd after starting service")
+                            self.viewer.success("Connected to Metasploit RPC daemon")
+                            break
+                        except Exception:
+                            # Wait a bit before trying again
+                            time.sleep(1)
+                    
+                    # If we still couldn't connect after the timeout
+                    if not self.metasploit:
+                        raise Exception(f"Could not connect to msfrpcd after {max_wait_time} seconds")
+                        
+                except Exception as start_error:
+                    self.logger.error(f"Failed to start msfrpcd service: {str(start_error)}")
+                    self.viewer.error(f"Failed to start msfrpcd service. Try manually with:\nsudo msfrpcd -P {password} -S -a {host} -p {port}")
+                    self.viewer.error("Then restart AI_MAL")
+                    self.msf_integration = False
+                    return
+            finally:
+                # Restore original socket timeout
+                socket.setdefaulttimeout(original_timeout)
                 
-                # Try to connect again
-                self.metasploit = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
-                logger.info("Connected to Metasploit RPC server")
-            
-            # Create or select workspace
-            if self.msf_workspace not in self.metasploit.db.workspaces.list:
-                logger.info(f"Creating Metasploit workspace: {self.msf_workspace}")
-                self.metasploit.db.workspaces.add(self.msf_workspace)
-            
-            logger.info(f"Using Metasploit workspace: {self.msf_workspace}")
-            self.metasploit.db.workspaces.set(self.msf_workspace)
-            
-            return True
-        except ImportError:
-            logger.error("pymetasploit3 not installed. Metasploit integration will not work.")
-            logger.error("Install with: pip install pymetasploit3")
-            self.msf_integration = False
-            return False
+            # Create a workspace if it doesn't exist
+            if self.metasploit:
+                workspaces = self.metasploit.db.workspaces.list
+                if self.msf_workspace not in [w['name'] for w in workspaces]:
+                    self.logger.info(f"Creating Metasploit workspace: {self.msf_workspace}")
+                    self.metasploit.db.workspaces.add(self.msf_workspace)
+                    
+                # Select the workspace
+                self.metasploit.db.workspaces.set(self.msf_workspace)
+                self.logger.info(f"Using Metasploit workspace: {self.msf_workspace}")
+                self.viewer.status(f"Using Metasploit workspace: {self.msf_workspace}")
+        
         except Exception as e:
-            logger.error(f"Error setting up Metasploit: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error setting up Metasploit: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error setting up Metasploit: {str(e)}")
             self.msf_integration = False
-            return False
 
     def process_results_with_metasploit(self, result):
         """Process the Nmap scan results with Metasploit."""

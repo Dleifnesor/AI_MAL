@@ -135,6 +135,27 @@ EOL
     systemctl enable msfrpcd.service
     systemctl start msfrpcd.service
     
+    # Check if service started successfully
+    echo "Verifying msfrpcd service..."
+    sleep 3  # Give it a moment to start
+    
+    if systemctl is-active --quiet msfrpcd.service; then
+        echo "msfrpcd service is running."
+    else
+        echo "WARNING: msfrpcd service failed to start. Starting manually..."
+        # Try starting it manually as fallback
+        msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 &
+        sleep 2
+        
+        # Check if the port is now listening
+        if netstat -tuln | grep -q ":55553"; then
+            echo "msfrpcd started successfully on port 55553."
+        else
+            echo "WARNING: Could not start msfrpcd service. You may need to start it manually with:"
+            echo "sudo msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553"
+        fi
+    fi
+    
     echo "Metasploit configured successfully."
 }
 

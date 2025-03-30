@@ -1,4 +1,4 @@
-# AI_MAL: Artificial Intelligence Mapping/ Attack Launcher
+# AI_MAL: Advanced Intelligent Metasploit AI Learner
 
 AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
 
@@ -161,4 +161,11 @@ git clone https://github.com/yourusername/AI_MAL.git
 cd AI_MAL
 chmod +x install.sh
 sudo ./install.sh
+```
+
+### Manual Installation
+
+1. Install required Python packages:
+```bash
+pip install python-nmap requests pymetasploit3 netifaces ipaddress
 ```
