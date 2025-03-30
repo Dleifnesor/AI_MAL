@@ -302,66 +302,74 @@ class AdaptiveNmapScanner:
         max_iterations=3,
         continuous=False,
         delay=2,
-        enable_msf=False,
-        auto_exploit=False,
+        msf_integration=False,
+        exploit=False,
         msf_workspace="adaptive_scan",
-        stealth_mode=False,
+        stealth=False,
         auto_script=False,
-        full_auto=False,
+        quiet=False,
+        debug=False,
         auto_discover=False,
         interface=None,
+        scan_all=False,
+        network=None,
+        host_timeout=1,
         custom_scripts=False,
+        script_type="bash",
         execute_scripts=False
     ):
-        # Target settings
+        # Set up logging
+        self.logger = logging.getLogger("adaptive_scanner")
+        
+        # Configure console handler if logging level changed
+        if debug:
+            self.logger.setLevel(logging.DEBUG)
+        elif quiet:
+            self.logger.setLevel(logging.WARNING)
+        else:
+            self.logger.setLevel(logging.INFO)
+        
+        # Runtime configuration
         self.target = target
-        self.auto_discover = auto_discover
-        self.all_discovered_hosts = []
-        self.discovered_hosts = []
-        self.current_target_index = 0
-        self.interface = interface
-        self.running = True  # Flag for graceful termination
-        
-        # Ollama settings
         self.ollama_model = ollama_model
-        
-        # Scan settings
         self.max_iterations = max_iterations
         self.continuous = continuous
         self.delay = delay
-        self.stealth_mode = stealth_mode
-        self.full_auto = full_auto
+        self.stealth = stealth
+        self.auto_discover = auto_discover
+        self.interface = interface
+        self.scan_all = scan_all
+        self.network = network
+        self.host_timeout = host_timeout
         
-        # Metasploit settings
-        self.enable_msf = enable_msf
-        self.auto_exploit = auto_exploit
+        # Metasploit configuration
+        self.msf_integration = msf_integration
+        self.exploit = exploit
         self.msf_workspace = msf_workspace
         self.auto_script = auto_script
-        self.msf_client = None
         
-        # Script generation settings
+        # Script generation
         self.custom_scripts = custom_scripts
+        self.script_type = script_type
         self.execute_scripts = execute_scripts
-        self.generated_scripts_dir = os.path.join(os.getcwd(), "generated_scripts")
-        if not os.path.exists(self.generated_scripts_dir):
-            os.makedirs(self.generated_scripts_dir)
+        self.generated_scripts = []  # Track generated scripts
+        
+        # State variables
+        self.running = True
+        self.scan_history = []
+        self.discovered_services = {}
+        self.current_scan_phase = 0
+        self.results = {}
+        self.targets = []
+        self.current_target_index = 0
+        self.discovered_hosts = []
+        self.metasploit = None
         
         # Network discovery
         if auto_discover:
             self.network_discovery = NetworkDiscovery(interface=interface)
         else:
             self.network_discovery = None
-        
-        # State tracking
-        self.scan_history = []
-        self.discovered_services = {}
-        self.matching_exploits = {}
-        self.successful_exploits = []
-        self.generated_scripts = []
-        self.ai_generated_scripts = []
-        
-        # Configure logger based on debug flag
-        self.logger = logger
         
         # Log initialization
         logger.info(f"Initialized Adaptive Nmap Scanner")
@@ -382,7 +390,7 @@ class AdaptiveNmapScanner:
             self._discover_network()
         
         # Initialize Metasploit if enabled
-        if self.enable_msf:
+        if self.msf_integration:
             self.setup_metasploit()
     
     def _discover_network(self):
@@ -470,7 +478,7 @@ class AdaptiveNmapScanner:
             
             # Try to connect to Metasploit RPC
             try:
-                self.msf_client = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
+                self.metasploit = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
                 logger.info("Connected to Metasploit RPC server")
             except:
                 # If connection fails, try to start msfrpcd
@@ -486,32 +494,32 @@ class AdaptiveNmapScanner:
                 time.sleep(5)
                 
                 # Try to connect again
-                self.msf_client = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
+                self.metasploit = MsfRpcClient('msf_password', server='127.0.0.1', port=55553, ssl=True)
                 logger.info("Connected to Metasploit RPC server")
             
             # Create or select workspace
-            if self.msf_workspace not in self.msf_client.db.workspaces.list:
+            if self.msf_workspace not in self.metasploit.db.workspaces.list:
                 logger.info(f"Creating Metasploit workspace: {self.msf_workspace}")
-                self.msf_client.db.workspaces.add(self.msf_workspace)
+                self.metasploit.db.workspaces.add(self.msf_workspace)
             
             logger.info(f"Using Metasploit workspace: {self.msf_workspace}")
-            self.msf_client.db.workspaces.set(self.msf_workspace)
+            self.metasploit.db.workspaces.set(self.msf_workspace)
             
             return True
         except ImportError:
             logger.error("pymetasploit3 not installed. Metasploit integration will not work.")
             logger.error("Install with: pip install pymetasploit3")
-            self.enable_msf = False
+            self.msf_integration = False
             return False
         except Exception as e:
             logger.error(f"Error setting up Metasploit: {str(e)}")
             logger.debug(traceback.format_exc())
-            self.enable_msf = False
+            self.msf_integration = False
             return False
 
     def process_results_with_metasploit(self, result):
         """Process the Nmap scan results with Metasploit."""
-        if not self.msf_client or not result:
+        if not self.metasploit or not result:
             return
         
         try:
@@ -532,7 +540,7 @@ class AdaptiveNmapScanner:
             
             # Add host to database
             try:
-                self.msf_client.db.hosts.report(target, name=hostname)
+                self.metasploit.db.hosts.report(target, name=hostname)
                 logger.info(f"Added host {target} to Metasploit database")
             except Exception as e:
                 logger.warning(f"Error adding host to Metasploit: {str(e)}")
@@ -548,7 +556,7 @@ class AdaptiveNmapScanner:
                             
                             # Add service to database
                             try:
-                                self.msf_client.db.services.report(
+                                self.metasploit.db.services.report(
                                     target, 
                                     port=int(port),
                                     proto=protocol,
@@ -569,7 +577,7 @@ class AdaptiveNmapScanner:
                                 logger.warning(f"Error adding service to Metasploit: {str(e)}")
             
             # If auto-exploit enabled, find matching exploits
-            if self.auto_exploit:
+            if self.exploit:
                 self.find_matching_exploits()
             
             # If auto-script enabled, generate and run resource script
@@ -584,7 +592,7 @@ class AdaptiveNmapScanner:
 
     def find_matching_exploits(self):
         """Find matching exploits for discovered services."""
-        if not self.msf_client or not self.discovered_services:
+        if not self.metasploit or not self.discovered_services:
             return
         
         logger.info("Finding matching exploits for discovered services...")
@@ -622,7 +630,7 @@ class AdaptiveNmapScanner:
             exploits = set()
             for term in search_terms:
                 try:
-                    search_result = self.msf_client.modules.search(term)
+                    search_result = self.metasploit.modules.search(term)
                     for exploit in search_result:
                         # Check if it's a usable exploit or auxiliary module
                         if exploit['type'] in ['exploit', 'auxiliary'] and 'path' in exploit:
@@ -746,7 +754,7 @@ class AdaptiveNmapScanner:
 
     def run_exploits_on_host(self, target):
         """Run all matching exploits against a host."""
-        if not self.msf_client or not self.matching_exploits:
+        if not self.metasploit or not self.matching_exploits:
             return
         
         logger.info(f"Running exploits against target: {target}")
@@ -782,7 +790,7 @@ class AdaptiveNmapScanner:
         """Start the adaptive scanning process."""
         try:
             # Set up Metasploit if enabled
-            if self.enable_msf:
+            if self.msf_integration:
                 self.setup_metasploit()
             
             # If auto-discovery enabled, try to find targets first
@@ -796,18 +804,18 @@ class AdaptiveNmapScanner:
                     
                     logger.info(f"Discovered {len(discovered_hosts)} hosts: {', '.join(discovered_hosts)}")
                     self.target = discovered_hosts[0]  # Start with the first host
-                    self.all_discovered_hosts = discovered_hosts
+                    self.discovered_hosts = discovered_hosts
                     
                     logger.info(f"Selected initial target: {self.target}")
                 else:
                     # User specified a target but still wants auto-discovery
-                    self.all_discovered_hosts = self.network_discovery.discover_hosts()
+                    self.discovered_hosts = self.network_discovery.discover_hosts()
                     logger.info(f"User-specified target: {self.target}")
-                    if self.all_discovered_hosts:
-                        logger.info(f"Also discovered {len(self.all_discovered_hosts)} additional hosts")
+                    if self.discovered_hosts:
+                        logger.info(f"Also discovered {len(self.discovered_hosts)} additional hosts")
                         # Add user target if not in the list
-                        if self.target not in self.all_discovered_hosts:
-                            self.all_discovered_hosts.append(self.target)
+                        if self.target not in self.discovered_hosts:
+                            self.discovered_hosts.append(self.target)
             
             # Log startup information
             logger.info(f"Starting adaptive Nmap scan against {self.target}")
@@ -819,23 +827,15 @@ class AdaptiveNmapScanner:
             else:
                 logger.info(f"Maximum iterations: {self.max_iterations}")
                 
-            if self.enable_msf:
+            if self.msf_integration:
                 logger.info("Metasploit integration: ENABLED")
-                if self.auto_exploit:
+                if self.exploit:
                     logger.info("Automatic exploitation: ENABLED")
                 if self.auto_script:
                     logger.info("Auto script generation: ENABLED")
                     
-            if self.stealth_mode:
+            if self.stealth:
                 logger.info("Stealth mode: ENABLED")
-            
-            if self.full_auto:
-                logger.info("FULL AUTONOMOUS MODE: ENABLED")
-            
-            if self.custom_scripts:
-                logger.info("AI-POWERED SCRIPT GENERATION: ENABLED")
-                if self.execute_scripts:
-                    logger.info("AUTOMATIC SCRIPT EXECUTION: ENABLED")
             
             # Begin adaptive scanning process
             iteration = 1
@@ -866,50 +866,30 @@ class AdaptiveNmapScanner:
                         })
                         
                         # Process results with Metasploit if enabled
-                        if self.enable_msf:
+                        if self.msf_integration:
                             self.process_results_with_metasploit(result)
                             
-                            if self.auto_exploit:
+                            if self.exploit:
                                 self.run_exploits_on_host(self.target)
                     
-                    # Generate custom scripts if enabled and we have enough data
+                    # Generate custom script if enabled (after we've gathered enough data)
+                    scripts_generated = len(self.generated_scripts)
                     if self.custom_scripts and iteration >= 2 and scripts_generated < 3:
-                        # Determine best script type based on discovered services
-                        script_type = self.determine_best_script_type()
+                        self.logger.info(f"Generating custom {self.script_type} script based on scan results...")
                         
-                        logger.info(f"Generating custom {script_type} script for {self.target}...")
-                        script_path = self.generate_custom_script(script_type=script_type)
+                        # Generate script
+                        script_path = self.generate_custom_script(script_type=self.script_type)
                         
                         if script_path:
-                            scripts_generated += 1
+                            # Add to our list of generated scripts
+                            self.generated_scripts.append(script_path)
                             
-                            # Execute the script if requested
+                            # Execute the script if enabled
                             if self.execute_scripts:
-                                logger.info(f"Automatically executing generated script: {script_path}")
-                                script_args = [self.target]
-                                self.execute_generated_script(script_path, script_args)
+                                self.logger.info(f"Executing generated script: {script_path}")
+                                self.execute_generated_script(script_path, [self.target])
                             else:
-                                logger.info(f"Script generated but not executed. To run: {script_path} {self.target}")
-                
-                    # In full auto mode, we might want to switch to another target
-                    if self.full_auto and self.all_discovered_hosts:
-                        # Every few iterations, switch to another host
-                        if iteration % 3 == 0 and len(self.all_discovered_hosts) > 1:
-                            current_index = self.all_discovered_hosts.index(self.target) if self.target in self.all_discovered_hosts else -1
-                            next_index = (current_index + 1) % len(self.all_discovered_hosts)
-                            self.target = self.all_discovered_hosts[next_index]
-                            logger.info(f"Switching to next target: {self.target}")
-                        
-                        # Every 5 iterations, rediscover the network to find new hosts
-                        if iteration % 5 == 0 and self.network_discovery:
-                            logger.info("Re-discovering network for new hosts...")
-                            new_hosts = self.network_discovery.discover_hosts()
-                            
-                            # Find truly new hosts
-                            actually_new = [h for h in new_hosts if h not in self.all_discovered_hosts]
-                            if actually_new:
-                                logger.info(f"Discovered {len(actually_new)} new hosts: {', '.join(actually_new)}")
-                                self.all_discovered_hosts.extend(actually_new)
+                                self.logger.info(f"Script generated but not executed. To run: {script_path} {self.target}")
                 
                     iteration += 1
                     
@@ -928,15 +908,15 @@ class AdaptiveNmapScanner:
             logger.debug(traceback.format_exc())
         finally:
             # Show summary of generated scripts
-            if self.custom_scripts and self.ai_generated_scripts:
-                logger.info(f"\nGenerated {len(self.ai_generated_scripts)} AI scripts:")
-                for script in self.ai_generated_scripts:
+            if self.custom_scripts and self.generated_scripts:
+                logger.info(f"\nGenerated {len(self.generated_scripts)} scripts:")
+                for script in self.generated_scripts:
                     logger.info(f"  - {script}")
             
             # Clean up resources
-            if self.msf_client:
+            if self.metasploit:
                 try:
-                    self.msf_client.disconnect()
+                    self.metasploit.disconnect()
                     logger.info("Disconnected from Metasploit")
                 except:
                     pass
@@ -973,7 +953,7 @@ class AdaptiveNmapScanner:
         """Generate scan parameters based on current iteration and history."""
         # For first iteration, use basic or stealth scan
         if iteration == 1:
-            if self.stealth_mode:
+            if self.stealth:
                 # Use stealthy scan parameters to avoid detection
                 return [
                     "-sS",                 # SYN scan
@@ -1013,12 +993,12 @@ Previous scan information:
 {context}
 
 Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the next scan to gain more information about the target, discover services and potential vulnerabilities.
-{'Use stealthy techniques to avoid detection.' if self.stealth_mode else ''}
+{'Use stealthy techniques to avoid detection.' if self.stealth else ''}
 """
 
         # Get response from Ollama
         logger.info("Asking Ollama for next scan strategy...")
-        response = self.query_ollama(prompt)
+        response = self.call_ollama(prompt)
         
         if not response:
             logger.warning("Failed to get response from Ollama, using default parameters")
@@ -1141,27 +1121,46 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
         
         return "\n".join(context)
 
-    def query_ollama(self, prompt):
-        """Query Ollama for next scan strategy."""
+    def call_ollama(self, prompt):
+        """
+        Call the Ollama API with a prompt and return the response
+        
+        Args:
+            prompt (str): The prompt to send to Ollama
+            
+        Returns:
+            str: The response text from Ollama
+        """
         try:
-            url = "http://localhost:11434/api/generate"
-            data = {
-                "model": self.ollama_model,
-                "prompt": prompt,
-                "stream": False
-            }
+            self.logger.debug(f"Sending prompt to Ollama model {self.ollama_model}")
             
-            response = requests.post(url, json=data)
+            # Make API request to local Ollama instance
+            response = requests.post(
+                'http://localhost:11434/api/generate',
+                json={
+                    'model': self.ollama_model,
+                    'prompt': prompt,
+                    'stream': False
+                },
+                timeout=60
+            )
             
+            # Check for success
             if response.status_code == 200:
-                result = response.json()
-                return result.get('response', '')
+                data = response.json()
+                return data.get('response', '')
             else:
-                logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                return None
+                self.logger.error(f"Error from Ollama API: {response.status_code} - {response.text}")
+                return ""
+                
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error connecting to Ollama API: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            return ""
         except Exception as e:
-            logger.error(f"Error querying Ollama: {str(e)}")
-            return None
+            self.logger.error(f"Unexpected error in Ollama API call: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            return ""
 
     def parse_ollama_response(self, response):
         """Parse Ollama response to extract Nmap parameters."""
@@ -1202,250 +1201,201 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
         return ','.join(sorted(open_ports, key=int)) if open_ports else ""
 
     def generate_custom_script(self, script_type="bash", target_info=None):
-        """Generate a custom script using Ollama based on scan results."""
+        """
+        Generate a custom script based on scan results using Ollama
+        
+        Args:
+            script_type (str): Type of script to generate (bash, python, ruby)
+            target_info (dict): Target information to use for script generation
+            
+        Returns:
+            str: Path to the generated script
+        """
         if not self.custom_scripts:
+            self.logger.warning("Custom script generation is disabled")
             return None
             
-        if not target_info:
-            # Use the current target and latest scan results if no specific target info provided
-            if not self.scan_history:
-                logger.warning("No scan history available for script generation")
+        self.logger.info(f"Generating custom {script_type} script based on scan results")
+        
+        # Use target_info if provided, otherwise use the current target
+        if target_info is None:
+            current_target = self.target
+            target_info = self.summarize_results(self.run_nmap_scan(self.generate_scan_parameters(1)))
+        
+        # Prepare data for the model
+        scan_summary = json.dumps(target_info, indent=2)
+        
+        # Construct the prompt
+        prompt = f"""
+        You are a cybersecurity expert writing custom scripts for reconnaissance and analysis.
+        
+        Based on the following scan results, create a useful {script_type} script that could help a security professional
+        analyze this system further or extract more information. Include detailed comments and a clear summary at the beginning.
+        Make sure to start the script with a clear description of what it does in a comment section titled "SCRIPT SUMMARY".
+        
+        Scan Results:
+        {scan_summary}
+        
+        Create a complete, ready-to-use {script_type} script that is useful for further analysis or exploitation.
+        """
+        
+        try:
+            # Prepare model
+            self.logger.debug(f"Calling Ollama model: {self.ollama_model}")
+            
+            # Get script content from Ollama
+            script_content = self.call_ollama(prompt)
+            
+            if not script_content:
+                self.logger.error("Failed to generate script content")
                 return None
                 
-            target_info = {
-                "target": self.target,
-                "scan_history": self.scan_history[-3:] if len(self.scan_history) > 3 else self.scan_history,
-                "discovered_services": {k: v for k, v in self.discovered_services.items() if k.split('/')[1] in ['tcp', 'udp']}
-            }
-        
-        script_types = {
-            "bash": {
-                "extension": "sh",
-                "shebang": "#!/bin/bash",
-                "comment_prefix": "#"
-            },
-            "python": {
-                "extension": "py",
-                "shebang": "#!/usr/bin/env python3",
-                "comment_prefix": "#"
-            },
-            "ruby": {
-                "extension": "rb",
-                "shebang": "#!/usr/bin/env ruby",
-                "comment_prefix": "#"
-            }
-        }
-        
-        if script_type not in script_types:
-            logger.error(f"Unsupported script type: {script_type}")
-            return None
+            # Extract code block if present
+            code_pattern = r"```(?:\w+)?\s*([\s\S]*?)```"
+            code_match = re.search(code_pattern, script_content)
+            if code_match:
+                script_content = code_match.group(1).strip()
             
-        script_config = script_types[script_type]
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_name = f"ai_script_{script_type}_{timestamp}.{script_config['extension']}"
-        script_path = os.path.join(self.generated_scripts_dir, script_name)
-        
-        # Prepare context for Ollama with target info
-        context = self.prepare_script_context(target_info)
-        
-        # Define the prompt for Ollama
-        prompt = f"""As an advanced cybersecurity tool, write a {script_type} script that performs further analysis on target {target_info['target']} based on the scan information below. 
-
-The script should be focused, practical, and effective for cybersecurity analysis.
-
-{context}
-
-Important requirements:
-1. Create a complete, executable {script_type} script
-2. Include proper error handling and verbose output
-3. The script must start with {script_config['shebang']}
-4. Include detailed comments explaining what each section does
-5. Focus on security testing relevant to the discovered services
-6. Do not attempt to damage or permanently alter the target system
-7. Include proper command-line argument parsing
-8. Provide a usage/help section with -h flag
-
-Respond ONLY with the script code and nothing else. No introduction or explanation needed.
-"""
-
-        # Get response from Ollama
-        logger.info(f"Generating {script_type} script using Ollama model {self.ollama_model}...")
-        response = self.query_ollama(prompt)
-        
-        if not response:
-            logger.error("Failed to get response from Ollama for script generation")
-            return None
+            # Create output directory if it doesn't exist
+            os.makedirs("generated_scripts", exist_ok=True)
             
-        # Extract the script content from the Ollama response
-        script_content = self.extract_code_from_response(response, script_type)
-        
-        if not script_content:
-            logger.error("Failed to extract valid script content from Ollama response")
-            return None
+            # Determine file extension
+            extension = {
+                "bash": "sh",
+                "python": "py",
+                "ruby": "rb"
+            }.get(script_type.lower(), "txt")
             
-        # Ensure script has proper shebang
-        if not script_content.startswith(script_config['shebang']):
-            script_content = f"{script_config['shebang']}\n\n{script_content}"
+            # Generate a filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_str = current_target.replace('.', '_').replace(':', '_')
+            script_filename = f"generated_scripts/{script_type}_{target_str}_{timestamp}.{extension}"
             
-        # Add header
-        header = f"""
-{script_config['comment_prefix']} AI-Generated Script for Target: {target_info['target']}
-{script_config['comment_prefix']} Generated on: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-{script_config['comment_prefix']} Generated by: AI_MAL using {self.ollama_model}
-{script_config['comment_prefix']} 
-{script_config['comment_prefix']} IMPORTANT: This script is generated for legitimate security testing only.
-{script_config['comment_prefix']} Always ensure you have proper authorization before running.
-{script_config['comment_prefix']}
-"""
-        script_content = header + script_content
-        
-        # Write script to file
-        try:
-            with open(script_path, 'w') as f:
+            # Write the script to file
+            with open(script_filename, "w") as f:
                 f.write(script_content)
-                
-            # Make executable
-            os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
             
-            logger.info(f"Generated {script_type} script: {script_path}")
-            self.ai_generated_scripts.append(script_path)
-            return script_path
+            # Make the script executable
+            if script_type.lower() != "python":
+                os.chmod(script_filename, os.stat(script_filename).st_mode | stat.S_IEXEC)
             
+            self.logger.info(f"Custom script generated: {script_filename}")
+            
+            # Extract summary from the script
+            summary_pattern = r"SCRIPT SUMMARY[:\s]*(.*?)(?:\n\n|\n#|\n$)"
+            summary_match = re.search(summary_pattern, script_content, re.IGNORECASE | re.DOTALL)
+            
+            summary = "No summary available"
+            if summary_match:
+                summary = summary_match.group(1).strip()
+                # Clean up the summary (remove comment marks and extra whitespace)
+                summary = re.sub(r'^#\s*', '', summary, flags=re.MULTILINE)
+                summary = re.sub(r'\n\s*#\s*', ' ', summary)
+                summary = re.sub(r'\s+', ' ', summary).strip()
+            
+            # Print summary to console
+            print(f"\n{'-'*80}")
+            print(f"GENERATED SCRIPT: {os.path.basename(script_filename)}")
+            print(f"TYPE: {script_type}")
+            print(f"SUMMARY: {summary}")
+            print(f"LOCATION: {os.path.abspath(script_filename)}")
+            print(f"{'-'*80}\n")
+            
+            return script_filename
         except Exception as e:
-            logger.error(f"Error writing script to file: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error generating custom script: {str(e)}")
+            self.logger.debug(traceback.format_exc())
             return None
-    
-    def prepare_script_context(self, target_info):
-        """Prepare contextual information for script generation."""
-        context = []
-        
-        # Target information
-        context.append(f"Target: {target_info['target']}")
-        
-        # Scan history summary
-        if 'scan_history' in target_info and target_info['scan_history']:
-            context.append("\nScan History:")
-            for i, scan in enumerate(target_info['scan_history']):
-                # Extract key information from scan
-                if isinstance(scan, dict):
-                    scan_params = scan.get('params', [])
-                    result_summary = scan.get('result_summary', {})
-                    
-                    if scan_params:
-                        context.append(f"  Scan {i+1} Parameters: {' '.join(scan_params)}")
-                    
-                    if isinstance(result_summary, dict) and 'open_ports' in result_summary:
-                        open_ports = result_summary['open_ports']
-                        if open_ports:
-                            context.append(f"  Open ports found:")
-                            for port_key, port_data in open_ports.items():
-                                service_info = f"{port_data.get('service', 'unknown')} {port_data.get('product', '')} {port_data.get('version', '')}".strip()
-                                context.append(f"    - {port_key}: {service_info}")
-        
-        # Discovered services
-        if 'discovered_services' in target_info and target_info['discovered_services']:
-            context.append("\nDiscovered Services:")
-            for port_key, service_info in target_info['discovered_services'].items():
-                service = service_info.get('service', 'unknown')
-                product = service_info.get('product', '')
-                version = service_info.get('version', '')
-                service_str = f"{service} {product} {version}".strip()
-                context.append(f"  - {port_key}: {service_str}")
-        
-        return "\n".join(context)
-    
-    def extract_code_from_response(self, response, script_type):
-        """Extract code block from Ollama response."""
-        # Look for code blocks with backticks
-        code_block_pattern = r"```(?:\w+)?\s*([\s\S]*?)```"
-        code_blocks = re.findall(code_block_pattern, response)
-        
-        if code_blocks:
-            # Return the longest code block (most likely the complete script)
-            return max(code_blocks, key=len).strip()
-        
-        # If no code blocks with backticks, try to extract the entire response
-        # Remove any markdown or explanatory text at the beginning or end
-        lines = response.split('\n')
-        
-        # Extensions for each script type
-        extensions = {
-            "bash": [".sh", "bash", "shell"],
-            "python": [".py", "python"],
-            "ruby": [".rb", "ruby"]
-        }
-        
-        # Try to find where the code starts (after explanatory text)
-        start_idx = 0
-        for i, line in enumerate(lines):
-            # Look for shebang
-            if line.startswith("#!/"):
-                start_idx = i
-                break
-                
-            # Look for language indicators
-            for ext in extensions.get(script_type, []):
-                if ext in line.lower() and i < len(lines) - 1:
-                    start_idx = i + 1
-                    break
-        
-        # Try to find where the code ends (before closing remarks)
-        end_idx = len(lines)
-        closing_remarks = ["hope this helps", "this script will", "let me know", "please note"]
-        for i in range(len(lines) - 1, start_idx, -1):
-            line = lines[i].lower()
-            if any(remark in line for remark in closing_remarks):
-                end_idx = i
-                break
-        
-        return "\n".join(lines[start_idx:end_idx]).strip()
-    
+
     def execute_generated_script(self, script_path, args=None):
-        """Execute a generated script."""
-        if not os.path.exists(script_path):
-            logger.error(f"Script not found: {script_path}")
+        """
+        Execute a generated script
+        
+        Args:
+            script_path (str): Path to the script to execute
+            args (list): Optional arguments to pass to the script
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.execute_scripts:
+            self.logger.warning("Script execution is disabled")
             return False
             
-        logger.info(f"Executing generated script: {script_path}")
-        
-        cmd = [script_path]
-        if args:
-            cmd.extend(args)
+        if not script_path or not os.path.exists(script_path):
+            self.logger.error(f"Script not found: {script_path}")
+            return False
             
         try:
+            # Determine how to execute based on file extension
+            extension = os.path.splitext(script_path)[1].lower()
+            
+            cmd = []
+            if extension == '.py':
+                cmd = ['python3', script_path]
+            elif extension in ['.sh', '.bash']:
+                cmd = ['bash', script_path]
+            elif extension == '.rb':
+                cmd = ['ruby', script_path]
+            else:
+                # Default to direct execution if it's executable
+                cmd = [script_path]
+                
+            # Add any arguments
+            if args:
+                if isinstance(args, list):
+                    cmd.extend(args)
+                else:
+                    cmd.append(str(args))
+                    
+            # Print execution information
+            print(f"\n{'-'*80}")
+            print(f"EXECUTING SCRIPT: {os.path.basename(script_path)}")
+            print(f"COMMAND: {' '.join(cmd)}")
+            print(f"{'-'*80}\n")
+            
+            # Execute the script
+            self.logger.info(f"Executing script: {' '.join(cmd)}")
+            
+            # Set up process
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                bufsize=1
             )
             
-            # Process output in real-time
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    logger.info(f"Script output: {output.strip()}")
-                    
-            # Get any remaining output
-            remaining_output, errors = process.communicate()
-            if remaining_output:
-                logger.info(f"Script output: {remaining_output.strip()}")
-            if errors:
-                logger.warning(f"Script errors: {errors.strip()}")
+            # Handle output in real-time
+            print("SCRIPT OUTPUT:")
+            print(f"{'-'*40}")
+            
+            # Real-time output handling
+            for line in process.stdout:
+                print(line, end='')  # Print to console
+                self.logger.debug(f"Script output: {line.strip()}")
                 
-            if process.returncode != 0:
-                logger.warning(f"Script exited with non-zero status: {process.returncode}")
-                return False
+            # Get return code
+            return_code = process.wait()
+            
+            # Print any errors
+            stderr_output = process.stderr.read()
+            if stderr_output:
+                print(f"\nERROR OUTPUT:")
+                print(f"{'-'*40}")
+                print(stderr_output)
+                self.logger.warning(f"Script error output: {stderr_output}")
                 
-            logger.info(f"Script execution completed successfully")
-            return True
+            print(f"{'-'*40}")
+            print(f"Script completed with return code: {return_code}")
+            print(f"{'-'*80}\n")
+            
+            return return_code == 0
             
         except Exception as e:
-            logger.error(f"Error executing script: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error executing script: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            print(f"\nERROR: Failed to execute script: {str(e)}")
             return False
 
 def main():
@@ -1522,15 +1472,20 @@ def main():
         max_iterations=args.iterations,
         continuous=args.continuous,
         delay=args.delay,
-        enable_msf=args.msf,
-        auto_exploit=args.exploit,
+        msf_integration=args.msf,
+        exploit=args.exploit,
         msf_workspace=args.workspace,
-        stealth_mode=args.stealth,
+        stealth=args.stealth,
         auto_script=args.auto_script,
-        full_auto=args.full_auto,
+        quiet=args.quiet,
+        debug=args.debug,
         auto_discover=args.auto_discover,
         interface=args.interface,
+        scan_all=args.scan_all,
+        network=args.network,
+        host_timeout=args.host_timeout,
         custom_scripts=args.custom_scripts,
+        script_type=args.script_type,
         execute_scripts=args.execute_scripts
     )
     
