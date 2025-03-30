@@ -25,6 +25,7 @@ import tempfile
 import stat
 import signal
 import pymetasploit3
+from pymetasploit3.msfrpc import MsfRpcClient
 
 try:
     import psutil
@@ -793,7 +794,7 @@ class AdaptiveNmapScanner:
             socket.setdefaulttimeout(connection_timeout)
             
             try:
-                self.metasploit = pymetasploit3.msfrpc.MsfRpcClient(
+                self.metasploit = MsfRpcClient(
                     password,
                     server=host,
                     port=port,
@@ -834,7 +835,7 @@ class AdaptiveNmapScanner:
                             self.viewer.status(f"Connecting to msfrpcd, timeout in {remaining}s...")
                             
                             # Try to connect
-                            self.metasploit = pymetasploit3.msfrpc.MsfRpcClient(
+                            self.metasploit = MsfRpcClient(
                                 password,
                                 server=host,
                                 port=port,
@@ -2042,44 +2043,78 @@ Rationale: [Why these parameters are appropriate for the next scan]
         return prompt
 
 def main():
-    parser = argparse.ArgumentParser(description="Adaptive Nmap scanner with Ollama and Metasploit integration")
+    parser = argparse.ArgumentParser(
+        description="Adaptive Nmap scanner with Ollama and Metasploit integration",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
     # Optional target
-    parser.add_argument("target", nargs="?", help="Target IP address or hostname (optional if --auto-discover is used)")
-    parser.add_argument("--model", default="qwen2.5-coder:7b",
+    parser.add_argument("target", nargs="?", 
+                        help="Target IP address or hostname (optional if --auto-discover is used)")
+    
+    # General options group
+    general_group = parser.add_argument_group('General Options')
+    general_group.add_argument("--model", default="qwen2.5-coder:7b",
                         help="Ollama model to use (default: qwen2.5-coder:7b, alternatives: llama3)")
-    parser.add_argument("--iterations", type=int, default=3, help="Maximum number of scan iterations (default: 3)")
-    parser.add_argument("--continuous", action="store_true", help="Run in continuous mode until manually stopped")
-    parser.add_argument("--delay", type=int, default=2, help="Delay in seconds between scans (default: 2)")
-    parser.add_argument("--msf", action="store_true", help="Enable Metasploit integration")
-    parser.add_argument("--exploit", action="store_true", help="Automatically attempt exploitation using Metasploit")
-    parser.add_argument("--workspace", default="adaptive_scan", help="Metasploit workspace name (default: adaptive_scan)")
-    parser.add_argument("--stealth", action="store_true", help="Enable stealth mode for scans to avoid detection")
-    parser.add_argument("--auto-script", action="store_true", help="Auto-generate and run Metasploit resource scripts")
-    parser.add_argument("--dos", action="store_true", help="Attempt Denial of Service attacks against target hosts")
-    parser.add_argument("--full-auto", action="store_true", help="Full autonomous mode (implies --continuous --msf --exploit --auto-script)")
-    parser.add_argument("--quiet", action="store_true", help="Reduce verbosity of output")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    general_group.add_argument("--iterations", type=int, default=3, 
+                        help="Maximum number of scan iterations (default: 3)")
+    general_group.add_argument("--continuous", action="store_true", 
+                        help="Run in continuous mode until manually stopped")
+    general_group.add_argument("--delay", type=int, default=2, 
+                        help="Delay in seconds between scans (default: 2)")
+    general_group.add_argument("--quiet", action="store_true", 
+                        help="Reduce verbosity of output")
+    general_group.add_argument("--debug", action="store_true", 
+                        help="Enable debug logging")
+    general_group.add_argument("--version", action="store_true", 
+                        help="Show version information and exit\n")
     
-    # Network discovery options
-    parser.add_argument("--auto-discover", action="store_true", help="Automatically discover network and hosts")
-    parser.add_argument("--interface", help="Network interface to use for discovery")
-    parser.add_argument("--scan-all", action="store_true", help="Scan all discovered hosts (implies --auto-discover)")
-    parser.add_argument("--network", help="Specific network to scan in CIDR notation (e.g., 192.168.1.0/24)")
-    parser.add_argument("--host-timeout", type=int, default=1, help="Timeout in seconds for host discovery (default: 1)")
+    # Scan Mode options
+    scan_group = parser.add_argument_group('Scan Mode Options')
+    scan_group.add_argument("--stealth", action="store_true", 
+                        help="Enable stealth mode for scans to avoid detection")
+    scan_group.add_argument("--full-auto", action="store_true", 
+                        help="Full autonomous mode (implies --continuous --msf --exploit --auto-script)\n")
     
-    # Script generation options
-    parser.add_argument("--custom-scripts", action="store_true", help="Enable AI-powered custom script generation")
-    parser.add_argument("--script-type", choices=["bash", "python", "ruby"], default="bash", 
+    # Metasploit Integration options
+    msf_group = parser.add_argument_group('Metasploit Integration')
+    msf_group.add_argument("--msf", action="store_true", 
+                        help="Enable Metasploit integration")
+    msf_group.add_argument("--exploit", action="store_true", 
+                        help="Automatically attempt exploitation using Metasploit")
+    msf_group.add_argument("--workspace", default="adaptive_scan", 
+                        help="Metasploit workspace name (default: adaptive_scan)")
+    msf_group.add_argument("--auto-script", action="store_true", 
+                        help="Auto-generate and run Metasploit resource scripts")
+    msf_group.add_argument("--dos", action="store_true", 
+                        help="Attempt Denial of Service attacks against target hosts\n")
+    
+    # Network Discovery options
+    discover_group = parser.add_argument_group('Network Discovery Options')
+    discover_group.add_argument("--auto-discover", action="store_true", 
+                        help="Automatically discover network and hosts")
+    discover_group.add_argument("--interface", 
+                        help="Network interface to use for discovery")
+    discover_group.add_argument("--scan-all", action="store_true", 
+                        help="Scan all discovered hosts (implies --auto-discover)")
+    discover_group.add_argument("--network", 
+                        help="Specific network to scan in CIDR notation (e.g., 192.168.1.0/24)")
+    discover_group.add_argument("--host-timeout", type=int, default=1, 
+                        help="Timeout in seconds for host discovery (default: 1)\n")
+    
+    # Script Generation options
+    script_group = parser.add_argument_group('Script Generation Options')
+    script_group.add_argument("--custom-scripts", action="store_true", 
+                        help="Enable AI-powered custom script generation")
+    script_group.add_argument("--script-type", choices=["bash", "python", "ruby"], default="bash", 
                         help="Type of custom script to generate (default: bash)")
-    parser.add_argument("--execute-scripts", action="store_true", 
-                        help="Automatically execute generated scripts (use with caution)")
+    script_group.add_argument("--execute-scripts", action="store_true", 
+                        help="Automatically execute generated scripts (use with caution)\n")
     
-    # AI display options
-    parser.add_argument("--show-live-ai", action="store_true", 
+    # AI Display options
+    ai_group = parser.add_argument_group('AI Display Options')
+    ai_group.add_argument("--show-live-ai", action="store_true", 
                         help="Show the AI's thought process in real-time during generation")
-    
-    # Version information
-    parser.add_argument("--version", action="store_true", help="Show version information and exit")
     
     args = parser.parse_args()
     

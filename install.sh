@@ -48,240 +48,138 @@ echo -e "\n                               @@@@@@@@
 
 echo -e "\nStarting AI_MAL installation...\n"
 
-# Get installation directory
-INSTALL_DIR=$(pwd)
-echo "Installation directory: $INSTALL_DIR\n"
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}Error: This script requires root privileges.${NC}"
+  echo "Please run with: sudo $0"
+  exit 1
+fi
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+# Check system compatibility
+if [ ! -f /etc/os-release ]; then
+  echo -e "${RED}Error: Cannot determine operating system.${NC}"
+  exit 1
+fi
 
-# Function to check system
-check_system() {
-    echo "Checking system..."
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        if [ "$ID" = "kali" ]; then
-            echo "Kali Linux detected. Continuing installation..."
-            return 0
-        fi
-    fi
-    echo "Error: This script is designed for Kali Linux only."
+source /etc/os-release
+if [[ "$ID" != "kali" && "$ID_LIKE" != *"debian"* ]]; then
+  echo -e "${YELLOW}Warning: This installer is optimized for Kali Linux.${NC}"
+  echo "Your system: $PRETTY_NAME"
+  read -p "Continue anyway? (y/n) " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
-}
+  fi
+fi
 
-# Function to check Python version
-check_python() {
-    echo "Checking Python version..."
-    if command_exists python3; then
-        PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-        echo "Python version: $PYTHON_VERSION"
-        return 0
-    else
-        echo "Error: Python 3 is not installed."
-        exit 1
-    fi
-}
+# Installation directory
+INSTALL_DIR="/opt/ai_mal"
+mkdir -p $INSTALL_DIR
 
-# Function to install Python dependencies
-install_python_deps() {
-    echo "Installing Python dependencies..."
-    
-    # Install system packages via apt
-    apt update
-    apt install -y python3-nmap python3-requests python3-netifaces
-    
-    # Install additional packages via pip with --break-system-packages flag
-    pip install pymetasploit3 psutil --break-system-packages
-    
-    if [ $? -eq 0 ]; then
-        echo "Python dependencies installed successfully."
-    else
-        echo "Error: Failed to install Python dependencies."
-        exit 1
-    fi
-}
+echo -e "\n${GREEN}Step 1: Installing system dependencies...${NC}"
+apt update
+apt install -y python3 python3-pip nmap metasploit-framework dos2unix netifaces
 
-# Function to configure Metasploit
-configure_metasploit() {
-    echo "Configuring Metasploit..."
-    
-    # Start and enable PostgreSQL
-    systemctl start postgresql
-    systemctl enable postgresql
-    
-    # Initialize Metasploit database
-    msfdb init
-    
-    # Create systemd service for msfrpcd
-    cat > /etc/systemd/system/msfrpcd.service << 'EOL'
+echo -e "\n${GREEN}Step 2: Installing Python dependencies...${NC}"
+# First try to uninstall existing pymetasploit3 to ensure clean installation
+pip3 uninstall -y pymetasploit3
+pip3 install nmap requests pymetasploit3 psutil netifaces
+
+# Verify pymetasploit3 installation
+echo -e "\n${YELLOW}Verifying pymetasploit3 installation...${NC}"
+if ! python3 -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
+  echo -e "${RED}Warning: pymetasploit3 not properly installed. Trying alternative method...${NC}"
+  pip3 uninstall -y pymetasploit3
+  pip3 install --force-reinstall pymetasploit3
+  
+  # Verify again
+  if ! python3 -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
+    echo -e "${RED}Error: Could not properly install pymetasploit3.${NC}"
+    echo "You may need to manually fix this issue before using Metasploit integration."
+  else
+    echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
+  fi
+else
+  echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
+fi
+
+echo -e "\n${GREEN}Step 3: Setting up Metasploit...${NC}"
+# Start PostgreSQL and initialize Metasploit database
+systemctl start postgresql
+systemctl enable postgresql
+
+# Initialize Metasploit database if not already done
+if [ ! -f ~/.msf4/db ]; then
+  echo "Initializing Metasploit database..."
+  msfdb init
+fi
+
+# Set up Metasploit RPC daemon service
+echo "Creating Metasploit RPC service..."
+cat > /etc/systemd/system/msfrpcd.service << EOL
 [Unit]
 Description=Metasploit rpc daemon
 After=network.target postgresql.service
 Wants=postgresql.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553
-Restart=on-failure
+Restart=always
+RestartSec=1
 
 [Install]
 WantedBy=multi-user.target
 EOL
-    
-    # Enable and start msfrpcd service
-    systemctl daemon-reload
-    systemctl enable msfrpcd.service
-    systemctl start msfrpcd.service
-    
-    # Check if service started successfully
-    echo "Verifying msfrpcd service..."
-    sleep 3  # Give it a moment to start
-    
-    if systemctl is-active --quiet msfrpcd.service; then
-        echo "msfrpcd service is running."
-    else
-        echo "WARNING: msfrpcd service failed to start. Starting manually..."
-        # Try starting it manually as fallback
-        msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 &
-        sleep 2
-        
-        # Check if the port is now listening
-        if netstat -tuln | grep -q ":55553"; then
-            echo "msfrpcd started successfully on port 55553."
-        else
-            echo "WARNING: Could not start msfrpcd service. You may need to start it manually with:"
-            echo "sudo msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553"
-        fi
-    fi
-    
-    echo "Metasploit configured successfully."
-}
 
-# Function to install Ollama
-install_ollama() {
-    echo "Installing Ollama..."
-    
-    # Check if Ollama is already installed
-    if command_exists ollama; then
-        echo "Ollama is already installed."
-    else
-        # Download and install Ollama
-        echo "Downloading and installing Ollama..."
-        curl -fsSL https://ollama.com/install.sh | sh
-    fi
-    
-    # Check if Ollama is running, start if it's not
-    if ! pgrep -x "ollama" > /dev/null; then
-        echo "Starting Ollama service..."
-        ollama serve &
-        
-        # Wait for Ollama service to start
-        echo "Waiting for Ollama service to start..."
-        sleep 5
-    else
-        echo "Ollama service is already running."
-    fi
-    
-    # Check if Qwen2.5-coder:7b model is already installed
-    qwen_installed=false
-    if ollama list | grep -q "qwen2.5-coder:7b"; then
-        echo "Qwen2.5-coder:7b model is already installed."
-        qwen_installed=true
-    else
-        # Pull Qwen2.5-coder:7b model
-        echo "Pulling Qwen2.5-coder:7b model (this may take some time)..."
-        ollama pull qwen2.5-coder:7b
-    fi
-    
-    # Check if llama3 model is already installed
-    if ollama list | grep -q "llama3"; then
-        echo "llama3 backup model is already installed."
-    else
-        # Pull llama3 as a backup model
-        echo "Pulling llama3 as a backup model..."
-        ollama pull llama3
-    fi
-    
-    # Test that Qwen model is working only if newly installed
-    if [ "$qwen_installed" = false ]; then
-        echo "Testing Qwen2.5-coder:7b model..."
-        ollama run qwen2.5-coder:7b "Hello, can you write a short Python function to check if a number is prime?" > /dev/null 2>&1
-        
-        if [ $? -eq 0 ]; then
-            echo "Qwen2.5-coder:7b model is working correctly!"
-        else
-            echo "Warning: Qwen2.5-coder:7b model test failed. You may need to manually test it after installation."
-        fi
-    else
-        echo "Skipping model test as Qwen2.5-coder:7b is already installed."
-    fi
-    
-    echo "Ollama setup completed successfully."
-}
+# Reload, enable and start service
+systemctl daemon-reload
+systemctl enable msfrpcd.service
+systemctl start msfrpcd.service
 
-# Function to configure AI_MAL
-configure_ai_mal() {
-    echo "Configuring AI_MAL..."
-    
-    # Convert Windows line endings to Unix
-    echo "Converting line endings..."
-    if command_exists dos2unix; then
-        dos2unix adaptive_nmap_scan.py
-        dos2unix AI_MAL
-    else
-        echo "dos2unix not found, using tr command instead"
-        tr -d '\r' < adaptive_nmap_scan.py > adaptive_nmap_scan.py.unix
-        mv adaptive_nmap_scan.py.unix adaptive_nmap_scan.py
-        tr -d '\r' < AI_MAL > AI_MAL.unix
-        mv AI_MAL.unix AI_MAL
-    fi
-    
-    # Make scripts executable
-    chmod +x adaptive_nmap_scan.py
-    chmod +x AI_MAL
-    
-    # Create directory for generated scripts
-    mkdir -p generated_scripts
-    
-    # Create system-wide link with absolute path
-    echo "Creating system-wide symlink..."
-    rm -f /usr/local/bin/AI_MAL
-    ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
-    
-    # Create a separate symlink for the Python script if needed
-    ln -sf "$INSTALL_DIR/adaptive_nmap_scan.py" /usr/local/bin/adaptive_nmap_scan.py
-    
-    echo "AI_MAL configured successfully."
-}
+echo -e "\n${GREEN}Step 4: Installing Ollama...${NC}"
+curl -fsSL https://ollama.com/install.sh | sh
 
-# Main installation process
-check_system
-check_python
-install_python_deps
-configure_metasploit
-install_ollama
-configure_ai_mal
+echo -e "\n${GREEN}Step 5: Setting up AI_MAL...${NC}"
+# Copy files to installation directory
+cp adaptive_nmap_scan.py $INSTALL_DIR/
+cp AI_MAL $INSTALL_DIR/
 
-echo -e "\nInstallation completed successfully!"
-echo -e "You can now use AI_MAL by running: AI_MAL --help\n"
+# Fix line endings (in case files came from Windows)
+dos2unix $INSTALL_DIR/adaptive_nmap_scan.py
+dos2unix $INSTALL_DIR/AI_MAL
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}WARNING: Some installation steps require root privileges.${NC}"
-    echo -e "Consider running with: ${GREEN}sudo ./install.sh${NC}"
-    echo ""
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation aborted."
-        exit 1
-    fi
-fi
+# Make files executable
+chmod +x $INSTALL_DIR/adaptive_nmap_scan.py
+chmod +x $INSTALL_DIR/AI_MAL
 
-echo -e "${BLUE}Starting AI_MAL installation...${NC}"
-echo ""
+# Create directory for generated scripts
+mkdir -p $INSTALL_DIR/generated_scripts
+
+# Create symlink for system-wide access
+ln -sf $INSTALL_DIR/AI_MAL /usr/local/bin/AI_MAL
+
+echo -e "\n${GREEN}Step 6: Pulling Ollama models...${NC}"
+echo "This may take some time depending on your internet speed..."
+# Pull the recommended model
+ollama pull qwen2.5-coder:7b
+# Also pull the smaller model for compatibility
+ollama pull llama3
+
+echo -e "\n${GREEN}Installation complete!${NC}"
+echo -e "You can now run AI_MAL with: ${YELLOW}AI_MAL [options] [target]${NC}"
+echo -e "For help and available options, run: ${YELLOW}AI_MAL --help${NC}"
+echo
+echo -e "${RED}IMPORTANT: AI_MAL requires root privileges for most features.${NC}"
+echo -e "Run with sudo: ${YELLOW}sudo AI_MAL [options] [target]${NC}"
+echo
+echo -e "${YELLOW}Examples:${NC}"
+echo "sudo AI_MAL --auto-discover --model qwen2.5-coder:7b"
+echo "sudo AI_MAL 192.168.1.1 --msf --exploit"
+echo "sudo AI_MAL --model llama3 (for systems with limited RAM)"
+echo
+echo -e "${GREEN}Thank you for installing AI_MAL!${NC}"
 
 # Check if Nmap is installed
 echo -e "${BLUE}Checking for Nmap...${NC}"

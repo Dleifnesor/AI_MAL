@@ -1,265 +1,165 @@
 # AI_MAL Installation Guide for Kali Linux
 
-This guide provides step-by-step instructions for installing and configuring AI_MAL on Kali Linux.
+This guide provides detailed installation instructions for setting up AI_MAL on Kali Linux, including all dependencies and configurations.
 
 ## Prerequisites
 
 - Kali Linux (2023.1 or newer)
-- Python 3.6+
+- Python 3.6 or higher
 - Nmap
 - Metasploit Framework
 - Ollama
-- Root/sudo privileges
 
-# Automated Installation (Recommended)
+## Automated Installation
 
-### 1. Switch to Root User
+For a quick setup, follow these steps:
 
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/AI_MAL.git
+   cd AI_MAL
+   ```
+
+2. Run the installation script:
+   ```bash
+   chmod +x install.sh
+   sudo ./install.sh
+   ```
+
+3. Pull the Qwen2.5-coder:7b model for Ollama:
+   ```bash
+   ollama pull qwen2.5-coder:7b
+   ```
+
+4. Install required Python modules:
+   ```bash
+   pip install pymetasploit3 netifaces
+   ```
+
+Note: If you encounter a "module 'pymetasploit3' has no attribute 'msfrpc'" error when using MSF integration, try reinstalling the module with:
 ```bash
-sudo su
+pip uninstall -y pymetasploit3
+pip install --force-reinstall pymetasploit3
 ```
 
-### 2. Clone the Repository
-
-```bash
-git clone https://github.com/Dleifnesor/AI_MAL.git
-cd AI_MAL
-```
-
-### 3. Run the Installation Script
-
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-This script will:
-- Install all required dependencies system-wide
-- Configure Metasploit and its database
-- Install Ollama and download the Qwen2.5-coder:7b model (default)
-- Fix line ending issues (converts Windows CRLF to Unix LF)
-- Create the necessary directories
-- Set up AI_MAL system-wide
-
-The installation script automatically pulls and tests the Qwen2.5-coder:7b model, which is now the default model for AI_MAL.
+The installation script will set up the necessary dependencies and configure the system for AI_MAL.
 
 ## Manual Installation
 
-If you prefer to install components manually or if the automated script fails, follow these steps:
+If you prefer to install components manually, follow these steps:
 
-### 1. Switch to Root User
-
-```bash
-sudo su
-```
-
-### 2. Install Python Dependencies
+### 1. Install Python Dependencies
 
 ```bash
-# Install system packages
-apt install -y python3-nmap python3-requests python3-netifaces dos2unix
-
-# Install additional packages via pip with --break-system-packages flag
-pip install pymetasploit3 --break-system-packages
+pip install nmap netifaces requests psutil pymetasploit3
 ```
 
-### 3. Fix Line Ending Issues
+### 2. Configure Metasploit
 
-Windows-style line endings can cause issues on Linux. Fix them with:
+Set up the Metasploit RPC service:
 
 ```bash
-# Install dos2unix if not already done
-apt install -y dos2unix
-
-# Convert line endings
-dos2unix adaptive_nmap_scan.py
-dos2unix AI_MAL
-
-# Make scripts executable
-chmod +x adaptive_nmap_scan.py
-chmod +x AI_MAL
-```
-
-### 4. Configure Metasploit
-
-```bash
-# Start PostgreSQL service
-systemctl start postgresql
-systemctl enable postgresql
-
-# Initialize the Metasploit database
-msfdb init
-
-# Set up Metasploit RPC service
-msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
-```
-
-### 5. Create a Systemd Service for Metasploit RPC (Optional but Recommended)
-
-Create a service file for Metasploit RPC:
-
-```bash
-nano /etc/systemd/system/msfrpcd.service
-```
-
-Add the following content:
-
-```
+# Create a systemd service for msfrpcd
+cat > /etc/systemd/system/msfrpcd.service << EOL
 [Unit]
 Description=Metasploit rpc daemon
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+Restart=always
+RestartSec=1
+User=root
 ExecStart=/usr/bin/msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553
-Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
-```
+EOL
 
-Enable and start the service:
-
-```bash
-systemctl daemon-reload
+# Enable and start the service
 systemctl enable msfrpcd.service
 systemctl start msfrpcd.service
 ```
 
-### 6. Install and Configure Ollama
+### 3. Install Ollama
 
 ```bash
-# Download and install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
+```
 
-# Start Ollama service
-ollama serve &
+Then pull the Qwen2.5-coder:7b model:
 
-# Pull the Qwen2.5-coder:7b model
+```bash
 ollama pull qwen2.5-coder:7b
 ```
 
-### 7. Configure AI_MAL
+## Verifying Installation
+
+Verify that all components are working correctly:
+
+1. Check Python dependencies:
+   ```bash
+   python3 -c "import nmap, netifaces, requests, pymetasploit3; print('Dependencies OK')"
+   ```
+
+2. Verify Ollama installation:
+   ```bash
+   ollama list
+   ```
+
+3. Check Metasploit RPC service:
+   ```bash
+   systemctl status msfrpcd.service
+   ```
+
+## Running AI_MAL
+
+After installation, run AI_MAL with your preferred options:
 
 ```bash
-# Make scripts executable
-chmod +x adaptive_nmap_scan.py
-chmod +x AI_MAL
+# Example using Qwen2.5-coder:7b model with automatic discovery
+sudo AI_MAL --auto-discover --model qwen2.5-coder:7b
 
-# Create directory for generated scripts
-mkdir -p generated_scripts
-
-# Create a system-wide link (optional)
-ln -sf $(pwd)/AI_MAL /usr/local/bin/AI_MAL
+# Example targeting a specific host with Metasploit integration
+sudo AI_MAL 192.168.1.100 --msf --exploit
 ```
 
-## Verifying the Installation
+## Docker Usage
 
-Verify that AI_MAL is properly installed by running:
-
-```bash
-AI_MAL --version
-```
-
-## First Run with Qwen2.5-coder:7b
-
-To start using AI_MAL with the Qwen2.5-coder:7b model:
-
-```bash
-# For autodiscovery (requires root)
-AI_MAL --auto-discover --model qwen2.5-coder:7b
-
-# Or for a specific target
-AI_MAL --target 192.168.1.1 --model qwen2.5-coder:7b
-```
-
-## Running in Docker
-
-For a containerized setup:
+To run AI_MAL in a Docker container:
 
 ```bash
 # Build the Docker image
 docker build -t ai_mal .
 
-# Run AI_MAL with the Qwen2.5-coder:7b model
-docker run --net=host --privileged -v $(pwd)/scripts:/opt/ai_mal/generated_scripts -it ai_mal --model qwen2.5-coder:7b --auto-discover
+# Run with auto-discovery
+docker run --net=host --privileged -v $(pwd)/scripts:/opt/ai_mal/generated_scripts -it ai_mal --auto-discover
+
+# Target a specific host with Metasploit
+docker run --net=host --privileged -it ai_mal --target 192.168.1.100 --msf --exploit
+
+# Full autonomous mode
+docker run --net=host --privileged -it ai_mal --full-auto
 ```
 
 ## Troubleshooting
 
-### Line Ending Issues
-
-If you see the error `bad interpreter: /bin/bash^M: no such file or directory`:
-
-```bash
-# Fix line endings
-apt install -y dos2unix
-dos2unix AI_MAL
-dos2unix adaptive_nmap_scan.py
-chmod +x AI_MAL
-chmod +x adaptive_nmap_scan.py
-```
-
-### Python Package Issues
-
-If you encounter issues with Python packages:
-
-```bash
-# Reinstall system packages
-apt install --reinstall python3-nmap python3-requests python3-netifaces
-
-# Reinstall additional packages
-pip install pymetasploit3 --break-system-packages
-```
-
-### Ollama Model Issues
-
-If you encounter issues with the Qwen2.5-coder:7b model:
-
-```bash
-# Verify Ollama is running
-ps aux | grep ollama
-
-# Restart Ollama if needed
-killall ollama
-ollama serve &
-
-# Re-pull the model
-ollama pull qwen2.5-coder:7b
-```
+### Ollama Model Problems
+- If Ollama fails to load models, ensure you have enough RAM (8GB+ recommended).
+- For systems with limited RAM, use the smaller `llama3` model instead of `qwen2.5-coder:7b`.
 
 ### Metasploit Connection Issues
-
-If AI_MAL cannot connect to Metasploit:
-
-```bash
-# Check if msfrpcd is running
-ps aux | grep msfrpcd
-
-# Restart the service if needed
-systemctl restart msfrpcd.service
-
-# Or start manually
-msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553
-```
+- If you see connection errors with Metasploit, start the service manually:
+  ```bash
+  sudo msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553
+  ```
+- If you encounter a "module 'pymetasploit3' has no attribute 'msfrpc'" error, reinstall the module:
+  ```bash
+  pip uninstall -y pymetasploit3
+  pip install --force-reinstall pymetasploit3
+  ```
 
 ### Permission Issues
-
-Many operations require root privileges:
-
-```bash
-AI_MAL --auto-discover --model qwen2.5-coder:7b
-```
-
-## Performance Optimization
-
-The Qwen2.5-coder:7b model may require significant system resources. For optimal performance:
-
-- Ensure your system has at least 16GB of RAM
-- Free up system resources before running AI_MAL
-- Consider using a GPU if available
-
-## Security Notice
-
-Always use this tool responsibly and ethically. Only scan and exploit systems you have proper authorization to test. 
+- Most features require root/sudo privileges. Run with `sudo AI_MAL [options]`.
+- If you encounter permission errors with network interfaces, ensure you're running as root. 

@@ -15,8 +15,20 @@ PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
 
 # Check if running as root (required for many scans)
 if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}Warning: Some features require root privileges.${NC}"
-    echo -e "Consider running with ${GREEN}sudo${NC} for full functionality."
+    echo ""
+    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║                     ${YELLOW}ROOT REQUIRED${RED}                         ║${NC}"
+    echo -e "${RED}╠════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${RED}║${NC} ${YELLOW}Most features of AI_MAL require root privileges.${NC}           ${RED}║${NC}"
+    echo -e "${RED}║${NC} For full functionality, please run with:                   ${RED}║${NC}"
+    echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+    echo -e "${RED}║${NC}    ${GREEN}sudo AI_MAL [options] [target]${NC}                         ${RED}║${NC}"
+    echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
+    echo -e "${RED}║${NC} Running without root will cause errors with:               ${RED}║${NC}"
+    echo -e "${RED}║${NC}  - Network scanning                                        ${RED}║${NC}"
+    echo -e "${RED}║${NC}  - Host discovery                                          ${RED}║${NC}"
+    echo -e "${RED}║${NC}  - Script execution                                        ${RED}║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 fi
 
@@ -115,6 +127,27 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
+# Check if required Python modules are installed
+check_python_module() {
+    python3 -c "import $1" 2>/dev/null
+    return $?
+}
+
+if ! check_python_module "pymetasploit3"; then
+    echo -e "${YELLOW}Warning: pymetasploit3 module not found.${NC}"
+    echo -e "To install: ${GREEN}pip install pymetasploit3${NC}"
+    echo -e "MSF integration will not be available until you install this module."
+    echo ""
+    if [[ "$*" == *"--msf"* ]]; then
+        echo -e "${RED}You specified --msf but the required module is missing.${NC}"
+        read -p "Do you want to continue without MSF integration? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
+
 # Check if the Python script exists
 if [ ! -f "${PYTHON_SCRIPT}" ]; then
     echo -e "${RED}ERROR: Cannot find the Python script at ${PYTHON_SCRIPT}${NC}"
@@ -123,11 +156,22 @@ if [ ! -f "${PYTHON_SCRIPT}" ]; then
 fi
 
 # Make sure the script is executable
-chmod +x "${PYTHON_SCRIPT}"
+chmod +x "${PYTHON_SCRIPT}" 2>/tmp/chmod_error
+
+# Check if chmod failed
+if [ -s /tmp/chmod_error ]; then
+    echo -e "${YELLOW}Warning: Could not set execute permissions on ${PYTHON_SCRIPT}${NC}"
+    echo -e "This is usually due to running without root privileges or mounted file systems."
+    echo -e "The script will still work, but this warning indicates you may encounter other permission issues."
+    echo ""
+fi
 
 # Execute the Python script with all arguments passed to this script
 if [ "${display_version}" = true ]; then
     python3 "${PYTHON_SCRIPT}" --version
 else
     python3 "${PYTHON_SCRIPT}" "$@"
-fi 
+fi
+
+# Clean up temp file
+rm -f /tmp/chmod_error 
