@@ -155,10 +155,6 @@ docker run --net=host --privileged -it ai_mal --full-auto
 
 This tool is intended for legitimate security testing and educational purposes only. Unauthorized scanning and exploitation of systems is illegal and unethical. Always obtain proper authorization before testing any systems.
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Key Features
 
 - **AI-Guided Scanning**: Uses Ollama AI models to analyze scan results and suggest optimal next steps
