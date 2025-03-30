@@ -33,17 +33,17 @@ chmod +x install.sh
 ./install.sh
 ```
 
-^
-- Installs all required dependencies system-wide
-- Configures Metasploit and its database
-- Installs Ollama and downloads the Qwen2.5-coder:7b model (default)
-- Fixes line ending issues (converts Windows CRLF to Unix LF)
-- Creates the necessary directories
-- Sets up AI_MAL system-wide
+This script will:
+- Install all required dependencies system-wide
+- Configure Metasploit and its database
+- Install Ollama and download the Qwen2.5-coder:7b model (default)
+- Fix line ending issues (converts Windows CRLF to Unix LF)
+- Create the necessary directories
+- Set up AI_MAL system-wide
 
 The installation script automatically pulls and tests the Qwen2.5-coder:7b model, which is now the default model for AI_MAL.
 
-## Manual Installation (if you don't trust my install script -_-)
+## Manual Installation
 
 If you prefer to install components manually or if the automated script fails, follow these steps:
 

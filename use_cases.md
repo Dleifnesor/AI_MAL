@@ -171,6 +171,19 @@ AI_MAL 192.168.1.100 --msf --exploit --auto-script
 
 **Use case**: Streamlines the exploitation process by automating the creation and execution of Metasploit scripts.
 
+### --dos
+
+Attempts to perform Denial of Service (DoS) attacks against target hosts.
+
+```bash
+# Scan and attempt DoS attacks against a target
+AI_MAL 192.168.1.100 --dos
+```
+
+**Use case**: Testing network resilience and security controls by simulating denial of service conditions.
+
+> **WARNING**: This option should only be used in controlled environments with proper authorization. Using this option against unauthorized targets may be illegal and unethical.
+
 ## AI Script Generation
 
 ### --custom-scripts
@@ -318,4 +331,11 @@ This performs a single-pass stealthy security audit of the network with minimal 
 ```bash
 AI_MAL 192.168.1.100 --msf --workspace pentest_2024 --custom-scripts
 ```
-This integrates with Metasploit in a specific workspace and generates scripts but doesn't execute them automatically, allowing for manual review. 
+This integrates with Metasploit in a specific workspace and generates scripts but doesn't execute them automatically, allowing for manual review.
+
+### Stress Testing Network Security Controls
+
+```bash
+AI_MAL 192.168.1.100 --dos --stealth --iterations 2 --delay 10
+```
+This performs targeted DoS testing against a specific host with a stealthy approach, attempting 2 iterations with 10-second delays between attempts to evaluate the effectiveness of security controls. 

@@ -57,6 +57,7 @@ display_help() {
     echo "  --exploit                 Automatically attempt exploitation"
     echo "  --workspace NAME          Metasploit workspace (default: adaptive_scan)"
     echo "  --auto-script             Auto-generate Metasploit resource scripts"
+    echo "  --dos                     Attempt DoS attacks against target hosts"
     echo ""
     echo -e "${YELLOW}Script Generation Options:${NC}"
     echo "  --custom-scripts          Generate custom scripts based on scan results"
@@ -75,6 +76,7 @@ display_help() {
     echo "  AI_MAL 192.168.1.1 --msf --exploit"
     echo "  AI_MAL --full-auto --scan-all"
     echo "  AI_MAL --auto-discover --model qwen2.5-coder:7b --msf"
+    echo "  AI_MAL 192.168.1.1 --dos --stealth"
     echo ""
     echo -e "${RED}SECURITY WARNING:${NC}"
     echo "  This tool is designed for legitimate security testing and educational purposes only."
@@ -82,6 +84,11 @@ display_help() {
     echo ""
     echo -e "${RED}WARNING:${NC}"
     echo "  Execute generated scripts at your own risk. Always review scripts before execution."
+    echo ""
+    echo -e "${RED}DoS WARNING:${NC}"
+    echo "  The --dos option attempts to deny service to target systems."
+    echo "  This can cause real damage and should ONLY be used in controlled test environments"
+    echo "  with explicit permission. Using against unauthorized targets is illegal."
     echo ""
 }
 

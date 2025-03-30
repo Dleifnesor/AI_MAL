@@ -164,8 +164,10 @@ install_ollama() {
     fi
     
     # Check if Qwen2.5-coder:7b model is already installed
+    qwen_installed=false
     if ollama list | grep -q "qwen2.5-coder:7b"; then
         echo "Qwen2.5-coder:7b model is already installed."
+        qwen_installed=true
     else
         # Pull Qwen2.5-coder:7b model
         echo "Pulling Qwen2.5-coder:7b model (this may take some time)..."
@@ -181,14 +183,18 @@ install_ollama() {
         ollama pull llama3
     fi
     
-    # Test that Qwen model is working
-    echo "Testing Qwen2.5-coder:7b model..."
-    ollama run qwen2.5-coder:7b "Hello, can you write a short Python function to check if a number is prime?" > /dev/null 2>&1
-    
-    if [ $? -eq 0 ]; then
-        echo "Qwen2.5-coder:7b model is working correctly!"
+    # Test that Qwen model is working only if newly installed
+    if [ "$qwen_installed" = false ]; then
+        echo "Testing Qwen2.5-coder:7b model..."
+        ollama run qwen2.5-coder:7b "Hello, can you write a short Python function to check if a number is prime?" > /dev/null 2>&1
+        
+        if [ $? -eq 0 ]; then
+            echo "Qwen2.5-coder:7b model is working correctly!"
+        else
+            echo "Warning: Qwen2.5-coder:7b model test failed. You may need to manually test it after installation."
+        fi
     else
-        echo "Warning: Qwen2.5-coder:7b model test failed. You may need to manually test it after installation."
+        echo "Skipping model test as Qwen2.5-coder:7b is already installed."
     fi
     
     echo "Ollama setup completed successfully."

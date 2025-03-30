@@ -51,10 +51,20 @@ msfrpcd -P "msf_password" -S -a 127.0.0.1 -p 55553 &\n\
 ollama serve &\n\
 # Wait for services to be ready\n\
 sleep 5\n\
-# Pull models\n\
-echo "Pulling Ollama models..."\n\
-ollama pull llama3\n\
-ollama pull qwen2.5-coder:7b\n\
+# Check for and pull models if not present\n\
+echo "Checking Ollama models..."\n\
+if ! ollama list | grep -q "llama3"; then\n\
+  echo "Pulling llama3..."\n\
+  ollama pull llama3\n\
+else\n\
+  echo "llama3 model already installed"\n\
+fi\n\
+if ! ollama list | grep -q "qwen2.5-coder:7b"; then\n\
+  echo "Pulling qwen2.5-coder:7b..."\n\
+  ollama pull qwen2.5-coder:7b\n\
+else\n\
+  echo "qwen2.5-coder:7b model already installed"\n\
+fi\n\
 # Execute AI_MAL with provided arguments\n\
 exec /opt/ai_mal/AI_MAL "$@"\n\
 ' > /entrypoint.sh && chmod +x /entrypoint.sh
