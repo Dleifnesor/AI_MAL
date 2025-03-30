@@ -162,10 +162,3 @@ cd AI_MAL
 chmod +x install.sh
 sudo ./install.sh
 ```
-
-### Manual Installation
-
-1. Install required Python packages:
-```bash
-pip install python-nmap requests pymetasploit3 netifaces ipaddress
-```
