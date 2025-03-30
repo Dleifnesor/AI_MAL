@@ -563,7 +563,7 @@ class NetworkDiscovery:
             return []
 
 class AdaptiveNmapScanner:
-    """Adaptive Nmap scanner that uses LLMs to optimize scan strategies."""
+    """AI-powered adaptive Nmap scanner with Metasploit integration."""
     
     def __init__(
         self,
@@ -587,10 +587,35 @@ class AdaptiveNmapScanner:
         custom_scripts=False,
         script_type="bash",
         execute_scripts=False,
-        dos_attack=False
+        dos_attack=False,
+        show_live_ai=False
     ):
         # Set up logging
         self.logger = logging.getLogger("adaptive_scanner")
+        
+        # Save parameters
+        self.target = target
+        self.ollama_model = ollama_model
+        self.max_iterations = max_iterations
+        self.continuous = continuous
+        self.delay = delay
+        self.msf_integration = msf_integration
+        self.exploit = exploit
+        self.msf_workspace = msf_workspace
+        self.stealth = stealth
+        self.auto_script = auto_script
+        self.quiet = quiet
+        self.auto_discover = auto_discover
+        self.custom_scripts = custom_scripts
+        self.script_type = script_type
+        self.execute_scripts = execute_scripts
+        self.generated_scripts = []
+        
+        # DoS attack
+        self.dos_attack = dos_attack
+        
+        # Show live AI output
+        self.show_live_ai = show_live_ai
         
         # Configure console handler if logging level changed
         if debug:
@@ -601,29 +626,18 @@ class AdaptiveNmapScanner:
             self.logger.setLevel(logging.INFO)
         
         # Runtime configuration
-        self.target = target
-        self.ollama_model = ollama_model
-        self.max_iterations = max_iterations
-        self.continuous = continuous
-        self.delay = delay
-        self.stealth = stealth
-        self.auto_discover = auto_discover
         self.interface = interface
         self.scan_all = scan_all
         self.network = network
         self.host_timeout = host_timeout
         
         # Metasploit configuration
-        self.msf_integration = msf_integration
-        self.exploit = exploit
-        self.msf_workspace = msf_workspace
         self.auto_script = auto_script
         
         # Script generation
         self.custom_scripts = custom_scripts
         self.script_type = script_type
         self.execute_scripts = execute_scripts
-        self.generated_scripts = []  # Track generated scripts
         
         # State variables
         self.running = True
@@ -1292,8 +1306,8 @@ class AdaptiveNmapScanner:
             # Prepare model
             self.logger.debug(f"Calling Ollama model: {self.ollama_model}")
             
-            # Get script content from Ollama
-            script_content = self.call_ollama(prompt)
+            # Show live generation to the user for better transparency
+            script_content = self.call_ollama(prompt, stream=self.show_live_ai)
             
             if not script_content:
                 self.logger.error("Failed to generate script content")
@@ -1636,77 +1650,76 @@ class AdaptiveNmapScanner:
             return "bash"    # Bash for general purpose or Windows services
 
     def generate_scan_parameters(self, iteration):
-        """Generate scan parameters based on current iteration and history."""
-        # For first iteration, use basic or stealth scan
+        """Generate Nmap scan parameters based on the current iteration."""
+        # First iteration: basic scan
         if iteration == 1:
             if self.stealth:
-                # Use stealthy scan parameters to avoid detection
-                return [
-                    "-sS",                 # SYN scan
-                    "-T2",                 # Timing template (2 = "polite")
-                    "--data-length=15",    # Add random data to packets
-                    "--randomize-hosts",   # Scan hosts in random order
-                    "--max-retries=1",     # Limit retry attempts
-                    "--scan-delay=0.5s",   # Add delay between probes
-                    "--min-rate=10",       # Limit packet rate
-                    "--reason",            # Show reason for service state
-                    "-p-",                 # Scan all ports
-                    self.target            # Target IP/host
-                ]
+                return ["-sS", "-T2", "--max-retries", "1", "-Pn", self.target]
             else:
-                # Regular initial scan
-                return [
-                    "-sS",                 # SYN scan
-                    "-T4",                 # Timing template (4 = "aggressive")
-                    "--min-rate=1000",     # Minimum packet rate
-                    "-p-",                 # All ports
-                    "--open",              # Only show open ports
-                    self.target            # Target IP/host
-                ]
+                return ["-sV", "-O", self.target]
         
-        # For subsequent iterations, consult with Ollama
-        if not self.scan_history:
-            # Fallback if somehow we don't have history
-            return self.generate_scan_parameters(1)
+        # For later iterations, use Ollama to suggest parameters
+        self.logger.info("Asking Ollama for next scan strategy...")
         
-        # Prepare context for Ollama based on scan history
-        context = self.prepare_ollama_context()
+        # Prepare context for Ollama
+        prompt = self.construct_prompt(iteration)
         
-        # Get next scan strategy from Ollama
-        prompt = f"""Given the previous Nmap scan results, recommend the next optimal Nmap scan parameters for a {iteration}{'st' if iteration == 1 else 'nd' if iteration == 2 else 'rd' if iteration == 3 else 'th'} iteration scan against {self.target}.
-
-Previous scan information:
-{context}
-
-Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the next scan to gain more information about the target, discover services and potential vulnerabilities.
-{'Use stealthy techniques to avoid detection.' if self.stealth else ''}
-"""
-
-        # Get response from Ollama
-        logger.info("Asking Ollama for next scan strategy...")
-        response = self.call_ollama(prompt)
+        # Get suggestion from Ollama (with live streaming for better user experience)
+        response = self.call_ollama(prompt, stream=self.show_live_ai)
         
         if not response:
-            logger.warning("Failed to get response from Ollama, using default parameters")
-            # Use a default strategy based on iteration
-            if iteration == 2:
-                # Service detection on discovered ports
-                open_ports = self.get_open_ports_from_history()
-                port_spec = f"-p {open_ports}" if open_ports else "-p-"
-                return ["-sV", "-O", "--version-all", port_spec, self.target]
+            self.logger.warning("Failed to get response from Ollama, using default parameters")
+            # Fallback strategy
+            if self.stealth:
+                return ["-sS", "-T2", "-p-", "-Pn", self.target]
             else:
-                # Vulnerability scan
-                return ["-sV", "-O", "--script=vuln", "--version-all", self.target]
+                return ["-sV", "-O", "--version-all", "-p-", self.target]
         
-        # Parse Ollama response to get Nmap parameters
-        scan_params = self.parse_ollama_response(response)
+        # Try to extract parameters from response
+        try:
+            params_match = re.search(r'Parameters:\s*\[([^\]]+)\]', response, re.IGNORECASE)
+            if params_match:
+                params_str = params_match.group(1)
+                # Clean up the parameters
+                params = re.findall(r'-[a-zA-Z-]+(?:\s+\w+)?', params_str)
+                if params:
+                    clean_params = []
+                    for p in params:
+                        p = p.strip()
+                        clean_params.append(p)
+                    
+                    # Add target and return
+                    clean_params.append(self.target)
+                    self.logger.info(f"Using AI-suggested parameters: {' '.join(clean_params)}")
+                    return clean_params
+            
+            # If we couldn't extract parameters with regex, try to find a command line
+            cmd_match = re.search(r'nmap\s+(.*?)(?:$|\n)', response, re.IGNORECASE)
+            if cmd_match:
+                cmd = cmd_match.group(1).strip()
+                params = cmd.split()
+                # Filter out the target if present
+                params = [p for p in params if not (p.startswith('192.168.') or p.startswith('10.') or p.startswith('172.') or '/' in p)]
+                params.append(self.target)
+                self.logger.info(f"Using AI-suggested command parameters: {' '.join(params)}")
+                return params
+            
+            # Fallback if extraction fails
+            self.logger.warning("Could not extract scan parameters from Ollama response, using defaults")
+            # Return default parameters
+            if self.stealth:
+                return ["-sS", "-T2", "-p-", "-Pn", self.target]
+            else:
+                return ["-sV", "-O", "--version-all", "-p-", self.target]
         
-        # Make sure we always have the target at the end
-        if self.target not in scan_params:
-            scan_params.append(self.target)
-        
-        logger.info(f"Generated scan parameters: {' '.join(scan_params)}")
-        return scan_params
+        except Exception as e:
+            self.logger.error(f"Error extracting scan parameters: {str(e)}")
+            self.logger.debug(traceback.format_exc())
+            # Return default parameters
+            if self.stealth:
+                return ["-sS", "-T2", "-p-", "-Pn", self.target]
+            else:
+                return ["-sV", "-O", "--version-all", "-p-", self.target]
 
     def run_nmap_scan(self, scan_params):
         """Run an Nmap scan with the given parameters and return the result."""
@@ -1858,12 +1871,13 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
         
         return "\n".join(context)
 
-    def call_ollama(self, prompt):
+    def call_ollama(self, prompt, stream=False):
         """
         Call the Ollama API to generate a response
         
         Args:
             prompt (str): The prompt to send to Ollama
+            stream (bool): Whether to stream the response
             
         Returns:
             str: The generated response
@@ -1887,24 +1901,75 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
                     timeout = 120  # Longer timeout for systems with less RAM
                     self.logger.info(f"Limited system memory detected ({total_mem:.1f}GB), increasing Ollama timeout to {timeout}s")
             
-            ollama_url = f"http://localhost:11434/api/generate"
+            # Modify URL depending on whether we're streaming
+            ollama_url = "http://localhost:11434/api/generate"
+            
             payload = {
                 "model": self.ollama_model,
                 "prompt": prompt,
-                "stream": False
+                "stream": stream
             }
             
             self.logger.debug(f"Calling Ollama API with model: {self.ollama_model}")
-            self.viewer.status(f"Getting AI recommendations using {self.ollama_model}...")
-            
-            response = requests.post(ollama_url, json=payload, timeout=timeout)
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("response", "")
+            if stream:
+                self.viewer.header(f"LIVE AI ANALYSIS USING {self.ollama_model.upper()}", "=")
+                self.viewer.status("AI is analyzing the data... (showing live output)")
+                print(f"\n{'-' * self.viewer.width}")
+                print(f"PROMPT: {prompt[:100]}..." if len(prompt) > 100 else f"PROMPT: {prompt}")
+                print(f"{'-' * self.viewer.width}")
+                print("AI THINKING:", end=" ", flush=True)
+                
+                full_response = ""
+                char_count = 0
+                line_width = max(self.viewer.width - 5, 70)  # Account for terminal size
+                
+                try:
+                    with requests.post(ollama_url, json=payload, stream=True, timeout=timeout) as response:
+                        if response.status_code != 200:
+                            self.logger.error(f"Ollama API error: {response.status_code}")
+                            print(f"\nAPI ERROR: {response.status_code}")
+                            return ""
+                        
+                        buffer = ""
+                        for line in response.iter_lines():
+                            if line:
+                                data = json.loads(line.decode('utf-8'))
+                                if 'response' in data:
+                                    chunk = data['response']
+                                    full_response += chunk
+                                    buffer += chunk
+                                    char_count += len(chunk)
+                                    
+                                    # Print chunks to the console
+                                    print(chunk, end="", flush=True)
+                                    
+                                    # Handle line breaks for better display
+                                    if char_count >= line_width or '\n' in buffer:
+                                        buffer = ""
+                                        char_count = 0
+                                        
+                                if data.get('done', False):
+                                    break
+                    
+                    print("\n" + "-" * self.viewer.width)
+                    return full_response
+                    
+                except requests.exceptions.Timeout:
+                    print("\nTIMEOUT ERROR: Ollama took too long to respond")
+                    self.logger.error(f"Streaming request to Ollama timed out after {timeout}s")
+                    return ""
             else:
-                self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                return ""
+                # Non-streaming request
+                self.viewer.status(f"Getting AI recommendations using {self.ollama_model}...")
+                
+                response = requests.post(ollama_url, json=payload, timeout=timeout)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result.get("response", "")
+                else:
+                    self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+                    return ""
                 
         except requests.exceptions.Timeout:
             self.logger.error(f"Ollama API request timed out after {timeout}s. This may be due to limited system resources.")
@@ -1957,6 +2022,25 @@ Provide ONLY the Nmap command line parameters (without 'nmap' prefix) for the ne
         
         return ','.join(sorted(open_ports, key=int)) if open_ports else ""
 
+    def construct_prompt(self, iteration):
+        """Construct a prompt for Ollama based on scan history."""
+        context = self.prepare_ollama_context()
+        
+        prompt = f"""Given the previous Nmap scan results, recommend the next optimal Nmap scan parameters for a {iteration}{'st' if iteration == 1 else 'nd' if iteration == 2 else 'rd' if iteration == 3 else 'th'} iteration scan against {self.target}.
+ 
+Previous scan information:
+{context}
+ 
+Provide the Nmap command line parameters (without 'nmap' prefix) for the next scan to gain more information about the target, discover services and potential vulnerabilities.
+{'Use stealthy techniques to avoid detection.' if self.stealth else ''}
+
+Please format your response as follows:
+Analysis: [Your analysis of the previous scan results]
+Parameters: [The specific parameters to use]
+Rationale: [Why these parameters are appropriate for the next scan]
+"""
+        return prompt
+
 def main():
     parser = argparse.ArgumentParser(description="Adaptive Nmap scanner with Ollama and Metasploit integration")
     # Optional target
@@ -1989,6 +2073,10 @@ def main():
                         help="Type of custom script to generate (default: bash)")
     parser.add_argument("--execute-scripts", action="store_true", 
                         help="Automatically execute generated scripts (use with caution)")
+    
+    # AI display options
+    parser.add_argument("--show-live-ai", action="store_true", 
+                        help="Show the AI's thought process in real-time during generation")
     
     # Version information
     parser.add_argument("--version", action="store_true", help="Show version information and exit")
@@ -2047,7 +2135,8 @@ def main():
         custom_scripts=args.custom_scripts,
         script_type=args.script_type,
         execute_scripts=args.execute_scripts,
-        dos_attack=args.dos
+        dos_attack=args.dos,
+        show_live_ai=args.show_live_ai
     )
     
     # Additional setup for network option

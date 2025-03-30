@@ -256,6 +256,22 @@ AI_MAL 192.168.1.100 --debug
 
 **Use case**: Troubleshooting issues or understanding the detailed flow of the scanning process.
 
+## AI Display Options
+
+### --show-live-ai
+
+Shows the AI's thought process in real-time as it generates responses, script content, or scan strategies.
+
+```bash
+# Show live AI output when generating scripts
+AI_MAL 192.168.1.100 --custom-scripts --show-live-ai
+
+# Watch the AI analyze scan results and adapt strategies
+AI_MAL 192.168.1.100 --show-live-ai --iterations 5
+```
+
+**Use case**: Useful for educational purposes, understanding the AI's decision-making process, debugging script generation, or simply for those interested in seeing how the AI formulates its responses. Also helpful for verifying that the AI model is working correctly.
+
 ## Full Automation
 
 ### --full-auto
