@@ -139,7 +139,49 @@ systemctl enable msfrpcd.service
 systemctl start msfrpcd.service
 
 echo -e "\n${GREEN}Step 4: Installing Ollama...${NC}"
+# Install Ollama using the official installer
+echo "Installing Ollama using the official installer..."
 curl -fsSL https://ollama.com/install.sh | sh
+
+# Ensure Ollama service is started and running
+echo -e "\n${GREEN}Starting Ollama service...${NC}"
+# Check if Ollama is already running
+if pgrep ollama >/dev/null; then
+  echo "Ollama is already running."
+else
+  # For systems with systemd
+  if command -v systemctl >/dev/null && systemctl list-unit-files | grep -q ollama; then
+    echo "Starting Ollama using systemd..."
+    systemctl enable ollama
+    systemctl start ollama
+  else
+    # For systems without systemd or where Ollama doesn't register as a service
+    echo "Starting Ollama manually..."
+    nohup ollama serve > /var/log/ollama.log 2>&1 &
+    echo "Ollama started with PID: $!"
+  fi
+fi
+
+# Verify Ollama is accessible
+echo "Verifying Ollama API is accessible..."
+MAX_RETRIES=10
+RETRY_DELAY=2
+retry_count=0
+
+while [ $retry_count -lt $MAX_RETRIES ]; do
+  if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
+    echo -e "${GREEN}Ollama API is up and running!${NC}"
+    break
+  else
+    echo -e "${YELLOW}Waiting for Ollama API to become available... (${retry_count}/${MAX_RETRIES})${NC}"
+    sleep $RETRY_DELAY
+    retry_count=$((retry_count + 1))
+  fi
+done
+
+if [ $retry_count -eq $MAX_RETRIES ]; then
+  echo -e "${RED}Warning: Could not verify Ollama API is running. You may need to start it manually with 'ollama serve'.${NC}"
+fi
 
 echo -e "\n${GREEN}Step 5: Setting up AI_MAL...${NC}"
 # Copy files to installation directory
@@ -162,11 +204,69 @@ ln -sf $INSTALL_DIR/AI_MAL /usr/local/bin/AI_MAL
 
 echo -e "\n${GREEN}Step 6: Pulling Ollama models...${NC}"
 echo "This may take some time depending on your internet speed..."
-# Pull the recommended model
-ollama pull qwen2.5-coder:7b
-# Also pull the smaller model for compatibility
-ollama pull llama3
 
+# Check if Ollama API is accessible before trying to pull models
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
+  # Pull the recommended model
+  echo "Pulling qwen2.5-coder:7b model (this may take 5-10 minutes depending on your connection)..."
+  ollama pull qwen2.5-coder:7b
+
+  # Also pull the smaller model for compatibility
+  echo "Pulling llama3 model as a backup for systems with limited resources..."
+  ollama pull llama3
+  
+  # Verify models are available
+  echo "Verifying models are accessible..."
+  if ollama list | grep -q "qwen2.5-coder:7b"; then
+    echo -e "${GREEN}Successfully installed qwen2.5-coder:7b model!${NC}"
+  else
+    echo -e "${YELLOW}Warning: qwen2.5-coder:7b model may not have been installed correctly.${NC}"
+    echo "You can try installing it manually with: ollama pull qwen2.5-coder:7b"
+  fi
+else
+  echo -e "${RED}Warning: Ollama API is not accessible. Could not pull models.${NC}"
+  echo "You will need to manually pull the models after starting Ollama:"
+  echo "  ollama pull qwen2.5-coder:7b"
+  echo "  ollama pull llama3"
+fi
+
+echo -e "\n${GREEN}Step 7: Setting up autostart services...${NC}"
+echo "Creating systemd service to automatically start Ollama and Metasploit on system boot..."
+
+# Create AI_MAL autostart service file
+cat > /etc/systemd/system/ai_mal_deps.service << EOL
+[Unit]
+Description=AI_MAL Dependencies Service
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c "systemctl start msfrpcd.service"
+ExecStart=/bin/bash -c "if command -v systemctl &>/dev/null && systemctl list-unit-files | grep -q ollama; then systemctl start ollama.service; else nohup ollama serve > /var/log/ollama.log 2>&1 & fi"
+ExecStop=/bin/bash -c "systemctl stop msfrpcd.service"
+ExecStop=/bin/bash -c "if command -v systemctl &>/dev/null && systemctl list-unit-files | grep -q ollama; then systemctl stop ollama.service; else pkill -f 'ollama serve'; fi"
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+# Enable the service to start on boot
+systemctl daemon-reload
+systemctl enable ai_mal_deps.service
+systemctl start ai_mal_deps.service
+
+# Verify the service is active
+if systemctl is-active --quiet ai_mal_deps.service; then
+  echo -e "${GREEN}AI_MAL dependencies autostart service successfully installed and activated!${NC}"
+  echo "The service will automatically start Ollama and Metasploit RPC on system boot."
+else
+  echo -e "${YELLOW}Warning: AI_MAL dependencies autostart service installation may have failed.${NC}"
+  echo "You may need to manually start Ollama and Metasploit each time the system boots."
+fi
+
+# Add autostart info to installation completion message
 echo -e "\n${GREEN}Installation complete!${NC}"
 echo -e "You can now run AI_MAL with: ${YELLOW}AI_MAL [options] [target]${NC}"
 echo -e "For help and available options, run: ${YELLOW}AI_MAL --help${NC}"
@@ -204,10 +304,6 @@ echo ""
 echo -e "To run AI_MAL, use the command: ${BLUE}AI_MAL${NC}"
 echo -e "For help and options, run: ${BLUE}AI_MAL --help${NC}"
 echo ""
-echo -e "Please note that you may need to start the Metasploit RPC service manually:"
-echo -e "${YELLOW}sudo msfrpcd -P 'msf_password' -S -a 127.0.0.1 -p 55553${NC}"
-echo -e "To check if the service is already running: ${YELLOW}netstat -tuln | grep 55553${NC}"
-echo ""
 
 # Check system memory and provide recommendations for low-memory systems
 MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
@@ -225,4 +321,10 @@ fi
 echo -e "${RED}IMPORTANT SECURITY NOTICE:${NC}"
 echo -e "This tool is designed for legitimate security testing only."
 echo -e "Always ensure you have proper authorization before scanning or exploiting any network or system."
-echo "" 
+echo ""
+
+echo -e "${GREEN}Autostart Status:${NC}"
+echo -e "  Ollama and Metasploit RPC will start automatically on system boot."
+echo -e "  To disable autostart: ${YELLOW}sudo systemctl disable ai_mal_deps.service${NC}"
+echo -e "  To manually start dependencies: ${YELLOW}sudo systemctl start ai_mal_deps.service${NC}"
+echo -e "" 

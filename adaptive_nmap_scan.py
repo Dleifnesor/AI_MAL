@@ -1938,27 +1938,55 @@ class AdaptiveNmapScanner:
             str: The generated response
         """
         try:
-            # Check if Ollama process is running
-            if os.name == 'posix':  # Unix/Linux
-                ollama_running = subprocess.run(["pgrep", "ollama"], stdout=subprocess.PIPE).returncode == 0
-            else:  # Windows and others
-                ollama_running = "ollama" in subprocess.run(["tasklist"], stdout=subprocess.PIPE, text=True).stdout.lower()
+            # Verify Ollama API is running with a simple health check
+            ollama_url = "http://localhost:11434/api/generate"
+            health_check_url = "http://localhost:11434/"
+            
+            # First try a simple connection to check if Ollama is running
+            try:
+                health_response = requests.get(health_check_url, timeout=5)
+                if health_response.status_code != 200:
+                    self.logger.warning(f"Ollama API health check failed with status code: {health_response.status_code}")
+                    self.viewer.warning("Warning: Ollama API health check failed")
+                else:
+                    self.logger.debug("Ollama API health check successful")
+            except requests.exceptions.RequestException as e:
+                self.logger.warning(f"Ollama API health check failed: {str(e)}")
+                self.viewer.warning("Warning: Cannot connect to Ollama API. Please check if Ollama is running")
                 
-            if not ollama_running:
-                self.logger.warning("Ollama process not detected, service may not be running")
-                self.viewer.warning("Ollama service not detected - scanning may be limited")
+                # Check if Ollama process is running as a backup check
+                if os.name == 'posix':  # Unix/Linux
+                    ollama_running = subprocess.run(["pgrep", "ollama"], stdout=subprocess.PIPE).returncode == 0
+                else:  # Windows and others
+                    ollama_running = "ollama" in subprocess.run(["tasklist"], stdout=subprocess.PIPE, text=True).stdout.lower()
+                    
+                if not ollama_running:
+                    self.logger.error("Ollama process not detected, service is not running")
+                    self.viewer.warning("Ollama service not detected - trying to proceed without AI assistance")
+                    return self.generate_fallback_response(prompt)
+            
+            # Increase default timeout based on system resources
+            base_timeout = 180  # Increased base timeout to 3 minutes
             
             # Configure API timeout based on available system memory
-            timeout = 60  # Default timeout
             if HAS_PSUTIL:
                 total_mem = psutil.virtual_memory().total / (1024 * 1024 * 1024)  # GB
-                if total_mem < 12:  # Less than 12GB RAM
-                    timeout = 120  # Longer timeout for systems with less RAM
-                    self.logger.info(f"Limited system memory detected ({total_mem:.1f}GB), increasing Ollama timeout to {timeout}s")
+                # Scale timeout based on available memory
+                if total_mem < 8:  # Less than 8GB RAM
+                    timeout = base_timeout * 2  # 6 minutes for low-memory systems
+                    self.logger.warning(f"Limited system memory detected ({total_mem:.1f}GB), increasing Ollama timeout to {timeout}s")
+                    self.viewer.warning(f"Limited RAM detected ({total_mem:.1f}GB) - Ollama may be slow")
+                elif total_mem < 16:  # 8-16GB RAM
+                    timeout = base_timeout * 1.5  # 4.5 minutes for medium-memory systems
+                    self.logger.info(f"Medium system memory detected ({total_mem:.1f}GB), setting Ollama timeout to {timeout}s")
+                else:
+                    timeout = base_timeout  # Base timeout for high-memory systems
+                    self.logger.info(f"Sufficient system memory detected ({total_mem:.1f}GB)")
+            else:
+                timeout = base_timeout
+                self.logger.info(f"Using default timeout of {timeout}s for Ollama API")
             
-            # Modify URL depending on whether we're streaming
-            ollama_url = "http://localhost:11434/api/generate"
-            
+            # Prepare payload
             payload = {
                 "model": self.ollama_model,
                 "prompt": prompt,
@@ -1966,6 +1994,20 @@ class AdaptiveNmapScanner:
             }
             
             self.logger.debug(f"Calling Ollama API with model: {self.ollama_model}")
+            
+            # Try to verify model exists before making full request
+            try:
+                model_check_url = "http://localhost:11434/api/tags"
+                model_response = requests.get(model_check_url, timeout=5)
+                if model_response.status_code == 200:
+                    models = model_response.json().get("models", [])
+                    model_names = [model.get("name") for model in models]
+                    if self.ollama_model not in model_names:
+                        self.logger.warning(f"Model '{self.ollama_model}' not found in Ollama. Available models: {', '.join(model_names)}")
+                        self.viewer.warning(f"Warning: Model '{self.ollama_model}' may not be available. Try pulling it with 'ollama pull {self.ollama_model}'")
+            except Exception as e:
+                self.logger.debug(f"Failed to check available models: {str(e)}")
+            
             if stream:
                 self.viewer.header(f"LIVE AI ANALYSIS USING {self.ollama_model.upper()}", "=")
                 self.viewer.status("AI is analyzing the data... (showing live output)")
@@ -1983,7 +2025,18 @@ class AdaptiveNmapScanner:
                         if response.status_code != 200:
                             self.logger.error(f"Ollama API error: {response.status_code}")
                             print(f"\nAPI ERROR: {response.status_code}")
-                            return ""
+                            
+                            # Try to get more error details
+                            error_details = "Unknown error"
+                            try:
+                                error_details = response.json().get("error", "Unknown error")
+                            except:
+                                pass
+                                
+                            print(f"Error details: {error_details}")
+                            print(f"\nFalling back to default parameters...")
+                            
+                            return self.generate_fallback_response(prompt)
                         
                         buffer = ""
                         for line in response.iter_lines():
@@ -2012,32 +2065,184 @@ class AdaptiveNmapScanner:
                 except requests.exceptions.Timeout:
                     print("\nTIMEOUT ERROR: Ollama took too long to respond")
                     self.logger.error(f"Streaming request to Ollama timed out after {timeout}s")
-                    return ""
+                    print(f"\nFalling back to default parameters...")
+                    return self.generate_fallback_response(prompt)
             else:
                 # Non-streaming request
                 self.viewer.status(f"Getting AI recommendations using {self.ollama_model}...")
                 
-                response = requests.post(ollama_url, json=payload, timeout=timeout)
+                try:
+                    response = requests.post(ollama_url, json=payload, timeout=timeout)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result.get("response", "")
+                    else:
+                        self.logger.error(f"Ollama API error: {response.status_code}")
+                        self.viewer.warning(f"Ollama API returned error {response.status_code}, using fallback parameters")
+                        
+                        # Try to get more error details
+                        error_details = "Unknown error"
+                        try:
+                            error_details = response.json().get("error", "Unknown error")
+                            self.logger.error(f"Ollama error details: {error_details}")
+                        except:
+                            pass
+                        
+                        return self.generate_fallback_response(prompt)
+                except requests.exceptions.Timeout:
+                    self.logger.error(f"Ollama API request timed out after {timeout}s")
+                    self.viewer.warning(f"Ollama timeout - using fallback parameters")
+                    return self.generate_fallback_response(prompt)
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("response", "")
-                else:
-                    self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                    return ""
-                
-        except requests.exceptions.Timeout:
-            self.logger.error(f"Ollama API request timed out after {timeout}s. This may be due to limited system resources.")
-            self.viewer.warning(f"Ollama timeout - try with a smaller model or increase system resources")
-            return ""
         except requests.exceptions.ConnectionError:
             self.logger.error("Failed to connect to Ollama API. Make sure Ollama is running.")
-            self.viewer.error("Cannot connect to Ollama service. Check if it's running with 'pgrep ollama'")
-            return ""
+            self.viewer.warning("Cannot connect to Ollama service, using fallback parameters")
+            return self.generate_fallback_response(prompt)
         except Exception as e:
             self.logger.error(f"Error calling Ollama: {str(e)}")
             self.logger.debug(traceback.format_exc())
-            return ""
+            self.viewer.warning(f"Error using Ollama: {str(e)}")
+            return self.generate_fallback_response(prompt)
+            
+    def generate_fallback_response(self, prompt):
+        """Generate a fallback response when Ollama is unavailable."""
+        self.logger.info("Generating fallback parameters without AI assistance")
+        
+        # Determine what kind of response we need based on the prompt
+        if "recommend the next optimal Nmap scan parameters" in prompt:
+            # This is a scan parameter generation request
+            if self.stealth:
+                return (
+                    "Analysis: Using non-AI fallback parameters for stealth scan\n"
+                    "Parameters: [-sS -T2 -p- -Pn]\n"
+                    "Rationale: Stealth SYN scan with reduced timing to avoid detection"
+                )
+            else:
+                return (
+                    "Analysis: Using non-AI fallback parameters for thorough scan\n"
+                    "Parameters: [-sV -sC -O -p- --version-all]\n"
+                    "Rationale: Complete version detection, OS detection, and script scanning"
+                )
+        elif "generate a custom script" in prompt:
+            # This is a script generation request
+            script_type = "bash"
+            if "python script" in prompt:
+                script_type = "python"
+            elif "ruby script" in prompt:
+                script_type = "ruby"
+                
+            if script_type == "bash":
+                return (
+                    "```bash\n"
+                    "#!/bin/bash\n"
+                    "# SCRIPT SUMMARY: Basic host enumeration script (AI unavailable)\n"
+                    "\n"
+                    "TARGET=\"$1\"\n"
+                    "if [ -z \"$TARGET\" ]; then\n"
+                    "    echo \"Usage: $0 <target_ip>\"\n"
+                    "    exit 1\n"
+                    "fi\n"
+                    "\n"
+                    "echo \"Basic Host Enumeration for $TARGET\"\n"
+                    "echo \"--------------------------------\"\n"
+                    "\n"
+                    "# Basic ping check\n"
+                    "ping -c 1 -W 1 $TARGET > /dev/null\n"
+                    "if [ $? -eq 0 ]; then\n"
+                    "    echo \"[+] Host is up\"\n"
+                    "else\n"
+                    "    echo \"[-] Host appears to be down\"\n"
+                    "fi\n"
+                    "\n"
+                    "# Simple port scan with netcat\n"
+                    "echo \"[*] Checking common ports...\"\n"
+                    "for port in 21 22 23 25 53 80 443 445 3306 3389 8080; do\n"
+                    "    (echo > /dev/tcp/$TARGET/$port) > /dev/null 2>&1\n"
+                    "    if [ $? -eq 0 ]; then\n"
+                    "        echo \"[+] Port $port is open\"\n"
+                    "    fi\n"
+                    "done\n"
+                    "\n"
+                    "echo \"[*] Scan complete\"\n"
+                    "```"
+                )
+            elif script_type == "python":
+                return (
+                    "```python\n"
+                    "#!/usr/bin/env python3\n"
+                    "# SCRIPT SUMMARY: Basic port scanner (AI unavailable)\n"
+                    "\n"
+                    "import sys\n"
+                    "import socket\n"
+                    "\n"
+                    "def scan_host(target):\n"
+                    "    \"\"\"Scan common ports on the target host.\"\"\"\n"
+                    "    print(f\"Basic Port Scanner for {target}\")\n"
+                    "    print(\"-\" * 30)\n"
+                    "    \n"
+                    "    common_ports = [21, 22, 23, 25, 53, 80, 443, 445, 3306, 3389, 8080]\n"
+                    "    \n"
+                    "    for port in common_ports:\n"
+                    "        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+                    "        sock.settimeout(1)\n"
+                    "        result = sock.connect_ex((target, port))\n"
+                    "        if result == 0:\n"
+                    "            print(f\"[+] Port {port} is open\")\n"
+                    "        sock.close()\n"
+                    "    \n"
+                    "    print(\"[*] Scan complete\")\n"
+                    "\n"
+                    "if __name__ == \"__main__\":\n"
+                    "    if len(sys.argv) != 2:\n"
+                    "        print(f\"Usage: {sys.argv[0]} <target_ip>\")\n"
+                    "        sys.exit(1)\n"
+                    "    \n"
+                    "    scan_host(sys.argv[1])\n"
+                    "```"
+                )
+            else:  # Ruby
+                return (
+                    "```ruby\n"
+                    "#!/usr/bin/env ruby\n"
+                    "# SCRIPT SUMMARY: Basic port scanner (AI unavailable)\n"
+                    "\n"
+                    "require 'socket'\n"
+                    "\n"
+                    "def scan_port(ip, port)\n"
+                    "  begin\n"
+                    "    socket = TCPSocket.new(ip, port)\n"
+                    "    socket.close\n"
+                    "    return true\n"
+                    "  rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT\n"
+                    "    return false\n"
+                    "  end\n"
+                    "end\n"
+                    "\n"
+                    "if ARGV.length != 1\n"
+                    "  puts \"Usage: #{$0} <target_ip>\"\n"
+                    "  exit(1)\n"
+                    "end\n"
+                    "\n"
+                    "target = ARGV[0]\n"
+                    "\n"
+                    "puts \"Basic Port Scanner for #{target}\"\n"
+                    "puts \"-\" * 30\n"
+                    "\n"
+                    "common_ports = [21, 22, 23, 25, 53, 80, 443, 445, 3306, 3389, 8080]\n"
+                    "\n"
+                    "common_ports.each do |port|\n"
+                    "  if scan_port(target, port)\n"
+                    "    puts \"[+] Port #{port} is open\"\n"
+                    "  end\n"
+                    "end\n"
+                    "\n"
+                    "puts \"[*] Scan complete\"\n"
+                    "```"
+                )
+        else:
+            # Generic fallback
+            return "Ollama AI service unavailable. Using default parameters instead."
 
     def parse_ollama_response(self, response):
         """Parse Ollama response to extract Nmap parameters."""

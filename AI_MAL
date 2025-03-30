@@ -155,6 +155,187 @@ if [ ! -f "${PYTHON_SCRIPT}" ]; then
     exit 1
 fi
 
+# Function to check and start required services if needed
+ensure_services_running() {
+    echo -e "${YELLOW}Checking required services...${NC}"
+    
+    # Check if Metasploit RPC is running
+    if ! netstat -tuln 2>/dev/null | grep -q ":55553"; then
+        echo -e "${YELLOW}Metasploit RPC service not detected. Attempting to start...${NC}"
+        
+        # Check if running as root
+        if [ "$EUID" -ne 0 ]; then
+            echo -e "${RED}Error: Root privileges required to start Metasploit RPC service.${NC}"
+            echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start msfrpcd${NC}"
+        else
+            # Try systemd first
+            if systemctl list-unit-files | grep -q msfrpcd.service; then
+                echo -e "Starting Metasploit RPC service via systemd..."
+                systemctl start msfrpcd.service
+                sleep 2
+                if netstat -tuln 2>/dev/null | grep -q ":55553"; then
+                    echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+                else
+                    echo -e "${YELLOW}Starting Metasploit RPC manually...${NC}"
+                    nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
+                    sleep 2
+                    if netstat -tuln 2>/dev/null | grep -q ":55553"; then
+                        echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+                    else
+                        echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
+                    fi
+                fi
+            else
+                # Try direct command
+                echo -e "Starting Metasploit RPC manually..."
+                nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
+                sleep 2
+                if netstat -tuln 2>/dev/null | grep -q ":55553"; then
+                    echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+                else
+                    echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
+                fi
+            fi
+        fi
+    else
+        echo -e "${GREEN}Metasploit RPC service is running.${NC}"
+    fi
+    
+    # Now check Ollama
+    if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
+        echo -e "${YELLOW}Ollama service not detected. Attempting to start...${NC}"
+        
+        # Check if systemd service exists
+        if systemctl list-unit-files | grep -q ollama.service; then
+            echo -e "Starting Ollama via systemd..."
+            if [ "$EUID" -ne 0 ]; then
+                echo -e "${RED}Error: Root privileges required to start Ollama service.${NC}"
+                echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start ollama${NC}"
+            else
+                systemctl start ollama.service
+                # Wait for service to initialize
+                echo -e "Waiting for Ollama API to become available..."
+                
+                MAX_RETRIES=10
+                RETRY_DELAY=2
+                retry_count=0
+                
+                while [ $retry_count -lt $MAX_RETRIES ]; do
+                    if curl -s -o /dev/null -m 2 http://localhost:11434/; then
+                        echo -e "${GREEN}Successfully started Ollama service!${NC}"
+                        break
+                    else
+                        echo -e "${YELLOW}Waiting for Ollama to initialize... (${retry_count}/${MAX_RETRIES})${NC}"
+                        sleep $RETRY_DELAY
+                        retry_count=$((retry_count + 1))
+                    fi
+                done
+                
+                if [ $retry_count -eq $MAX_RETRIES ]; then
+                    echo -e "${RED}Failed to start Ollama service after multiple attempts.${NC}"
+                fi
+            fi
+        else
+            # Try direct command
+            echo -e "Starting Ollama manually..."
+            if pgrep ollama >/dev/null; then
+                echo -e "${YELLOW}Ollama process is running but API is not responding.${NC}"
+            else
+                if [ "$EUID" -ne 0 ]; then
+                    echo -e "${RED}Warning: Starting Ollama without root may have limited permissions.${NC}"
+                fi
+                nohup ollama serve >/dev/null 2>&1 &
+                
+                # Wait for service to initialize
+                echo -e "Waiting for Ollama API to become available..."
+                
+                MAX_RETRIES=10
+                RETRY_DELAY=2
+                retry_count=0
+                
+                while [ $retry_count -lt $MAX_RETRIES ]; do
+                    if curl -s -o /dev/null -m 2 http://localhost:11434/; then
+                        echo -e "${GREEN}Successfully started Ollama service!${NC}"
+                        break
+                    else
+                        echo -e "${YELLOW}Waiting for Ollama to initialize... (${retry_count}/${MAX_RETRIES})${NC}"
+                        sleep $RETRY_DELAY
+                        retry_count=$((retry_count + 1))
+                    fi
+                done
+                
+                if [ $retry_count -eq $MAX_RETRIES ]; then
+                    echo -e "${RED}Failed to start Ollama service after multiple attempts.${NC}"
+                fi
+            fi
+        fi
+    else
+        echo -e "${GREEN}Ollama service is running.${NC}"
+    fi
+    
+    echo ""
+}
+
+# Verify that Ollama is running if not using --help or --version
+if [[ "$*" != *"--help"* ]] && [[ "$*" != *"--version"* ]]; then
+    # Check if we need the dependency services
+    if [[ "$*" == *"--msf"* ]] || [[ ! "$*" == *"--version"* && ! "$*" == *"--help"* ]]; then
+        # Check and start required services
+        ensure_services_running
+    fi
+    
+    echo -e "${YELLOW}Verifying Ollama service is accessible...${NC}"
+    
+    # Try to connect to Ollama API
+    if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
+        echo -e "${RED}Warning: Cannot connect to Ollama API on http://localhost:11434/${NC}"
+        echo -e "This may affect AI functionality of the scanner."
+        echo -e "Please ensure Ollama is running with: ${GREEN}ollama serve${NC}"
+        
+        # Check if using --msf option only without AI features
+        if [[ "$*" == *"--msf"* ]] && [[ "$*" != *"--custom-scripts"* ]]; then
+            echo -e "${YELLOW}Continuing with MSF integration only (without AI features)...${NC}"
+        else
+            read -p "Continue without Ollama? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        fi
+    else
+        echo -e "${GREEN}Ollama service is accessible!${NC}"
+        
+        # Check if the specified model is available
+        if [[ "$*" == *"--model"* ]]; then
+            # Extract the model name from arguments
+            model=$(echo $* | grep -o -- "--model [^ ]*" | cut -d ' ' -f 2)
+            if [ -z "$model" ]; then
+                model="qwen2.5-coder:7b"  # Default model
+            fi
+            
+            echo -e "${YELLOW}Checking if model '$model' is available...${NC}"
+            if ! ollama list 2>/dev/null | grep -q "$model"; then
+                echo -e "${RED}Warning: Model '$model' may not be available in Ollama${NC}"
+                echo -e "You may need to pull it first with: ${GREEN}ollama pull $model${NC}"
+                
+                read -p "Would you like to try to pull the model now? (y/n) " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    echo -e "${YELLOW}Running: ollama pull $model${NC}"
+                    ollama pull $model
+                    if [ $? -ne 0 ]; then
+                        echo -e "${RED}Failed to pull model. Check the model name and try again.${NC}"
+                        exit 1
+                    fi
+                    echo -e "${GREEN}Model pulled successfully!${NC}"
+                fi
+            else
+                echo -e "${GREEN}Model '$model' is available!${NC}"
+            fi
+        fi
+    fi
+fi
+
 # Make sure the script is executable
 chmod +x "${PYTHON_SCRIPT}" 2>/tmp/chmod_error
 
