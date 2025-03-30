@@ -780,6 +780,55 @@ class AdaptiveNmapScanner:
         user = "msf"
         password = "msf_password"
         
+        # If a target is specified but no initial scan has been performed,
+        # run a quick port scan first to identify services
+        if self.target and not hasattr(self, 'scan_history') or not self.scan_history:
+            self.viewer.status(f"Running initial port scan on {self.target} to identify services...")
+            self.logger.info(f"Performing initial port scan on {self.target} for MSF integration")
+            
+            # Create a simple NmapScanner instance to run a quick service scan
+            import nmap
+            scanner = nmap.PortScanner()
+            try:
+                # Run a service scan on common ports
+                self.viewer.status("Scanning for common services (this may take a moment)...")
+                scanner.scan(self.target, arguments='-sS -sV -T4 --top-ports 1000')
+                
+                if self.target in scanner.all_hosts():
+                    # Store the results for later use
+                    if not hasattr(self, 'scan_history'):
+                        self.scan_history = []
+                    
+                    # Create a result object similar to what we'd get from a full adaptive scan
+                    result = {
+                        'ports': [],
+                        'os_info': scanner[self.target].get('osmatch', []),
+                        'hostnames': scanner[self.target].get('hostnames', []),
+                        'status': scanner[self.target].get('status', {}),
+                    }
+                    
+                    # Add port information
+                    for proto in scanner[self.target].all_protocols():
+                        for port in scanner[self.target][proto].keys():
+                            port_info = scanner[self.target][proto][port]
+                            result['ports'].append({
+                                'port': port,
+                                'protocol': proto,
+                                'state': port_info.get('state', ''),
+                                'service': port_info.get('name', ''),
+                                'product': port_info.get('product', ''),
+                                'version': port_info.get('version', ''),
+                            })
+                    
+                    self.scan_history.append(result)
+                    self.viewer.scan_summary(self.target, result)
+                    self.logger.info(f"Initial scan complete. Found {len(result['ports'])} open ports.")
+                else:
+                    self.viewer.warning(f"No host found at {self.target} during initial scan.")
+            except Exception as e:
+                self.logger.error(f"Error during initial scan: {str(e)}")
+                self.viewer.error(f"Failed to perform initial scan: {str(e)}")
+        
         # Try to connect to msfrpcd
         try:
             # Set a timeout for connection attempts
@@ -881,77 +930,105 @@ class AdaptiveNmapScanner:
             self.msf_integration = False
 
     def process_results_with_metasploit(self, result):
-        """Process the Nmap scan results with Metasploit."""
-        if not self.metasploit or not result:
+        """Process scan results with Metasploit to identify exploit opportunities."""
+        if not self.msf_integration or not hasattr(self, 'metasploit'):
             return
+
+        # If we have scan results but no specific result was passed, use the most recent scan
+        if result is None and hasattr(self, 'scan_history') and self.scan_history:
+            result = self.scan_history[-1]
+            self.logger.info("Using most recent scan results for Metasploit processing")
         
+        if not result:
+            self.logger.warning("No scan results available for Metasploit processing")
+            return
+
+        target = result.get('target', self.target)
+        if not target:
+            self.logger.warning("No target specified for Metasploit processing")
+            return
+
+        self.logger.info(f"Processing scan results for target {target} with Metasploit")
+        self.viewer.status(f"Analyzing {target} for potential exploits...")
+
+        # Import the Metasploit module
         try:
-            target = self.target
-            if target not in result.get('scan', {}):
-                logger.warning(f"Target {target} not found in scan results")
-                return
+            from pymetasploit3.msfrpc import MsfRpcClient
+        except ImportError:
+            self.logger.error("Failed to import pymetasploit3.msfrpc")
+            self.viewer.error("Failed to import pymetasploit3.msfrpc module")
+            return
             
-            host_data = result['scan'][target]
+        # Initialize discovered services dictionary if not already done
+        if not hasattr(self, 'discovered_services'):
+            self.discovered_services = {}
             
-            # Create or update host in MSF database
-            logger.info(f"Importing host {target} to Metasploit database")
-            
-            # Get hostname
+        try:
+            # Extract hostnames if available
             hostname = 'unknown'
-            if 'hostnames' in host_data and host_data['hostnames']:
-                hostname = host_data['hostnames'][0].get('name', 'unknown')
-            
+            if 'hostnames' in result and result['hostnames']:
+                if isinstance(result['hostnames'], list):
+                    hostname = result['hostnames'][0].get('name', 'unknown')
+                else:
+                    hostname = str(result['hostnames'])
+                    
             # Add host to database
             try:
                 self.metasploit.db.hosts.report(target, name=hostname)
-                logger.info(f"Added host {target} to Metasploit database")
+                self.logger.info(f"Added host {target} to Metasploit database")
             except Exception as e:
-                logger.warning(f"Error adding host to Metasploit: {str(e)}")
-            
+                self.logger.warning(f"Error adding host to Metasploit: {str(e)}")
+                
             # Process open ports
-            for protocol in ['tcp', 'udp']:
-                if protocol in host_data:
-                    for port, port_data in host_data[protocol].items():
-                        if port_data['state'] == 'open':
-                            service = port_data.get('name', 'unknown')
-                            product = port_data.get('product', '')
-                            version = port_data.get('version', '')
-                            
-                            # Add service to database
-                            try:
-                                self.metasploit.db.services.report(
-                                    target, 
-                                    port=int(port),
-                                    proto=protocol,
-                                    name=service,
-                                    info=f"{product} {version}".strip()
-                                )
-                                logger.info(f"Added service {service} on {port}/{protocol} to Metasploit database")
-                                
-                                # Add to discovered services
-                                port_key = f"{port}/{protocol}"
-                                self.discovered_services[port_key] = {
-                                    "service": service,
-                                    "product": product,
-                                    "version": version,
-                                    "exploited": False
-                                }
-                            except Exception as e:
-                                logger.warning(f"Error adding service to Metasploit: {str(e)}")
-            
+            if 'ports' in result and result['ports']:
+                self.viewer.status(f"Found {len(result['ports'])} ports to analyze")
+                
+                for port_data in result['ports']:
+                    if port_data.get('state') == 'open':
+                        port = port_data.get('port')
+                        protocol = port_data.get('protocol', 'tcp')
+                        service = port_data.get('service', 'unknown')
+                        product = port_data.get('product', '')
+                        version = port_data.get('version', '')
+                        
+                        # Add service to database
+                        try:
+                            self.metasploit.db.services.report(
+                                target, 
+                                port=int(port),
+                                proto=protocol,
+                                name=service,
+                                info=f"{product} {version}".strip()
+                            )
+                            self.logger.info(f"Added service {service} on {port}/{protocol} to Metasploit database")
+
+                            # Add to discovered services
+                            port_key = f"{port}/{protocol}"
+                            self.discovered_services[port_key] = {
+                                "service": service,
+                                "product": product,
+                                "version": version,
+                                "exploited": False
+                            }
+                        except Exception as e:
+                            self.logger.warning(f"Error adding service to Metasploit: {str(e)}")
+            else:
+                self.viewer.warning("No open ports found in scan results")
+                
             # If auto-exploit enabled, find matching exploits
             if self.exploit:
                 self.find_matching_exploits()
-            
+                
             # If auto-script enabled, generate and run resource script
-            if self.auto_script and self.matching_exploits:
+            if self.auto_script and hasattr(self, 'matching_exploits') and self.matching_exploits:
                 script_path = self.generate_resource_script()
                 if script_path:
                     self.run_resource_script(script_path)
-        
+                    
         except Exception as e:
-            logger.error(f"Error processing results with Metasploit: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error processing results with Metasploit: {str(e)}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
 
     def find_matching_exploits(self):
         """Find matching exploits for discovered services."""
@@ -1454,173 +1531,150 @@ class AdaptiveNmapScanner:
             return False
 
     def run(self):
-        """Start the adaptive scanning process."""
-        try:
-            # Display start banner
-            scan_type = "Full-Auto" if self.continuous else f"Limited ({self.max_iterations} iterations)"
-            self.viewer.display_start_banner(self.target or "Auto-discovery", scan_type, self.ollama_model)
+        """Run the adaptive scanner."""
+        # Set up signal handler for clean termination
+        signal.signal(signal.SIGINT, self._signal_handler)
+        self.running = True
+        
+        # Initialize scan history
+        if not hasattr(self, 'scan_history'):
+            self.scan_history = []
             
-            # Check if system has enough resources for Ollama
-            if HAS_PSUTIL:
-                mem_gb = psutil.virtual_memory().total / (1024 * 1024 * 1024)
-                if mem_gb < 8:
-                    self.viewer.warning(f"System has only {mem_gb:.1f}GB RAM. Ollama may be slow or unresponsive.")
-                    self.viewer.warning("Consider using a smaller model or increasing system resources.")
+        # Initial run variables
+        should_continue = True
+        iteration = 0
+        previous_result = None
+        
+        # Setup Metasploit integration if enabled
+        if self.msf_integration:
+            self.setup_metasploit()
             
-            # Set up Metasploit if enabled
-            if self.msf_integration:
-                animation = self.viewer.scanning_animation("Setting up Metasploit...", duration=2)
-                self.setup_metasploit()
-                animation.set()
-            
-            # If auto-discovery enabled, try to find targets first
-            if self.auto_discover and self.network_discovery:
-                logger.info("Starting network discovery")
-                if not self.target:
-                    discovered_hosts = self.network_discovery.discover_hosts()
-                    if not discovered_hosts:
-                        logger.error("No hosts discovered. Please check your network connection or specify a target.")
-                        return
-                    
-                    logger.info(f"Discovered {len(discovered_hosts)} hosts: {', '.join(discovered_hosts)}")
-                    self.target = discovered_hosts[0]  # Start with the first host
-                    self.discovered_hosts = discovered_hosts
-                    
-                    logger.info(f"Selected initial target: {self.target}")
-                else:
-                    # User specified a target but still wants auto-discovery
-                    self.discovered_hosts = self.network_discovery.discover_hosts()
-                    logger.info(f"User-specified target: {self.target}")
-                    if self.discovered_hosts:
-                        logger.info(f"Also discovered {len(self.discovered_hosts)} additional hosts")
-                        # Add user target if not in the list
-                        if self.target not in self.discovered_hosts:
-                            self.discovered_hosts.append(self.target)
-            
-            # Log startup information
-            logger.info(f"Starting adaptive Nmap scan against {self.target}")
-            logger.info(f"Using Ollama model: {self.ollama_model}")
-            logger.info(f"Delay between scans: {self.delay} seconds")
-            
-            if self.continuous:
-                logger.info("Running in continuous mode. Press Ctrl+C to stop.")
-            else:
-                logger.info(f"Maximum iterations: {self.max_iterations}")
+            # If --msf option is specified and no other scan options are set,
+            # and we already have scan results from the initial scan, 
+            # we can proceed directly to exploitation
+            if hasattr(self, 'scan_history') and self.scan_history and not hasattr(self, 'max_iterations'):
+                # Process the initial scan results with Metasploit
+                self.process_results_with_metasploit(self.scan_history[-1])
                 
-            if self.msf_integration:
-                logger.info("Metasploit integration: ENABLED")
-                if self.exploit:
-                    logger.info("Automatic exploitation: ENABLED")
-                if self.auto_script:
-                    logger.info("Auto script generation: ENABLED")
+                # If exploit flag is enabled, run exploits on the target
+                if self.exploit and self.target:
+                    self.run_exploits_on_host(self.target)
                     
-            if self.stealth:
-                logger.info("Stealth mode: ENABLED")
+                # If DoS attack is enabled, attempt it
+                if self.dos_attack and self.target:
+                    self.perform_dos_attack(self.target)
+                    
+                # Exit if we're just using the MSF option without adaptive scanning
+                should_continue = False
+        
+        # Main scan loop
+        while should_continue and self.running:
+            # Check if we need to discover hosts first
+            if self.auto_discover and iteration == 0:
+                self._discover_network()
+                
+                # If no target was explicitly specified but we found hosts,
+                # use the first discovered host as the target
+                if not self.target and self.discovered_hosts:
+                    self.target = self.discovered_hosts[0]
+                    self.logger.info(f"Setting first discovered host as target: {self.target}")
+                    self.viewer.status(f"Selected {self.target} as initial target")
+                    
+            # If no target is specified even after discovery, exit
+            if not self.target:
+                self.logger.error("No target specified for scanning")
+                self.viewer.error("No target specified. Use --target or --auto-discover option.")
+                break
             
-            # Begin adaptive scanning process
-            iteration = 1
-            scripts_generated = 0
+            # Display banner at the start of each iteration
+            if iteration == 0:
+                self.viewer.display_start_banner(
+                    self.target, 
+                    "Adaptive" if not self.stealth else "Stealth", 
+                    self.ollama_model
+                )
             
-            should_continue = True
-            while should_continue and self.running:
-                # Check if we've reached the maximum iterations
-                if not self.continuous and iteration > self.max_iterations:
-                    self.logger.info(f"Reached maximum iterations ({self.max_iterations}). Stopping.")
-                    should_continue = False
-                else:
-                    self.viewer.header(f"SCAN ITERATION {iteration}: {self.target}", "=")
+            # Generate scan parameters based on previous scan results
+            scan_params = self.generate_scan_parameters(iteration)
+            if not scan_params:
+                self.logger.error("Failed to generate scan parameters")
+                self.viewer.error("Failed to generate scan parameters")
+                break
+                
+            # Run the Nmap scan with the generated parameters
+            result = self.run_nmap_scan(scan_params)
+            
+            if result:
+                # Add target info to the result
+                result['target'] = self.target
+                
+                # Store result in scan history
+                self.scan_history.append(result)
+                
+                # Summarize results
+                self.summarize_results(result)
+                
+                # Process with Metasploit if integration enabled
+                if self.msf_integration:
+                    self.process_results_with_metasploit(result)
                     
-                    # Generate scan parameters
-                    scan_params = self.generate_scan_parameters(iteration)
-                    
-                    # Show scanning animation
-                    scan_message = f"Running scan iteration {iteration}/{self.max_iterations if not self.continuous else '∞'}"
-                    animation = self.viewer.scanning_animation(scan_message, duration=15)
-                    
-                    # Run the scan
-                    result = self.run_nmap_scan(scan_params)
-                    
-                    # Stop animation
-                    animation.set()
-                    
-                    if result:
-                        # Update scan history
-                        self.scan_history.append({
-                            "iteration": iteration,
-                            "target": self.target,
-                            "params": scan_params,
-                            "result_summary": self.summarize_results(result)
-                        })
-                        
-                        # Process results with Metasploit if enabled
-                        if self.msf_integration:
-                            self.process_results_with_metasploit(result)
-                            
-                            if self.exploit:
-                                self.run_exploits_on_host(self.target)
-                    
-                    # Run Metasploit exploits if enabled
-                    if self.msf_integration and self.exploit and should_continue:
+                    # If exploit flag is enabled, run exploits on the target
+                    if self.exploit:
                         self.run_exploits_on_host(self.target)
-                    
-                    # Perform DoS attack if enabled
-                    if self.dos_attack and should_continue:
-                        self.perform_dos_attack(self.target)
-                    
-                    # Generate custom scripts if enabled
-                    scripts_generated = len(self.generated_scripts)
-                    if self.custom_scripts and iteration >= 2 and scripts_generated < 3:
-                        self.logger.info(f"Generating custom {self.script_type} script based on scan results...")
-                        
-                        # Generate script
-                        script_path = self.generate_custom_script(script_type=self.script_type)
-                        
-                        if script_path:
-                            # Add to our list of generated scripts
-                            self.generated_scripts.append(script_path)
-                            
-                            # Execute the script if enabled
-                            if self.execute_scripts:
-                                self.logger.info(f"Executing generated script: {script_path}")
-                                self.viewer.status(f"Executing generated script...")
-                                self.execute_generated_script(script_path, [self.target])
-                            else:
-                                self.logger.info(f"Script generated but not executed. To run: {script_path} {self.target}")
                 
-                    iteration += 1
+                # Process with DoS if enabled
+                if self.dos_attack:
+                    self.perform_dos_attack(self.target)
                     
-                    # Check again before waiting to avoid unnecessary delay
-                    if not self.continuous and iteration > self.max_iterations:
-                        logger.info(f"Reached maximum iterations ({self.max_iterations}). Stopping.")
-                        should_continue = False
-                    else:
-                        logger.info(f"Waiting {self.delay} seconds before next scan...")
-                        time.sleep(self.delay)
+                # Generate custom scripts if enabled
+                if self.custom_scripts:
+                    script_path = self.generate_custom_script(
+                        script_type=self.script_type or self.determine_best_script_type(),
+                        target_info=result
+                    )
+                    
+                    # Execute generated scripts if enabled
+                    if self.execute_scripts and script_path:
+                        self.execute_generated_script(script_path)
+                
+                # Store for next iteration
+                previous_result = result
+                
+            # Update iteration counter
+            iteration += 1
             
-        except KeyboardInterrupt:
-            self.logger.info("\nScan interrupted by user. Exiting...")
-            self.viewer.warning("Scan interrupted by user. Exiting...")
-        except Exception as e:
-            self.logger.error(f"Error during scan: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.error(f"Error during scan: {str(e)}")
-        finally:
-            # Show summary of generated scripts
-            if self.custom_scripts and self.generated_scripts:
-                self.logger.info(f"\nGenerated {len(self.generated_scripts)} scripts:")
-                summary = []
-                summary.append(f"Total Scripts: {len(self.generated_scripts)}")
-                for script in self.generated_scripts:
-                    summary.append(f"  - {script}")
-                self.viewer.result_box("GENERATED SCRIPTS SUMMARY", "\n".join(summary))
-            
-            # Clean up resources
-            if self.metasploit:
-                try:
-                    self.metasploit.disconnect()
-                    logger.info("Disconnected from Metasploit")
-                except:
-                    pass
+            # Check if we should continue
+            if self.continuous:
+                self.logger.info("Continuous mode enabled, continuing to next scan")
+                should_continue = True
+            elif self.max_iterations and iteration < self.max_iterations:
+                self.logger.info(f"Completed iteration {iteration}/{self.max_iterations}")
+                should_continue = True
+            else:
+                self.logger.info("Maximum iterations reached or not in continuous mode. Exiting.")
+                should_continue = False
+                
+            # Move to next target if scanning all hosts
+            if self.scan_all and not self.continuous:
+                if self.next_target():
+                    should_continue = True
+                    # Reset iteration counter for the new target
+                    iteration = 0
+                else:
+                    should_continue = False
+                    
+            # Add delay between iterations if needed
+            if should_continue and self.delay > 0:
+                self.logger.info(f"Waiting {self.delay} seconds before next scan")
+                time.sleep(self.delay)
+        
+        # Final message
+        if not self.running:
+            self.logger.info("Scan terminated by user")
+            self.viewer.warning("Scan terminated by user")
+        else:
+            self.logger.info("Scan completed successfully")
+            self.viewer.success("Scan completed successfully")
 
     def determine_best_script_type(self):
         """Determine the best script type based on discovered services."""
