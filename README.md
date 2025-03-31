@@ -1,6 +1,6 @@
-# AI_MAL 
+# AI_MAL: Advanced Intelligent Metasploit AI Learner
 
-combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
+AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
 
 ## Features
 
@@ -154,6 +154,10 @@ docker run --net=host --privileged -it ai_mal --full-auto
 ## Security Notice
 
 This tool is intended for legitimate security testing and educational purposes only. Unauthorized scanning and exploitation of systems is illegal and unethical. Always obtain proper authorization before testing any systems.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Key Features
 
