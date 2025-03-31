@@ -79,10 +79,17 @@ mkdir -p $INSTALL_DIR
 echo -e "\n${GREEN}Step 1: Installing system dependencies...${NC}"
 apt update
 # Install required system packages
-apt install -y python3 python3-pip python3-venv nmap metasploit-framework dos2unix
+apt install -y python3 python3-pip nmap metasploit-framework dos2unix
 
 echo -e "\n${GREEN}Step 2: Setting up Python virtual environment...${NC}"
+# Install python3-venv if not already installed
+if ! dpkg -l | grep -q python3-venv; then
+  echo "Installing python3-venv package..."
+  apt install -y python3-venv
+fi
+
 # Create virtual environment
+echo "Creating Python virtual environment at $INSTALL_DIR/venv..."
 python3 -m venv $INSTALL_DIR/venv
 
 # Activate virtual environment
@@ -90,8 +97,24 @@ source $INSTALL_DIR/venv/bin/activate
 
 # Install Python dependencies in the virtual environment
 echo -e "Installing Python packages in virtual environment..."
+# Upgrade pip first
 pip install --upgrade pip
-pip install nmap requests pymetasploit3 psutil netifaces
+
+# Install packages one by one to better handle errors
+echo "Installing python-nmap..."
+pip install python-nmap
+
+echo "Installing requests..."
+pip install requests
+
+echo "Installing pymetasploit3..."
+pip install pymetasploit3
+
+echo "Installing psutil..."
+pip install psutil
+
+echo "Installing netifaces..."
+pip install netifaces
 
 # Verify pymetasploit3 installation
 echo -e "\n${YELLOW}Verifying pymetasploit3 installation...${NC}"
@@ -108,8 +131,18 @@ if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasplo
     echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
   fi
 else
-  echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
+  echo -e "${GREEN}pymetasploit3 correctly installed!${NC}"
 fi
+
+# Create a wrapper script to activate the virtual environment
+echo "Creating virtual environment wrapper..."
+cat > $INSTALL_DIR/venv_wrapper.sh << EOL
+#!/bin/bash
+# This script activates the virtual environment and runs the given command
+source $INSTALL_DIR/venv/bin/activate
+exec "\$@"
+EOL
+chmod +x $INSTALL_DIR/venv_wrapper.sh
 
 # Deactivate virtual environment
 deactivate

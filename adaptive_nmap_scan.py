@@ -26,6 +26,7 @@ import stat
 import signal
 import pymetasploit3
 from pymetasploit3.msfrpc import MsfRpcClient
+import itertools
 
 try:
     import psutil
@@ -44,6 +45,38 @@ if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(console_handler)
+
+class DummyAnimator:
+    """Dummy animator for when quiet mode is enabled."""
+    def set(self):
+        pass
+
+class SingleLineAnimation:
+    """Animation class that shows a spinner on a single line."""
+    def __init__(self, message, interval=0.1):
+        self.message = message
+        self.interval = interval
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._animate)
+        self.thread.daemon = True
+        self.thread.start()
+    
+    def _animate(self):
+        """Animation loop that uses a spinner and stays on a single line."""
+        spinner = itertools.cycle(['|', '/', '-', '\\'])
+        try:
+            while not self.stop_event.is_set():
+                print(f'\r[{next(spinner)}] {self.message}', end='', flush=True)
+                time.sleep(self.interval)
+        finally:
+            # Print completion message when done
+            print(f'\r[✓] {self.message} - Complete', end='', flush=True)
+            print()
+    
+    def set(self):
+        """Stop the animation."""
+        self.stop_event.set()
+        self.thread.join(timeout=1)  # Wait for thread to finish with timeout
 
 class TerminalViewer:
     """Class to handle terminal output formatting and display."""
@@ -255,12 +288,14 @@ class TerminalViewer:
         percent = ("{0:.1f}").format(100 * (current / float(total)))
         filled_length = int(length * current // total)
         bar = fill * filled_length + '-' * (length - filled_length)
-        print(f'\r{prefix} |{bar}| {percent}% {suffix}', end='\r')
         
-        # Print new line on complete
-        if current == total:
+        # Use carriage return to rewrite the line each time
+        print(f'\r{prefix} |{bar}| {percent}% {suffix}', end='', flush=True)
+        
+        # Only print newline when complete
+        if current >= total:
             print()
-    
+            
     def display_start_banner(self, target, scan_type, model):
         """Display a banner when the scanner starts."""
         if self.quiet:
@@ -283,30 +318,13 @@ class TerminalViewer:
         
         print("\n".join(banner))
 
-    def scanning_animation(self, text, duration=5, interval=0.1):
-        """Display a scanning animation for the specified duration."""
+    def scanning_animation(self, message, duration=0):
+        """Create a scanning animation."""
         if self.quiet:
-            return
+            return DummyAnimator()
             
-        import itertools
-        import time
-        import threading
-        
-        animation = itertools.cycle(['|', '/', '-', '\\'])
-        stop_animation = threading.Event()
-        
-        def animate():
-            for _ in range(int(duration / interval)):
-                if stop_animation.is_set():
-                    break
-                print(f'\r[{next(animation)}] {text}', end='')
-                time.sleep(interval)
-            print(f'\r[✓] {text} - Complete' + ' ' * 20)
-            
-        t = threading.Thread(target=animate)
-        t.start()
-        
-        return stop_animation
+        # Return a simple thread-based animation that uses a single line
+        return SingleLineAnimation(message)
 
 class NetworkDiscovery:
     """Class to handle automatic network discovery."""
@@ -1794,9 +1812,8 @@ class AdaptiveNmapScanner:
             
             # Start time for progress estimation
             start_time = time.time()
-            estimated_duration = 60  # Default estimated scan time in seconds
             
-            # Start scan in a separate thread so we can update progress bar
+            # Start scan in a separate thread so we can show a single-line animation
             scan_completed = threading.Event()
             scan_result = [None]
             
@@ -1807,30 +1824,20 @@ class AdaptiveNmapScanner:
                     scan_completed.set()
             
             scan_thread = threading.Thread(target=run_scan)
+            scan_thread.daemon = True
             scan_thread.start()
             
-            # Show progress bar while scanning
-            while not scan_completed.is_set():
-                elapsed = time.time() - start_time
-                progress = min(elapsed / estimated_duration, 0.99)  # Cap at 99% until complete
-                self.viewer.progress_bar(
-                    current=int(progress * 100),
-                    total=100,
-                    prefix=f'Scanning {target}:',
-                    suffix=f'Elapsed: {int(elapsed)}s'
-                )
-                time.sleep(0.5)
+            # Show a simple spinner animation while scanning
+            animation = self.viewer.scanning_animation(f"Scanning {target}")
             
-            # Ensure the thread is done
-            scan_thread.join()
+            # Wait for scan to complete
+            scan_completed.wait()
             
-            # Final progress update
-            self.viewer.progress_bar(
-                current=100,
-                total=100,
-                prefix=f'Scanning {target}:',
-                suffix=f'Complete in {int(time.time() - start_time)}s'
-            )
+            # Stop animation
+            animation.set()
+            
+            # Calculate scan duration
+            scan_duration = int(time.time() - start_time)
             
             result = scan_result[0]
             
@@ -1838,7 +1845,7 @@ class AdaptiveNmapScanner:
                 host_info = nm[target]
                 tcp_count = len(host_info.get('tcp', {}))
                 udp_count = len(host_info.get('udp', {}))
-                self.logger.info(f"Scan completed: {tcp_count} TCP ports and {udp_count} UDP ports found")
+                self.logger.info(f"Scan completed in {scan_duration}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
                 
                 # Display scan summary
                 self.viewer.scan_summary(target, result)

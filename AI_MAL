@@ -373,9 +373,29 @@ fi
 
 # Execute the Python script with all arguments passed to this script
 if [ "${display_version}" = true ]; then
-    ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" --version
+    if [ -x "${VENV_DIR}/bin/python3" ]; then
+        # Use virtual environment directly if available
+        ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" --version
+    elif [ -x "${INSTALL_DIR}/venv_wrapper.sh" ]; then
+        # Use the wrapper script if available
+        ${INSTALL_DIR}/venv_wrapper.sh python3 "${PYTHON_SCRIPT}" --version
+    else
+        # Fall back to system Python
+        echo -e "${YELLOW}Warning: Virtual environment not found, using system Python${NC}"
+        python3 "${PYTHON_SCRIPT}" --version
+    fi
 else
-    ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" "$@"
+    if [ -x "${VENV_DIR}/bin/python3" ]; then
+        # Use virtual environment directly if available
+        ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" "$@"
+    elif [ -x "${INSTALL_DIR}/venv_wrapper.sh" ]; then
+        # Use the wrapper script if available
+        ${INSTALL_DIR}/venv_wrapper.sh python3 "${PYTHON_SCRIPT}" "$@"
+    else
+        # Fall back to system Python
+        echo -e "${YELLOW}Warning: Virtual environment not found, using system Python${NC}"
+        python3 "${PYTHON_SCRIPT}" "$@"
+    fi
 fi
 
 # Clean up temp file

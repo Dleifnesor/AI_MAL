@@ -52,7 +52,7 @@ sudo python3 -m venv /opt/ai_mal/venv
 source /opt/ai_mal/venv/bin/activate
 
 # Install Python packages
-pip install nmap requests pymetasploit3 psutil netifaces
+pip install python-nmap requests pymetasploit3 psutil netifaces
 
 # Deactivate when done
 deactivate
@@ -233,7 +233,17 @@ You can always run AI_MAL without waiting for a system restart - it will detect 
   # Recreate the virtual environment
   sudo rm -rf /opt/ai_mal/venv
   sudo python3 -m venv /opt/ai_mal/venv
-  sudo /opt/ai_mal/venv/bin/pip install nmap requests pymetasploit3 psutil netifaces
+  sudo /opt/ai_mal/venv/bin/pip install python-nmap requests pymetasploit3 psutil netifaces
+  ```
+
+- If you get "No module named 'venv'" error:
+  ```bash
+  # Install the python3-venv package 
+  sudo apt update
+  sudo apt install -y python3-venv
+  
+  # Then rerun the installation script
+  sudo ./install.sh
   ```
 
 - If you get permission errors with the virtual environment:
@@ -243,26 +253,42 @@ You can always run AI_MAL without waiting for a system restart - it will detect 
   sudo chmod -R 755 /opt/ai_mal/venv
   ```
 
+- If you specifically get "No matching distribution found for nmap":
+  ```bash
+  # The package name in PyPI is 'python-nmap', not 'nmap'
+  sudo /opt/ai_mal/venv/bin/pip install python-nmap
+  ```
+
+- If you encounter installation errors with specific packages:
+  ```bash
+  # Install one package at a time to identify the problematic package
+  sudo /opt/ai_mal/venv/bin/pip install python-nmap
+  sudo /opt/ai_mal/venv/bin/pip install requests
+  sudo /opt/ai_mal/venv/bin/pip install psutil
+  sudo /opt/ai_mal/venv/bin/pip install netifaces
+  sudo /opt/ai_mal/venv/bin/pip install pymetasploit3
+  ```
+
+### Python Issues on Fresh Kali Linux Installations
+
+- If you see "externally-managed-environment" errors:
+  ```bash 
+  # Use a virtual environment (recommended)
+  sudo python3 -m venv /opt/ai_mal/venv
+  source /opt/ai_mal/venv/bin/activate
+  pip install <package-name>
+  deactivate
+  ```
+
+- If you're missing development headers:
+  ```bash
+  # Install development packages for building Python extensions
+  sudo apt install -y python3-dev libffi-dev build-essential
+  ```
+
 ### Ollama Model Problems
 - If Ollama fails to load models, ensure you have enough RAM (8GB+ recommended).
 - For systems with limited RAM, use the smaller `llama3` model instead of `qwen2.5-coder:7b`.
-
-### Python Installation Errors
-
-- If you encounter "externally-managed-environment" errors:
-  ```bash
-  # This happens in newer Python versions that are managed by the system package manager
-  # Add the --break-system-packages flag to pip commands:
-  sudo pip3 install --break-system-packages <package-name>
-  ```
-
-- If packages fail to install:
-  ```bash
-  # Try installing dev packages that might be needed for compilation
-  sudo apt install -y python3-dev build-essential
-  sudo pip3 install --break-system-packages --upgrade pip setuptools wheel
-  sudo pip3 install --break-system-packages <package-name>
-  ```
 
 ### Ollama Connection Issues
 - If you see "Cannot connect to Ollama API" or similar errors:
