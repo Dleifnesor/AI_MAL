@@ -9,31 +9,102 @@ NC='\033[0m' # No Color
 
 VERSION="1.0.0"
 
-# Find the right Python script
+# Find the right Python script and virtual environment
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-INSTALL_DIR="/opt/ai_mal"
+INSTALL_DIRS=("/opt/ai_mal" "/usr/local/ai_mal" "/usr/share/ai_mal" "/usr/local/bin" "$HOME/.local/bin")
 
+# First check if we're running from the source directory
 if [ -f "${SCRIPT_DIR}/adaptive_nmap_scan.py" ]; then
-    # Running from the same directory
     PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
-    VENV_DIR="${SCRIPT_DIR}/venv"
-elif [ -f "${INSTALL_DIR}/adaptive_nmap_scan.py" ]; then
-    # Running from installed location
-    PYTHON_SCRIPT="${INSTALL_DIR}/adaptive_nmap_scan.py"
-    VENV_DIR="${INSTALL_DIR}/venv"
+    # Check for venv in multiple locations relative to script dir
+    if [ -d "${SCRIPT_DIR}/venv" ]; then
+        VENV_DIR="${SCRIPT_DIR}/venv"
+    elif [ -d "${SCRIPT_DIR}/../venv" ]; then
+        VENV_DIR="${SCRIPT_DIR}/../venv"
+    fi
 else
+    # Check all possible installation directories
+    PYTHON_SCRIPT=""
+    for dir in "${INSTALL_DIRS[@]}"; do
+        if [ -f "${dir}/adaptive_nmap_scan.py" ]; then
+            PYTHON_SCRIPT="${dir}/adaptive_nmap_scan.py"
+            # Try to find venv in or near this directory
+            if [ -d "${dir}/venv" ]; then
+                VENV_DIR="${dir}/venv"
+            elif [ -d "${dir}/../venv" ]; then
+                VENV_DIR="${dir}/../venv"
+            fi
+            break
+        fi
+    done
+    
+    # If still not found, check if we're a symlink and look at the target
+    if [ -z "$PYTHON_SCRIPT" ] && [ -L "$0" ]; then
+        SYMLINK_TARGET=$(readlink -f "$0")
+        SYMLINK_DIR=$(dirname "$SYMLINK_TARGET")
+        if [ -f "${SYMLINK_DIR}/adaptive_nmap_scan.py" ]; then
+            PYTHON_SCRIPT="${SYMLINK_DIR}/adaptive_nmap_scan.py"
+            if [ -d "${SYMLINK_DIR}/venv" ]; then
+                VENV_DIR="${SYMLINK_DIR}/venv"
+            elif [ -d "${SYMLINK_DIR}/../venv" ]; then
+                VENV_DIR="${SYMLINK_DIR}/../venv"
+            fi
+        fi
+    fi
+fi
+
+# If Python script still not found, exit with error
+if [ -z "$PYTHON_SCRIPT" ]; then
     echo -e "${RED}ERROR: Cannot find the adaptive_nmap_scan.py script${NC}"
+    echo -e "Make sure AI_MAL is properly installed."
     exit 1
 fi
 
-# Verify virtual environment exists
-if [ ! -d "$VENV_DIR" ]; then
-    echo -e "${RED}Error: Python virtual environment not found at $VENV_DIR${NC}"
-    echo -e "Please reinstall AI_MAL or create the virtual environment manually:"
-    echo -e "  cd $INSTALL_DIR"
-    echo -e "  python3 -m venv venv"
-    echo -e "  source venv/bin/activate"
-    echo -e "  pip install nmap requests pymetasploit3 psutil netifaces"
+# Get the installation directory from where we found the script
+INSTALL_DIR=$(dirname "$PYTHON_SCRIPT")
+echo -e "${BLUE}Found AI_MAL installation at: ${INSTALL_DIR}${NC}"
+
+# If no venv found yet, check for system Python with required modules
+if [ -z "$VENV_DIR" ]; then
+    echo -e "${YELLOW}No virtual environment found, checking system Python...${NC}"
+    
+    # Check if system Python has the required modules
+    MISSING_MODULES=0
+    for module in "nmap" "requests" "pymetasploit3" "netifaces"; do
+        if ! python3 -c "import $module" 2>/dev/null; then
+            MISSING_MODULES=$((MISSING_MODULES+1))
+        fi
+    done
+    
+    if [ $MISSING_MODULES -eq 0 ]; then
+        echo -e "${GREEN}All required modules found in system Python. Using system Python.${NC}"
+        SYSTEM_PYTHON=1
+    else
+        # Try to create a venv in the installation directory
+        echo -e "${YELLOW}Creating virtual environment in ${INSTALL_DIR}/venv...${NC}"
+        python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null
+        if [ -d "${INSTALL_DIR}/venv" ]; then
+            VENV_DIR="${INSTALL_DIR}/venv"
+            echo -e "${GREEN}Created virtual environment at: ${VENV_DIR}${NC}"
+            echo -e "${YELLOW}Installing required packages...${NC}"
+            "${VENV_DIR}/bin/pip" install python-nmap requests pymetasploit3 psutil netifaces
+        else
+            echo -e "${RED}Error: Could not create a virtual environment.${NC}"
+            echo -e "Please install required modules manually:"
+            echo -e "  ${GREEN}pip install python-nmap requests pymetasploit3 psutil netifaces${NC}"
+            exit 1
+        fi
+    fi
+fi
+
+# Verify virtual environment exists if we're using one
+if [ -z "$SYSTEM_PYTHON" ] && [ ! -d "$VENV_DIR" ]; then
+    echo -e "${RED}Error: Python virtual environment not found.${NC}"
+    echo -e "Please run the following commands to create it:"
+    echo -e "  ${GREEN}cd ${INSTALL_DIR}${NC}"
+    echo -e "  ${GREEN}python3 -m venv venv${NC}"
+    echo -e "  ${GREEN}source venv/bin/activate${NC}"
+    echo -e "  ${GREEN}pip install python-nmap requests pymetasploit3 psutil netifaces${NC}"
     exit 1
 fi
 
@@ -145,31 +216,17 @@ for arg in "$@"; do
     fi
 done
 
+# Display version if requested
+if [ "$display_version" = true ]; then
+    echo "AI_MAL Adaptive Nmap Scanner version ${VERSION}"
+    echo "Copyright (c) 2024"
+    exit 0
+fi
+
 # Check if Python is installed
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}Error: Python 3 is required but not installed.${NC}"
     exit 1
-fi
-
-# Check if required Python modules are installed
-check_python_module() {
-    python3 -c "import $1" 2>/dev/null
-    return $?
-}
-
-if ! check_python_module "pymetasploit3"; then
-    echo -e "${YELLOW}Warning: pymetasploit3 module not found.${NC}"
-    echo -e "To install: ${GREEN}pip install pymetasploit3${NC}"
-    echo -e "MSF integration will not be available until you install this module."
-    echo ""
-    if [[ "$*" == *"--msf"* ]]; then
-        echo -e "${RED}You specified --msf but the required module is missing.${NC}"
-        read -p "Do you want to continue without MSF integration? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
 fi
 
 # Check if the Python script exists
@@ -179,28 +236,45 @@ if [ ! -f "${PYTHON_SCRIPT}" ]; then
     exit 1
 fi
 
+# Check if MSF options are requested
+if [[ "$*" == *"--msf"* ]]; then
+    MSF_REQUESTED=1
+fi
+
 # Function to check and start required services if needed
 ensure_services_running() {
     echo -e "${YELLOW}Checking required services...${NC}"
     
-    # Check if Metasploit RPC is running
-    if ! netstat -tuln 2>/dev/null | grep -q ":55553"; then
-        echo -e "${YELLOW}Metasploit RPC service not detected. Attempting to start...${NC}"
-        
-        # Check if running as root
-        if [ "$EUID" -ne 0 ]; then
-            echo -e "${RED}Error: Root privileges required to start Metasploit RPC service.${NC}"
-            echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start msfrpcd${NC}"
-        else
-            # Try systemd first
-            if systemctl list-unit-files | grep -q msfrpcd.service; then
-                echo -e "Starting Metasploit RPC service via systemd..."
-                systemctl start msfrpcd.service
-                sleep 2
-                if netstat -tuln 2>/dev/null | grep -q ":55553"; then
-                    echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+    # Check if Metasploit RPC is requested and running
+    if [ "$MSF_REQUESTED" = "1" ]; then
+        if ! netstat -tuln 2>/dev/null | grep -q ":55553"; then
+            echo -e "${YELLOW}Metasploit RPC service not detected. Attempting to start...${NC}"
+            
+            # Check if running as root
+            if [ "$EUID" -ne 0 ]; then
+                echo -e "${RED}Error: Root privileges required to start Metasploit RPC service.${NC}"
+                echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start msfrpcd${NC}"
+            else
+                # Try systemd first
+                if systemctl list-unit-files | grep -q msfrpcd.service; then
+                    echo -e "Starting Metasploit RPC service via systemd..."
+                    systemctl start msfrpcd.service
+                    sleep 2
+                    if netstat -tuln 2>/dev/null | grep -q ":55553"; then
+                        echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+                    else
+                        echo -e "${YELLOW}Starting Metasploit RPC manually...${NC}"
+                        nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
+                        sleep 2
+                        if netstat -tuln 2>/dev/null | grep -q ":55553"; then
+                            echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
+                        else
+                            echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
+                        fi
+                    fi
                 else
-                    echo -e "${YELLOW}Starting Metasploit RPC manually...${NC}"
+                    # Try direct command
+                    echo -e "Starting Metasploit RPC manually..."
                     nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
                     sleep 2
                     if netstat -tuln 2>/dev/null | grep -q ":55553"; then
@@ -209,20 +283,10 @@ ensure_services_running() {
                         echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
                     fi
                 fi
-            else
-                # Try direct command
-                echo -e "Starting Metasploit RPC manually..."
-                nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
-                sleep 2
-                if netstat -tuln 2>/dev/null | grep -q ":55553"; then
-                    echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
-                else
-                    echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
-                fi
             fi
+        else
+            echo -e "${GREEN}Metasploit RPC service is running.${NC}"
         fi
-    else
-        echo -e "${GREEN}Metasploit RPC service is running.${NC}"
     fi
     
     # Now check Ollama
@@ -248,26 +312,24 @@ ensure_services_running() {
                     if curl -s -o /dev/null -m 2 http://localhost:11434/; then
                         echo -e "${GREEN}Successfully started Ollama service!${NC}"
                         break
-                    else
-                        echo -e "${YELLOW}Waiting for Ollama to initialize... (${retry_count}/${MAX_RETRIES})${NC}"
-                        sleep $RETRY_DELAY
-                        retry_count=$((retry_count + 1))
                     fi
+                    
+                    echo -n "."
+                    sleep $RETRY_DELAY
+                    retry_count=$((retry_count + 1))
                 done
                 
                 if [ $retry_count -eq $MAX_RETRIES ]; then
-                    echo -e "${RED}Failed to start Ollama service after multiple attempts.${NC}"
+                    echo -e "${RED}Failed to start Ollama service within timeout.${NC}"
+                    echo -e "Please start Ollama manually with: ${GREEN}ollama serve${NC}"
                 fi
             fi
         else
-            # Try direct command
-            echo -e "Starting Ollama manually..."
-            if pgrep ollama >/dev/null; then
-                echo -e "${YELLOW}Ollama process is running but API is not responding.${NC}"
+            # No systemd service, try direct command
+            echo -e "${YELLOW}No Ollama systemd service found, trying direct command...${NC}"
+            if [ "$EUID" -ne 0 ]; then
+                echo -e "${RED}Please start Ollama manually with: ${GREEN}ollama serve${NC}"
             else
-                if [ "$EUID" -ne 0 ]; then
-                    echo -e "${RED}Warning: Starting Ollama without root may have limited permissions.${NC}"
-                fi
                 nohup ollama serve >/dev/null 2>&1 &
                 
                 # Wait for service to initialize
@@ -281,122 +343,44 @@ ensure_services_running() {
                     if curl -s -o /dev/null -m 2 http://localhost:11434/; then
                         echo -e "${GREEN}Successfully started Ollama service!${NC}"
                         break
-                    else
-                        echo -e "${YELLOW}Waiting for Ollama to initialize... (${retry_count}/${MAX_RETRIES})${NC}"
-                        sleep $RETRY_DELAY
-                        retry_count=$((retry_count + 1))
                     fi
+                    
+                    echo -n "."
+                    sleep $RETRY_DELAY
+                    retry_count=$((retry_count + 1))
                 done
                 
                 if [ $retry_count -eq $MAX_RETRIES ]; then
-                    echo -e "${RED}Failed to start Ollama service after multiple attempts.${NC}"
+                    echo -e "${RED}Failed to start Ollama service within timeout.${NC}"
+                    echo -e "Please start Ollama manually with: ${GREEN}ollama serve${NC}"
                 fi
             fi
         fi
     else
         echo -e "${GREEN}Ollama service is running.${NC}"
     fi
-    
-    echo ""
 }
 
-# Verify that Ollama is running if not using --help or --version
-if [[ "$*" != *"--help"* ]] && [[ "$*" != *"--version"* ]]; then
-    # Check if we need the dependency services
-    if [[ "$*" == *"--msf"* ]] || [[ ! "$*" == *"--version"* && ! "$*" == *"--help"* ]]; then
-        # Check and start required services
-        ensure_services_running
-    fi
-    
-    echo -e "${YELLOW}Verifying Ollama service is accessible...${NC}"
-    
-    # Try to connect to Ollama API
-    if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
-        echo -e "${RED}Warning: Cannot connect to Ollama API on http://localhost:11434/${NC}"
-        echo -e "This may affect AI functionality of the scanner."
-        echo -e "Please ensure Ollama is running with: ${GREEN}ollama serve${NC}"
-        
-        # Check if using --msf option only without AI features
-        if [[ "$*" == *"--msf"* ]] && [[ "$*" != *"--custom-scripts"* ]]; then
-            echo -e "${YELLOW}Continuing with MSF integration only (without AI features)...${NC}"
-        else
-            read -p "Continue without Ollama? (y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
-            fi
-        fi
-    else
-        echo -e "${GREEN}Ollama service is accessible!${NC}"
-        
-        # Check if the specified model is available
-        if [[ "$*" == *"--model"* ]]; then
-            # Extract the model name from arguments
-            model=$(echo $* | grep -o -- "--model [^ ]*" | cut -d ' ' -f 2)
-            if [ -z "$model" ]; then
-                model="qwen2.5-coder:7b"  # Default model
-            fi
-            
-            echo -e "${YELLOW}Checking if model '$model' is available...${NC}"
-            if ! ollama list 2>/dev/null | grep -q "$model"; then
-                echo -e "${RED}Warning: Model '$model' may not be available in Ollama${NC}"
-                echo -e "You may need to pull it first with: ${GREEN}ollama pull $model${NC}"
-                
-                read -p "Would you like to try to pull the model now? (y/n) " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    echo -e "${YELLOW}Running: ollama pull $model${NC}"
-                    ollama pull $model
-                    if [ $? -ne 0 ]; then
-                        echo -e "${RED}Failed to pull model. Check the model name and try again.${NC}"
-                        exit 1
-                    fi
-                    echo -e "${GREEN}Model pulled successfully!${NC}"
-                fi
-            else
-                echo -e "${GREEN}Model '$model' is available!${NC}"
-            fi
-        fi
-    fi
+# Check for full auto mode
+if [[ "$*" == *"--full-auto"* ]]; then
+    ensure_services_running
 fi
 
-# Make sure the script is executable
-chmod +x "${PYTHON_SCRIPT}" 2>/tmp/chmod_error
-
-# Check if chmod failed
-if [ -s /tmp/chmod_error ]; then
-    echo -e "${YELLOW}Warning: Could not set execute permissions on ${PYTHON_SCRIPT}${NC}"
-    echo -e "This is usually due to running without root privileges or mounted file systems."
-    echo -e "The script will still work, but this warning indicates you may encounter other permission issues."
-    echo ""
-fi
-
-# Execute the Python script with all arguments passed to this script
-if [ "${display_version}" = true ]; then
-    if [ -x "${VENV_DIR}/bin/python3" ]; then
-        # Use virtual environment directly if available
-        ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" --version
-    elif [ -x "${INSTALL_DIR}/venv_wrapper.sh" ]; then
-        # Use the wrapper script if available
-        ${INSTALL_DIR}/venv_wrapper.sh python3 "${PYTHON_SCRIPT}" --version
-    else
-        # Fall back to system Python
-        echo -e "${YELLOW}Warning: Virtual environment not found, using system Python${NC}"
-        python3 "${PYTHON_SCRIPT}" --version
-    fi
+# Execute the Python script with virtual environment or system Python
+if [ -n "$SYSTEM_PYTHON" ]; then
+    # Using system Python
+    echo -e "${BLUE}Using system Python to run AI_MAL${NC}"
+    python3 "$PYTHON_SCRIPT" "$@"
 else
-    if [ -x "${VENV_DIR}/bin/python3" ]; then
-        # Use virtual environment directly if available
-        ${VENV_DIR}/bin/python3 "${PYTHON_SCRIPT}" "$@"
-    elif [ -x "${INSTALL_DIR}/venv_wrapper.sh" ]; then
-        # Use the wrapper script if available
-        ${INSTALL_DIR}/venv_wrapper.sh python3 "${PYTHON_SCRIPT}" "$@"
-    else
-        # Fall back to system Python
-        echo -e "${YELLOW}Warning: Virtual environment not found, using system Python${NC}"
-        python3 "${PYTHON_SCRIPT}" "$@"
+    # Using virtual environment
+    echo -e "${BLUE}Using virtual environment: ${VENV_DIR}${NC}"
+    
+    # Check if the virtual environment has the required modules
+    if [ ! -f "${VENV_DIR}/bin/python" ]; then
+        echo -e "${RED}Invalid virtual environment. Python interpreter not found.${NC}"
+        exit 1
     fi
-fi
-
-# Clean up temp file
-rm -f /tmp/chmod_error 
+    
+    # Run with venv Python
+    "${VENV_DIR}/bin/python" "$PYTHON_SCRIPT" "$@"
+fi 

