@@ -76,18 +76,41 @@ fi
 INSTALL_DIR="/opt/ai_mal"
 mkdir -p $INSTALL_DIR
 
-echo -e "\n${GREEN}Step 1: Installing system dependencies...${NC}"
-apt update
+echo -e "\n${GREEN}Step 1: Updating system and installing dependencies...${NC}"
+# Update system and install required packages
+apt update && apt upgrade -y
+
 # Install required system packages
-apt install -y python3 python3-pip nmap metasploit-framework dos2unix
+echo "Installing system dependencies..."
+apt install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    nmap \
+    metasploit-framework \
+    dos2unix \
+    curl \
+    git \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
+    net-tools \
+    netcat \
+    postgresql \
+    postgresql-contrib \
+    postgresql-client
+
+# Verify critical packages
+echo "Verifying critical package installations..."
+for package in python3 nmap metasploit-framework postgresql; do
+    if ! dpkg -l | grep -q "^ii  $package "; then
+        echo -e "${RED}Error: Failed to install $package${NC}"
+        exit 1
+    fi
+done
 
 echo -e "\n${GREEN}Step 2: Setting up Python virtual environment...${NC}"
-# Install python3-venv if not already installed
-if ! dpkg -l | grep -q python3-venv; then
-  echo "Installing python3-venv package..."
-  apt install -y python3-venv
-fi
-
 # Create virtual environment
 echo "Creating Python virtual environment at $INSTALL_DIR/venv..."
 python3 -m venv $INSTALL_DIR/venv
