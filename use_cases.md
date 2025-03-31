@@ -211,11 +211,4 @@ sudo AI_MAL 192.168.1.1 --debug --log debug.log
    sudo systemctl status ai_mal_deps.service
    sudo systemctl status msfrpcd.service
    ```
-
-## Additional Resources
-
-- [AI_MAL Documentation](docs/README.md)
-- [Installation Guide](install.sh)
-- [Model Configuration](docs/models.md)
-- [Security Guidelines](docs/security.md)
-- [Troubleshooting Guide](docs/troubleshooting.md) 
+   
