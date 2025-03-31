@@ -1,411 +1,221 @@
-# AI_MAL Tool: Usage Guide and Examples
+# AI_MAL Use Cases
 
-This document provides detailed explanations and real-world examples for all command-line arguments available in the AI_MAL tool. Each section covers specific use cases to help you understand when and how to use each option.
+This document outlines various use cases and scenarios for the AI_MAL (Advanced Intelligent Machine-Aided Learning) tool.
+
+## Table of Contents
+1. [Basic Usage](#basic-usage)
+2. [Advanced Scanning](#advanced-scanning)
+3. [Metasploit Integration](#metasploit-integration)
+4. [Custom Script Generation](#custom-script-generation)
+5. [System Requirements](#system-requirements)
+6. [Best Practices](#best-practices)
+7. [Troubleshooting](#troubleshooting)
 
 ## Basic Usage
 
+### Simple Network Discovery
 ```bash
-AI_MAL [target] [options]
+# Basic network discovery
+sudo AI_MAL 192.168.1.0/24
+
+# Auto-discover network interfaces
+sudo AI_MAL --auto-discover
+
+# Stealth mode for minimal detection
+sudo AI_MAL 192.168.1.1 --stealth
 ```
 
-## Target Specification
-
-The target is an optional positional argument that specifies the IP address or hostname to scan.
-
+### Port Scanning
 ```bash
-# Scan a specific IP address
-AI_MAL 192.168.1.100
+# Comprehensive port scan
+sudo AI_MAL 192.168.1.1 --ports all
 
-# Scan a hostname
-AI_MAL example.com
+# Quick scan of common ports
+sudo AI_MAL 192.168.1.1 --ports quick
+
+# Custom port range
+sudo AI_MAL 192.168.1.1 --ports 80,443,8080-8090
 ```
 
-> **Note**: If no target is specified, you must use the `--auto-discover` option to automatically find targets on the network.
+## Advanced Scanning
 
-## Network Discovery Options
-
-### --auto-discover
-
-Automatically discovers the network and active hosts without requiring a specific target.
-
+### Service Detection
 ```bash
-# Discover and scan the first host found on the network
-AI_MAL --auto-discover
+# Detailed service detection
+sudo AI_MAL 192.168.1.1 --services
+
+# Version detection
+sudo AI_MAL 192.168.1.1 --version
+
+# OS detection
+sudo AI_MAL 192.168.1.1 --os
 ```
 
-**Use case**: Ideal for initial reconnaissance when you don't know what hosts are available on the network.
-
-### --interface INTERFACE
-
-Specifies which network interface to use for host discovery.
-
+### Vulnerability Assessment
 ```bash
-# Use the eth0 interface for discovery
-AI_MAL --auto-discover --interface eth0
+# Basic vulnerability scan
+sudo AI_MAL 192.168.1.1 --vuln
+
+# Comprehensive vulnerability assessment
+sudo AI_MAL 192.168.1.1 --vuln --exploit
+
+# Custom vulnerability checks
+sudo AI_MAL 192.168.1.1 --vuln --custom vuln_checks.txt
 ```
-
-**Use case**: Useful in systems with multiple network interfaces or when you want to focus on a specific network segment.
-
-### --network CIDR
-
-Specifies a network in CIDR notation to scan.
-
-```bash
-# Scan the 192.168.1.0/24 network
-AI_MAL --auto-discover --network 192.168.1.0/24
-```
-
-**Use case**: When you know the specific network range you want to target.
-
-### --scan-all
-
-Scans all discovered hosts instead of just the first one.
-
-```bash
-# Discover and scan all hosts on the network
-AI_MAL --scan-all
-```
-
-**Use case**: Comprehensive network assessment when you need to evaluate all devices on a network.
-
-### --host-timeout SECONDS
-
-Sets the timeout in seconds for host discovery (default: 1).
-
-```bash
-# Increase host discovery timeout to 3 seconds for better reliability
-AI_MAL --auto-discover --host-timeout 3
-```
-
-**Use case**: Useful for slow networks or when scanning across WAN links.
-
-## Scan Control Options
-
-### --iterations N
-
-Sets the maximum number of scan iterations (default: 3).
-
-```bash
-# Run up to 5 iterations of adaptive scanning
-AI_MAL 192.168.1.100 --iterations 5
-```
-
-**Use case**: Deeper reconnaissance when you need more thorough information gathering.
-
-### --continuous
-
-Runs the scan in continuous mode until manually stopped (Ctrl+C).
-
-```bash
-# Continuously scan and adapt until manually stopped
-AI_MAL 192.168.1.100 --continuous
-```
-
-**Use case**: Ongoing monitoring of a target or persistent reconnaissance during longer engagements.
-
-### --delay SECONDS
-
-Sets the delay in seconds between scan iterations (default: 2).
-
-```bash
-# Wait 5 seconds between scan iterations
-AI_MAL 192.168.1.100 --delay 5
-```
-
-**Use case**: Avoids overwhelming the target or network with too many requests in a short time period.
-
-### --stealth
-
-Enables stealth mode to minimize detection risk.
-
-```bash
-# Perform a stealthy scan to avoid triggering IDS/IPS systems
-AI_MAL 192.168.1.100 --stealth
-```
-
-**Use case**: Red team operations or penetration testing where avoiding detection is critical.
 
 ## Metasploit Integration
 
-### --msf
-
-Enables Metasploit integration for importing scan results.
-
+### Basic Metasploit Usage
 ```bash
-# Scan a target and import results into Metasploit
-AI_MAL 192.168.1.100 --msf
+# Enable Metasploit integration
+sudo AI_MAL 192.168.1.1 --msf
+
+# Run Metasploit exploits
+sudo AI_MAL 192.168.1.1 --msf --exploit
+
+# Custom Metasploit options
+sudo AI_MAL 192.168.1.1 --msf --options "RHOSTS=192.168.1.1 RPORT=445"
 ```
 
-**Use case**: Prepares data for exploitation by importing scan results into Metasploit.
-
-### --exploit
-
-Automatically attempts exploitation using Metasploit based on scan results.
-
+### Advanced Metasploit Features
 ```bash
-# Scan and attempt to exploit vulnerabilities
-AI_MAL 192.168.1.100 --msf --exploit
+# Generate Metasploit payloads
+sudo AI_MAL 192.168.1.1 --msf --payload windows/meterpreter/reverse_tcp
+
+# Custom exploit modules
+sudo AI_MAL 192.168.1.1 --msf --module exploit/windows/smb/ms17_010_eternalblue
+
+# Post-exploitation
+sudo AI_MAL 192.168.1.1 --msf --post
 ```
 
-**Use case**: Automated exploitation during penetration testing or vulnerability assessment.
+## Custom Script Generation
 
-### --workspace NAME
-
-Sets the Metasploit workspace name (default: adaptive_scan).
-
+### Basic Script Generation
 ```bash
-# Use a custom Metasploit workspace
-AI_MAL 192.168.1.100 --msf --workspace client_pentest
+# Generate custom Nmap script
+sudo AI_MAL --generate-script basic_scan.nse
+
+# Generate Metasploit automation script
+sudo AI_MAL --generate-script msf_automation.rb
+
+# Generate custom vulnerability check
+sudo AI_MAL --generate-script vuln_check.py
 ```
 
-**Use case**: Organizing different assessments or targets within Metasploit.
-
-### --auto-script
-
-Automatically generates and runs Metasploit resource scripts.
-
+### Advanced Script Generation
 ```bash
-# Generate and run Metasploit resource scripts automatically
-AI_MAL 192.168.1.100 --msf --exploit --auto-script
+# Generate custom service detection script
+sudo AI_MAL --generate-script service_detect.nse --type service
+
+# Generate custom exploit script
+sudo AI_MAL --generate-script custom_exploit.rb --type exploit
+
+# Generate post-exploitation script
+sudo AI_MAL --generate-script post_exploit.py --type post
 ```
 
-**Use case**: Streamlines the exploitation process by automating the creation and execution of Metasploit scripts.
+## System Requirements
 
-### --dos
-
-Attempts to perform Denial of Service (DoS) attacks against target hosts.
-
+### Model Selection
 ```bash
-# Scan and attempt DoS attacks against a target
-AI_MAL 192.168.1.100 --dos
+# Use default model (qwen2.5-coder:7b) - Recommended for systems with >8GB RAM
+sudo AI_MAL 192.168.1.1 --model qwen2.5-coder:7b
+
+# Use lightweight model (gemma3:1b) - Recommended for systems with <8GB RAM
+sudo AI_MAL 192.168.1.1 --model gemma3:1b
+
+# Use custom model (must be available in Ollama)
+sudo AI_MAL 192.168.1.1 --model custom-model
 ```
 
-**Use case**: Testing network resilience and security controls by simulating denial of service conditions.
-
-> **WARNING**: This option should only be used in controlled environments with proper authorization. Using this option against unauthorized targets may be illegal and unethical.
-
-## AI Script Generation
-
-### --custom-scripts
-
-Enables AI-powered custom script generation based on scan results.
-
+### Resource Management
 ```bash
-# Generate custom scripts for further analysis
-AI_MAL 192.168.1.100 --custom-scripts
+# Set custom timeout for model responses
+sudo AI_MAL 192.168.1.1 --timeout 30
+
+# Limit concurrent scans
+sudo AI_MAL 192.168.1.1 --max-threads 4
+
+# Set memory limits
+sudo AI_MAL 192.168.1.1 --memory-limit 4G
 ```
 
-**Use case**: Automated creation of tailored scripts for specific reconnaissance or exploitation tasks.
+## Best Practices
 
-### --script-type TYPE
+### Security Considerations
+1. Always run with proper authorization
+2. Use stealth mode when appropriate
+3. Limit scan intensity on production networks
+4. Follow responsible disclosure practices
+5. Document all testing activities
 
-Specifies the type of script to generate (bash, python, or ruby).
+### Performance Optimization
+1. Choose appropriate model based on system resources
+2. Use quick scans for initial reconnaissance
+3. Limit concurrent operations
+4. Monitor system resources
+5. Use appropriate timeouts
 
+### Network Considerations
+1. Consider network bandwidth limitations
+2. Use appropriate scan timing
+3. Avoid scanning sensitive systems
+4. Document network topology
+5. Follow network security policies
+
+## Troubleshooting
+
+### Common Issues
+1. Model loading failures
+   - Check system memory
+   - Verify Ollama installation
+   - Try alternative model
+
+2. Metasploit connection issues
+   - Verify PostgreSQL service
+   - Check msfrpcd service
+   - Validate credentials
+
+3. Network connectivity problems
+   - Check firewall settings
+   - Verify network permissions
+   - Test basic connectivity
+
+### Debug Mode
 ```bash
-# Generate Python scripts instead of the default bash
-AI_MAL 192.168.1.100 --custom-scripts --script-type python
+# Enable debug logging
+sudo AI_MAL 192.168.1.1 --debug
+
+# Verbose output
+sudo AI_MAL 192.168.1.1 --verbose
+
+# Save debug logs
+sudo AI_MAL 192.168.1.1 --debug --log debug.log
 ```
 
-**Use case**: When you need scripts in a specific language for compatibility with your workflow or tools.
-
-### --execute-scripts
-
-Automatically executes generated scripts (use with caution).
-
-```bash
-# Generate and execute custom scripts
-AI_MAL 192.168.1.100 --custom-scripts --execute-scripts
-```
-
-**Use case**: Fully automated reconnaissance and exploitation pipeline, but carries additional risk.
-
-## AI Model Options
-
-### --model MODEL
-
-Specifies which Ollama model to use (default: qwen2.5-coder:7b).
-
-```bash
-# Use the llama3 model instead of qwen2.5-coder:7b
-AI_MAL 192.168.1.100 --model llama3
-```
-
-**Use case**: When you need to switch to a different AI model for better performance or different capabilities.
-
-## Output Control
-
-### --quiet
-
-Reduces the verbosity of output.
-
-```bash
-# Run with minimal output
-AI_MAL 192.168.1.100 --quiet
-```
-
-**Use case**: When running as part of automated scripts or when only critical information is needed.
-
-### --debug
-
-Enables detailed debug logging.
-
-```bash
-# Show detailed debug information
-AI_MAL 192.168.1.100 --debug
-```
-
-**Use case**: Troubleshooting issues or understanding the detailed flow of the scanning process.
-
-## AI Display Options
-
-### --show-live-ai
-
-Shows the AI's thought process in real-time as it generates responses, script content, or scan strategies.
-
-```bash
-# Show live AI output when generating scripts
-AI_MAL 192.168.1.100 --custom-scripts --show-live-ai
-
-# Watch the AI analyze scan results and adapt strategies
-AI_MAL 192.168.1.100 --show-live-ai --iterations 5
-```
-
-**Use case**: Useful for educational purposes, understanding the AI's decision-making process, debugging script generation, or simply for those interested in seeing how the AI formulates its responses. Also helpful for verifying that the AI model is working correctly.
-
-## Full Automation
-
-### --full-auto
-
-Enables full autonomous mode (implies --continuous --msf --exploit --auto-script --custom-scripts).
-
-```bash
-# Run in fully automated mode
-AI_MAL 192.168.1.100 --full-auto
-```
-
-**Use case**: "Fire and forget" automated reconnaissance and exploitation with minimal user intervention.
-
-## Other Options
-
-### --version
-
-Shows version information and exits.
-
-```bash
-# Display version information
-AI_MAL --version
-```
-
-**Use case**: Checking the current version of the tool.
-
-## System Resource and Memory Considerations
-
-AI_MAL's performance is heavily influenced by available system resources, particularly when using AI models through Ollama.
-
-### Memory Requirements
-
-| Configuration | RAM Required | Performance | Recommended Model |
-|---------------|-------------|-------------|-------------------|
-| Optimal | 16GB+ | Full capabilities | qwen2.5-coder:7b |
-| Standard | 8-16GB | Good performance | qwen2.5-coder:7b |
-| Minimal | 4-8GB | Limited performance | llama3 |
-| VM/Container | Varies | Depends on allocation | llama3 |
-
-### Low Memory Systems
-
-If you're running AI_MAL on a system with limited memory (under 8GB RAM), consider these options:
-
-```bash
-# Use the lightweight model
-AI_MAL --auto-discover --model llama3
-
-# Reduce the number of iterations to minimize resource usage
-AI_MAL 192.168.1.100 --iterations 2 --model llama3
-
-# Disable features that require more memory
-AI_MAL 192.168.1.100 --msf  # Without --custom-scripts or --exploit
-```
-
-**Use case**: Running AI_MAL on virtual machines, containers, or older hardware with limited resources.
-
-### Resource-Related Issues and Solutions
-
-1. **Ollama Timeouts**: If you see "Error connecting to Ollama API: Read timed out" errors:
-   - Switch to a lighter model: `--model llama3`
-   - The tool automatically increases timeout on low-memory systems
-   - Close other memory-intensive applications
-   
-2. **Slow Performance**: If scanning progresses very slowly:
-   - Use the `--iterations` parameter to limit the number of scans
-   - Increase the `--delay` between scans to allow the system to recover
-   - Disable features like `--custom-scripts` that require significant resources
-
-3. **Out of Memory Errors**: If the system runs out of memory:
-   - Consider adding swap space to your system
-   - Run with the `--quiet` option to reduce output processing overhead
-   - Restart AI_MAL and limit the scan scope with specific targets
-
-## Advanced Use Case Examples
-
-### Basic Network Reconnaissance
-
-```bash
-AI_MAL --auto-discover --stealth
-```
-This performs a stealthy scan of automatically discovered hosts, avoiding detection while gathering basic information.
-
-### Targeted Exploitation
-
-```bash
-AI_MAL 192.168.1.100 --msf --exploit --script-type python
-```
-This targets a specific host, attempts exploitation via Metasploit, and generates Python scripts for further analysis.
-
-### Continuous Monitoring with Script Generation
-
-```bash
-AI_MAL 192.168.1.100 --continuous --delay 60 --custom-scripts --execute-scripts
-```
-This continuously scans a target every 60 seconds, generating and executing scripts based on findings.
-
-### Multi-Network Assessment
-
-```bash
-AI_MAL --scan-all --network 10.0.0.0/24 --msf --iterations 2
-```
-This scans all hosts in the 10.0.0.0/24 network, importing results to Metasploit, with 2 iterations per host.
-
-### Full Red Team Operation
-
-```bash
-AI_MAL --auto-discover --stealth --msf --exploit --custom-scripts --script-type bash --execute-scripts
-```
-This performs a complete red team operation with stealthy scanning, automatic exploitation, and custom script execution.
-
-### Quick Security Audit
-
-```bash
-AI_MAL --auto-discover --stealth --iterations 1 --quiet
-```
-This performs a single-pass stealthy security audit of the network with minimal output.
-
-### Interactive Penetration Testing
-
-```bash
-AI_MAL 192.168.1.100 --msf --workspace pentest_2024 --custom-scripts
-```
-This integrates with Metasploit in a specific workspace and generates scripts but doesn't execute them automatically, allowing for manual review.
-
-### Stress Testing Network Security Controls
-
-```bash
-AI_MAL 192.168.1.100 --dos --stealth --iterations 2 --delay 10
-```
-This performs targeted DoS testing against a specific host with a stealthy approach, attempting 2 iterations with 10-second delays between attempts to evaluate the effectiveness of security controls.
-
-### Low Memory System Scan
-
-```bash
-AI_MAL --auto-discover --model llama3 --stealth --iterations 2 --msf --quiet
-```
-This runs a focused scan with the lightweight llama3 model, limiting to 2 iterations and reduced output to minimize memory usage while still leveraging Metasploit for results analysis. 
+### Recovery Procedures
+1. Restart required services
+   ```bash
+   sudo systemctl restart ai_mal_deps.service
+   ```
+
+2. Verify model installation
+   ```bash
+   ollama list
+   ollama pull qwen2.5-coder:7b  # or gemma3:1b
+   ```
+
+3. Check service status
+   ```bash
+   sudo systemctl status ai_mal_deps.service
+   sudo systemctl status msfrpcd.service
+   ```
+
+## Additional Resources
+
+- [AI_MAL Documentation](docs/README.md)
+- [Installation Guide](install.sh)
+- [Model Configuration](docs/models.md)
+- [Security Guidelines](docs/security.md)
+- [Troubleshooting Guide](docs/troubleshooting.md) 
