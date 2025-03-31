@@ -614,7 +614,7 @@ class AdaptiveNmapScanner:
     def __init__(
         self,
         target=None,
-        ollama_model="llama3",
+        ollama_model="qwen:7b",
         max_iterations=3,
         continuous=False,
         delay=2,
@@ -654,7 +654,12 @@ class AdaptiveNmapScanner:
         self.stealth = stealth
         
         # Ollama settings
-        self.ollama_model = ollama_model
+        # Check if the model is one of our recommended models, otherwise default to qwen:7b
+        if ollama_model not in ["qwen:7b", "llamacode", "llama3"]:
+            logger.warning(f"Model {ollama_model} may not be available, defaulting to qwen:7b")
+            self.ollama_model = "qwen:7b"
+        else:
+            self.ollama_model = ollama_model
         self.ollama_url = "http://localhost:11434/api/generate"
         self.show_live_ai = show_live_ai
         
@@ -2050,7 +2055,7 @@ if __name__ == "__main__":
             # Execute scan with parameters
             self.logger.debug(f"Executing: nmap {' '.join(params)} {target}")
             
-            # Start time for progress estimation
+            # Start time for estimation of scan duration
             start_time = time.time()
             
             # Start scan in a separate thread so we can show a single-line animation
@@ -2593,6 +2598,11 @@ def parse_arguments():
         "--delay", 
         type=int, 
         default=2,
+        help="Delay between scan iterations in seconds"
+    )
+    
+    args = parser.parse_args()
+    
     # Full auto mode implications
     if args.full_auto:
         args.continuous = True

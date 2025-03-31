@@ -183,41 +183,17 @@ systemctl enable msfrpcd.service
 systemctl start msfrpcd.service
 
 echo -e "\n${GREEN}Step 4: Installing Ollama...${NC}"
-# Instead of using the official installer directly, download it separately and modify how we run it
-echo "Installing Ollama using a modified approach for better progress display..."
+echo "Installing Ollama using direct installation method..."
 
-# Create a temporary directory for the installation
-TEMP_DIR=$(mktemp -d)
-INSTALL_SCRIPT="$TEMP_DIR/ollama_install.sh"
+# Use the official installer
+curl -fsSL https://ollama.com/install.sh | sh
 
-# Download the installer script
-curl -fsSL https://ollama.com/install.sh -o "$INSTALL_SCRIPT"
-chmod +x "$INSTALL_SCRIPT"
-
-# Extract the bundle URL from the installer script
-BUNDLE_URL=$(grep -oP 'curl -fSL \K[^ ]+' "$INSTALL_SCRIPT" | head -1 | tr -d '"')
-BUNDLE_FILE="$TEMP_DIR/ollama_bundle.tar.gz"
-
-if [ -z "$BUNDLE_URL" ]; then
-  echo -e "${RED}Error: Could not determine Ollama bundle URL from installer.${NC}"
-  echo "Falling back to official installer method..."
-  bash "$INSTALL_SCRIPT"
+# Check if installation was successful
+if ! command -v ollama &>/dev/null; then
+  echo -e "${RED}Error: Ollama installation failed.${NC}"
+  echo "Please install Ollama manually by following instructions at: https://ollama.com/download"
 else
-  # Download the bundle with a proper progress bar
-  echo "Downloading Ollama bundle..."
-  curl -L --progress-bar "$BUNDLE_URL" -o "$BUNDLE_FILE"
-  
-  # Modify the install script to use our pre-downloaded bundle
-  sed -i "s|curl -fSL.*|echo \"Using pre-downloaded bundle...\"|" "$INSTALL_SCRIPT"
-  
-  # Run the modified installer
-  echo "Installing Ollama from downloaded bundle..."
-  OLLAMA_BUNDLE="$BUNDLE_FILE" bash "$INSTALL_SCRIPT"
-  
-  # Clean up temporary files
-  rm -rf "$TEMP_DIR"
-  
-  echo -e "${GREEN}Ollama installation completed!${NC}"
+  echo -e "${GREEN}Ollama successfully installed!${NC}"
 fi
 
 # Ensure Ollama service is started and running
@@ -284,26 +260,38 @@ echo "This may take some time depending on your internet speed..."
 
 # Check if Ollama API is accessible before trying to pull models
 if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
-  # Pull the recommended model
-  echo "Pulling qwen2.5-coder:7b model (this may take 5-10 minutes depending on your connection)..."
-  ollama pull qwen2.5-coder:7b
+  # Pull the primary model: qwen 7b
+  echo "Pulling qwen:7b model (this may take 5-10 minutes depending on your connection)..."
+  ollama pull qwen:7b
 
-  # Also pull the smaller model for compatibility
+  # Pull the llamacode model
+  echo "Pulling llamacode model (this may take 5-10 minutes depending on your connection)..."
+  ollama pull llamacode
+  
+  # Also pull the smaller model for compatibility with limited resources
   echo "Pulling llama3 model as a backup for systems with limited resources..."
   ollama pull llama3
   
   # Verify models are available
   echo "Verifying models are accessible..."
-  if ollama list | grep -q "qwen2.5-coder:7b"; then
-    echo -e "${GREEN}Successfully installed qwen2.5-coder:7b model!${NC}"
+  if ollama list | grep -q "qwen:7b"; then
+    echo -e "${GREEN}Successfully installed qwen:7b model!${NC}"
   else
-    echo -e "${YELLOW}Warning: qwen2.5-coder:7b model may not have been installed correctly.${NC}"
-    echo "You can try installing it manually with: ollama pull qwen2.5-coder:7b"
+    echo -e "${YELLOW}Warning: qwen:7b model may not have been installed correctly.${NC}"
+    echo "You can try installing it manually with: ollama pull qwen:7b"
+  fi
+  
+  if ollama list | grep -q "llamacode"; then
+    echo -e "${GREEN}Successfully installed llamacode model!${NC}"
+  else
+    echo -e "${YELLOW}Warning: llamacode model may not have been installed correctly.${NC}"
+    echo "You can try installing it manually with: ollama pull llamacode"
   fi
 else
   echo -e "${RED}Warning: Ollama API is not accessible. Could not pull models.${NC}"
   echo "You will need to manually pull the models after starting Ollama:"
-  echo "  ollama pull qwen2.5-coder:7b"
+  echo "  ollama pull qwen:7b"
+  echo "  ollama pull llamacode"
   echo "  ollama pull llama3"
 fi
 
