@@ -614,7 +614,7 @@ class AdaptiveNmapScanner:
     def __init__(
         self,
         target=None,
-        ollama_model="qwen:7b",
+        ollama_model="qwen2.5-coder:7b",
         max_iterations=3,
         continuous=False,
         delay=2,
@@ -654,14 +654,69 @@ class AdaptiveNmapScanner:
         self.stealth = stealth
         
         # Ollama settings
-        # Check if the model is one of our recommended models, otherwise default to qwen:7b
-        if ollama_model not in ["qwen:7b", "llamacode", "llama3"]:
-            logger.warning(f"Model {ollama_model} may not be available, defaulting to qwen:7b")
-            self.ollama_model = "qwen:7b"
-        else:
-            self.ollama_model = ollama_model
+        # If model isn't one of our default models, check if it exists and download if needed
         self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_model = ollama_model
+        self._ensure_model_available()
         self.show_live_ai = show_live_ai
+
+    def _ensure_model_available(self):
+        """Ensure the specified Ollama model is available, downloading it if needed."""
+        try:
+            # Try to check if model is available using Ollama's list API
+            response = requests.get("http://localhost:11434/api/tags")
+            if response.status_code == 200:
+                available_models = [model['name'] for model in response.json().get('models', [])]
+                
+                # If model is available, just use it
+                if self.ollama_model in available_models:
+                    logger.info(f"Using existing model: {self.ollama_model}")
+                    return
+                
+                # If model isn't available, try to download it
+                logger.warning(f"Model {self.ollama_model} not found. Attempting to download...")
+                self.viewer.status(f"Model {self.ollama_model} not found. Attempting to download...")
+                
+                try:
+                    download_process = subprocess.Popen(
+                        ["ollama", "pull", self.ollama_model],
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.PIPE
+                    )
+                    
+                    # Wait for download to complete
+                    stdout, stderr = download_process.communicate()
+                    
+                    if download_process.returncode == 0:
+                        logger.info(f"Successfully downloaded model: {self.ollama_model}")
+                        self.viewer.success(f"Successfully downloaded model: {self.ollama_model}")
+                        return
+                    else:
+                        logger.error(f"Failed to download model: {self.ollama_model}. Error: {stderr.decode()}")
+                        self.viewer.error(f"Failed to download model: {self.ollama_model}")
+                        
+                except Exception as e:
+                    logger.error(f"Error downloading model: {e}")
+                    self.viewer.error(f"Error downloading model: {str(e)}")
+            
+            # If we reach here, either checking or downloading failed
+            # Fall back to default model
+            if self.ollama_model != "qwen2.5-coder:7b" and self.ollama_model != "gemma3:1b":
+                logger.warning(f"Falling back to default model: qwen2.5-coder:7b")
+                self.viewer.warning(f"Falling back to default model: qwen2.5-coder:7b")
+                self.ollama_model = "qwen2.5-coder:7b"
+                
+                # Recursively check if default model is available
+                self._ensure_model_available()
+        
+        except Exception as e:
+            logger.error(f"Error checking model availability: {e}")
+            self.viewer.error(f"Error checking model availability: {str(e)}")
+            
+            # Fall back to default model in case of any error
+            if self.ollama_model != "qwen2.5-coder:7b":
+                logger.warning(f"Falling back to default model: qwen2.5-coder:7b")
+                self.ollama_model = "qwen2.5-coder:7b"
         
         # Metasploit settings
         self.msf_integration = msf_integration

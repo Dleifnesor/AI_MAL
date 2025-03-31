@@ -183,15 +183,18 @@ systemctl enable msfrpcd.service
 systemctl start msfrpcd.service
 
 echo -e "\n${GREEN}Step 4: Installing Ollama...${NC}"
-echo "Installing Ollama using direct installation method..."
+echo "Installing Ollama (this may take a moment)..."
 
-# Use the official installer
-curl -fsSL https://ollama.com/install.sh | sh
+# Use the official installer but redirect the output to a log file
+echo "Downloading and installing Ollama..."
+curl -fsSL https://ollama.com/install.sh | sh > /tmp/ollama_install.log 2>&1
+INSTALL_STATUS=$?
 
-# Check if installation was successful
-if ! command -v ollama &>/dev/null; then
+# Check if installation was successful based on the exit code
+if [ $INSTALL_STATUS -ne 0 ] || ! command -v ollama &>/dev/null; then
   echo -e "${RED}Error: Ollama installation failed.${NC}"
-  echo "Please install Ollama manually by following instructions at: https://ollama.com/download"
+  echo "Please check the installation log at /tmp/ollama_install.log"
+  echo "You may need to install Ollama manually by following instructions at: https://ollama.com/download"
 else
   echo -e "${GREEN}Ollama successfully installed!${NC}"
 fi
@@ -260,39 +263,60 @@ echo "This may take some time depending on your internet speed..."
 
 # Check if Ollama API is accessible before trying to pull models
 if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
-  # Pull the primary model: qwen 7b
-  echo "Pulling qwen:7b model (this may take 5-10 minutes depending on your connection)..."
-  ollama pull qwen:7b
-
-  # Pull the llamacode model
-  echo "Pulling llamacode model (this may take 5-10 minutes depending on your connection)..."
-  ollama pull llamacode
+  # Pull the primary model: qwen2.5-coder:7b
+  echo "Pulling qwen2.5-coder:7b model (this may take 5-10 minutes)..."
+  ollama pull qwen2.5-coder:7b > /tmp/ollama_pull_qwen.log 2>&1 &
+  QWEN_PID=$!
+  
+  # Show a simple progress indicator while pulling qwen model
+  echo -n "Downloading qwen2.5-coder:7b model: "
+  while kill -0 $QWEN_PID 2>/dev/null; do
+    echo -n "."
+    sleep 2
+  done
+  echo " Done!"
   
   # Also pull the smaller model for compatibility with limited resources
-  echo "Pulling llama3 model as a backup for systems with limited resources..."
-  ollama pull llama3
+  echo "Pulling gemma3:1b model as a backup for systems with limited resources..."
+  ollama pull gemma3:1b > /tmp/ollama_pull_gemma.log 2>&1 &
+  GEMMA_PID=$!
+  
+  # Show a simple progress indicator while pulling gemma model
+  echo -n "Downloading gemma3:1b model: "
+  while kill -0 $GEMMA_PID 2>/dev/null; do
+    echo -n "."
+    sleep 2
+  done
+  echo " Done!"
   
   # Verify models are available
   echo "Verifying models are accessible..."
-  if ollama list | grep -q "qwen:7b"; then
-    echo -e "${GREEN}Successfully installed qwen:7b model!${NC}"
+  MODEL_STATUS=0
+  
+  if ollama list | grep -q "qwen2.5-coder:7b"; then
+    echo -e "${GREEN}✓ Successfully installed qwen2.5-coder:7b model!${NC}"
   else
-    echo -e "${YELLOW}Warning: qwen:7b model may not have been installed correctly.${NC}"
-    echo "You can try installing it manually with: ollama pull qwen:7b"
+    echo -e "${YELLOW}⚠ Warning: qwen2.5-coder:7b model may not have been installed correctly.${NC}"
+    echo "You can try installing it manually with: ollama pull qwen2.5-coder:7b"
+    MODEL_STATUS=1
   fi
   
-  if ollama list | grep -q "llamacode"; then
-    echo -e "${GREEN}Successfully installed llamacode model!${NC}"
+  if ollama list | grep -q "gemma3:1b"; then
+    echo -e "${GREEN}✓ Successfully installed gemma3:1b model!${NC}"
   else
-    echo -e "${YELLOW}Warning: llamacode model may not have been installed correctly.${NC}"
-    echo "You can try installing it manually with: ollama pull llamacode"
+    echo -e "${YELLOW}⚠ Warning: gemma3:1b model may not have been installed correctly.${NC}"
+    echo "You can try installing it manually with: ollama pull gemma3:1b"
+    MODEL_STATUS=1
+  fi
+  
+  if [ $MODEL_STATUS -eq 0 ]; then
+    echo -e "${GREEN}All models successfully installed!${NC}"
   fi
 else
   echo -e "${RED}Warning: Ollama API is not accessible. Could not pull models.${NC}"
   echo "You will need to manually pull the models after starting Ollama:"
-  echo "  ollama pull qwen:7b"
-  echo "  ollama pull llamacode"
-  echo "  ollama pull llama3"
+  echo "  ollama pull qwen2.5-coder:7b"
+  echo "  ollama pull gemma3:1b"
 fi
 
 echo -e "\n${GREEN}Step 7: Setting up autostart services...${NC}"
@@ -342,7 +366,7 @@ echo
 echo -e "${YELLOW}Examples:${NC}"
 echo "sudo AI_MAL --auto-discover --model qwen2.5-coder:7b"
 echo "sudo AI_MAL 192.168.1.1 --msf --exploit"
-echo "sudo AI_MAL --model llama3 (for systems with limited RAM)"
+echo "sudo AI_MAL --model gemma3:1b (for systems with limited RAM)"
 echo
 echo -e "${GREEN}Thank you for installing AI_MAL!${NC}"
 
@@ -376,7 +400,7 @@ if [ "$MEM_GB" -lt 8 ]; then
     echo -e "${YELLOW}LOW MEMORY WARNING:${NC}"
     echo -e "Your system has ${MEM_GB}GB of RAM, which may cause performance issues with Ollama models."
     echo -e "Recommendations for low-memory systems:"
-    echo -e "  - Use a smaller model with --model llama3 instead of qwen2.5-coder"
+    echo -e "  - Use a smaller model with --model gemma3:1b instead of qwen2.5-coder:7b"
     echo -e "  - Increase Ollama timeout in the code if you experience timeouts"
     echo -e "  - Consider adding a swap file if you have less than 8GB RAM"
     echo -e "  - Close other memory-intensive applications before running AI_MAL"
