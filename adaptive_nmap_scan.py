@@ -2062,211 +2062,195 @@ if __name__ == "__main__":
             return script_type
     
     def generate_scan_parameters(self, iteration):
-        """Generate Nmap scan parameters based on iteration."""
-        # Base parameters
-        params = ["-oX", "-"]  # Output XML to stdout
-        
-        # Add target
-        params.append(self.target)
-        
-        # First iteration - Quick scan
+        """Generate Nmap scan parameters based on iteration number."""
         if iteration == 1:
+            # First iteration: Quick scan to identify open ports
             self.logger.info("First iteration: Quick scan to identify open ports")
-            
-            # Add stealth option if requested
             if self.stealth:
-                params.extend(["-sS", "-T2"])
+                # Stealthier scan with timing template 2
+                parameters = [
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "-sS", "-T2", "-F", "-sV", "--version-intensity", "2", "-O", "--osscan-limit"
+                ]
             else:
-                params.extend(["-sS", "-T4"])
-                
-            # Scan top ports
-            params.extend(["-F"])  # Fast mode - scan fewer ports
-            
-            # Version detection and OS detection with limited intensity
-            params.extend(["-sV", "--version-intensity", "2"])
-            params.extend(["-O", "--osscan-limit"])
-            
-        # Second iteration - More detailed scan of open ports
+                # Normal quick scan
+                parameters = [
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "-sS", "-T4", "-F", "-sV", "--version-intensity", "2", "-O", "--osscan-limit"
+                ]
         elif iteration == 2:
+            # Second iteration: Detailed scan of ports found in first scan
             self.logger.info("Second iteration: Detailed scan of ports found in first scan")
-            
-            # Add stealth option if requested
-            if self.stealth:
-                params.extend(["-sS", "-T2"])
+            ports = self.get_open_ports_from_history()
+            if ports:
+                # Scan specific ports found in previous iterations
+                port_list = ",".join(map(str, ports))
+                parameters = [
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "-sS", "-T4", "-p", port_list, "-sV", "-O"
+                ]
             else:
-                params.extend(["-sS", "-T4"])
-                
-            # Get open ports from previous scan
-            open_ports = self.get_open_ports_from_history()
-            
-            if open_ports:
-                # Create a comma-separated list of ports
-                port_list = ','.join(str(port) for port in open_ports)
-                params.extend(["-p", port_list])
-                
-                # More intense version detection
-                params.extend(["-sV", "--version-intensity", "4"])
-                
-                # OS detection
-                params.extend(["-O"])
-                
-                # Script scanning for open ports
-                params.extend(["--script", "default,safe"])
-            else:
-                # No open ports found, do a more thorough scan
-                params.extend(["-p", "1-1000"])
-                params.extend(["-sV"])
-                params.extend(["-O"])
-                
-        # Third iteration - Advanced scanning
+                # Fall back to scanning top 1000 ports
+                parameters = [
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "-sS", "-T4", "-p", "1-1000", "-sV", "-O"
+                ]
         else:
-            self.logger.info("Advanced iteration: Comprehensive scan")
-            
-            # Add stealth option if requested
-            if self.stealth:
-                params.extend(["-sS", "-T2"])
+            # Advanced iterations: Generate based on AI suggestions or use comprehensive scan
+            if self.scan_history and len(self.scan_history) >= 2:
+                # Use AI to suggest parameters based on scan history
+                self.logger.info("Advanced iteration: AI-suggested scan parameters")
+                
+                # Generate prompt for Ollama
+                prompt = self.construct_prompt(iteration)
+                
+                # Call Ollama to get suggested scan parameters
+                if self.show_live_ai:
+                    response = self.call_ollama(prompt, stream=True)
+                else:
+                    # Start a simple animation for better UX
+                    animation = SingleLineAnimation("Generating adaptive scan parameters...")
+                    response = self.call_ollama(prompt)
+                    animation.set()
+                    
+                # Parse response to get suggested parameters
+                suggested_params = self.parse_ollama_response(response)
+                
+                # If we got valid parameters, use them
+                if suggested_params and isinstance(suggested_params, list) and len(suggested_params) > 2:
+                    # Make target the first parameter
+                    if self.target:
+                        suggested_params.insert(0, self.target)
+                    elif self.discovered_hosts:
+                        suggested_params.insert(0, self.discovered_hosts[self.current_target_index])
+                        
+                    # Sanitize parameters (no -oX)
+                    parameters = []
+                    i = 0
+                    while i < len(suggested_params):
+                        if suggested_params[i] == "-oX" and i < len(suggested_params) - 1 and suggested_params[i+1] == "-":
+                            # Skip both "-oX" and "-" parameters
+                            i += 2
+                        else:
+                            parameters.append(suggested_params[i])
+                            i += 1
+                        
+                    self.logger.info(f"AI-suggested scan parameters: {' '.join(parameters)}")
+                else:
+                    # Fallback to comprehensive scan
+                    self.logger.info("Advanced iteration: Comprehensive scan (AI fallback)")
+                    parameters = [
+                        self.target if self.target else self.discovered_hosts[self.current_target_index],
+                        "-sS", "-T4", "-p", "1-10000", "-sV", "--version-intensity", "4",
+                        "-O", "--osscan-guess", "--script", "default,safe"
+                    ]
             else:
-                params.extend(["-sS", "-T4"])
-                
-            # Get open ports from previous scans
-            open_ports = self.get_open_ports_from_history()
+                # Not enough history for AI, use comprehensive scan
+                self.logger.info("Advanced iteration: Comprehensive scan")
+                parameters = [
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "-sS", "-T4", "-p", "1-10000", "-sV", "--version-intensity", "4",
+                    "-O", "--osscan-guess", "--script", "default,safe"
+                ]
+        
+        # Apply stealth mode if enabled (for iterations after the first)
+        if self.stealth and iteration > 1:
+            # Replace timing template with more stealthy one
+            for i, param in enumerate(parameters):
+                if param == "-T4":
+                    parameters[i] = "-T2"
+                    
+            # Add randomized timing options for additional stealth
+            parameters.extend(["--randomize-hosts", "--max-retries", "2"])
             
-            if open_ports:
-                # Create a comma-separated list of ports
-                port_list = ','.join(str(port) for port in open_ports)
-                params.extend(["-p", port_list])
-                
-                # Full version detection
-                params.extend(["-sV", "--version-all"])
-                
-                # OS detection
-                params.extend(["-O", "--osscan-guess"])
-                
-                # Comprehensive script scanning for open ports
-                params.extend(["--script", "default,safe,auth,discovery"])
-            else:
-                # No open ports found, do a more thorough scan
-                params.extend(["-p", "1-10000"])
-                params.extend(["-sV", "--version-intensity", "4"])
-                params.extend(["-O", "--osscan-guess"])
-                params.extend(["--script", "default,safe"])
-                
-        self.logger.info(f"Scan parameters: {' '.join(params)}")
-        return params
+        return parameters
     
     def run_nmap_scan(self, scan_params):
-        """Run an Nmap scan with the given parameters and return the result."""
+        """Run an Nmap scan with the given parameters."""
+        if not scan_params:
+            self.logger.error("No scan parameters provided")
+            return None
+            
+        self.logger.info(f"Scan parameters: {' '.join(scan_params)}")
+        
+        target = self.target if self.target else self.discovered_hosts[self.current_target_index]
+        
+        # Fix: Remove -oX - from parameters if present
+        params = []
+        for param in scan_params:
+            if param != "-oX" and param != "-":
+                params.append(param)
+        
+        self.logger.info(f"Running Nmap scan with parameters: {' '.join(params)}")
+        
+        # Create Nmap scanner
+        nm = nmap.PortScanner()
+        
+        # Create a thread to run the scan
+        scan_result = [None]
+        scan_thread = threading.Thread(target=self.run_scan, args=(nm, target, params, scan_result))
+        
+        # Start animation
+        animation = self.viewer.scanning_animation(f"Scanning {target}")
+        
+        # Start scan thread
+        scan_thread.daemon = True
+        scan_thread.start()
+        
         try:
-            self.logger.info(f"Running Nmap scan with parameters: {' '.join(scan_params)}")
-            self.viewer.status(f"Running Nmap scan against {self.target}")
-            
-            # Remove target from params as nmap_scan() expects it separately
-            params = [p for p in scan_params if p != self.target]
-            target = self.target
-            
-            # Initialize nmap scanner
-            nm = nmap.PortScanner()
-            
-            # Execute scan with parameters
-            self.logger.debug(f"Executing: nmap {' '.join(params)} {target}")
-            
-            # Start time for estimation of scan duration
-            start_time = time.time()
-            
-            # Start scan in a separate thread so we can show a single-line animation
-            scan_completed = threading.Event()
-            scan_result = [None]
-            
-            def run_scan():
-                try:
-                    scan_result[0] = nm.scan(hosts=target, arguments=' '.join(params))
-                finally:
-                    scan_completed.set()
-            
-            scan_thread = threading.Thread(target=run_scan)
-            scan_thread.daemon = True
-            scan_thread.start()
-            
-            # Show a simple spinner animation while scanning
-            animation = self.viewer.scanning_animation(f"Scanning {target}")
-            
-            # Wait for scan to complete
-            scan_completed.wait()
+            # Wait for scan to complete or timeout
+            scan_thread.join()
             
             # Stop animation
             animation.set()
             
-            # Calculate scan duration
-            scan_duration = int(time.time() - start_time)
-            
+            # Return the result
             result = scan_result[0]
-            
-            if target in nm.all_hosts():
-                host_info = nm[target]
-                tcp_count = len(host_info.get('tcp', {}))
-                udp_count = len(host_info.get('udp', {}))
-                self.logger.info(f"Scan completed in {scan_duration}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
-                
-                # Display scan summary
-                self.viewer.scan_summary(target, result)
-                
-                return result
-            else:
+            if not result:
                 self.logger.warning(f"No results found for target {target}")
-                self.viewer.warning(f"No results found for target {target}")
                 return None
                 
+            return result
         except Exception as e:
-            self.logger.error(f"Error running Nmap scan: {e}")
-            self.viewer.error(f"Nmap scan failed: {str(e)}")
+            animation.set()
+            self.logger.error(f"Error during scan: {e}")
             return None
+        
+    def run_scan(self, nm, target, params, scan_result):
+        """Thread function to run the scan."""
+        try:
+            # Run the scan
+            scan_result[0] = nm.scan(hosts=target, arguments=' '.join(params))
+        except Exception as e:
+            self.logger.error(f"Error during scan: {e}")
+            scan_result[0] = None
     
     def summarize_results(self, result):
-        """Summarize the scan results."""
-        try:
-            if not result or 'scan' not in result or self.target not in result['scan']:
-                self.logger.warning(f"No results to summarize for {self.target}")
-                return
-                
-            target_info = result['scan'][self.target]
-            
-            # Basic host info
-            status = target_info.get('status', {}).get('state', 'unknown')
-            hostname = "Unknown"
-            if 'hostnames' in target_info and target_info['hostnames']:
-                hostname = target_info['hostnames'][0].get('name', 'Unknown')
-                
-            os_match = "Unknown"
-            if 'osmatch' in target_info and target_info['osmatch']:
-                os_match = target_info['osmatch'][0].get('name', 'Unknown')
-                
-            self.logger.info(f"Host {self.target} ({hostname}) is {status}")
-            self.logger.info(f"OS: {os_match}")
-            
-            # Open ports
-            open_ports = []
-            for proto in ['tcp', 'udp']:
-                if proto in target_info:
-                    for port, port_data in target_info[proto].items():
-                        if port_data['state'] == 'open':
-                            service = port_data.get('name', 'unknown')
-                            product = port_data.get('product', '')
-                            version = port_data.get('version', '')
-                            
-                            port_info = f"{port}/{proto}: {service}"
-                            if product:
-                                port_info += f" ({product}"
-                                if version:
-                                    port_info += f" {version}"
-                                port_info += ")"
-                                
-                            self.logger.info(f"Open port: {port_info}")
-                            open_ports.append(port_info)
-            
-            self.logger.info(f"Found {len(open_ports)} open ports")
-            
-        except Exception as e:
-            self.logger.error(f"Error summarizing results: {e}")
+        """Summarize scan results in a readable format."""
+        if not result or 'scan' not in result:
+            self.logger.warning("No results to summarize")
+            return
+
+        target = self.target if self.target else self.discovered_hosts[self.current_target_index]
+        
+        if target not in result['scan']:
+            self.logger.warning(f"Target {target} not found in scan results")
+            self.viewer.warning(f"No results found for target {target}")
+            return
+        
+        # Extract information from scan result
+        target_info = result['scan'][target]
+        
+        # Count open ports
+        tcp_count = len(target_info.get('tcp', {}))
+        udp_count = len(target_info.get('udp', {}))
+        
+        # Log summary information
+        scan_duration = int(result.get('elapsed', 0))
+        self.logger.info(f"Scan completed in {scan_duration}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
+        
+        # Display scan summary using the viewer
+        self.viewer.scan_summary(target, result)
     
     # Ollama integration methods
     def prepare_ollama_context(self):
