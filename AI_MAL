@@ -70,7 +70,7 @@ if [ -z "$VENV_DIR" ]; then
     
     # Check if system Python has the required modules
     MISSING_MODULES=0
-    for module in "nmap" "requests" "pymetasploit3" "netifaces"; do
+    for module in "requests" "pymetasploit3" "netifaces"; do
         if ! python3 -c "import $module" 2>/dev/null; then
             MISSING_MODULES=$((MISSING_MODULES+1))
         fi
@@ -87,11 +87,11 @@ if [ -z "$VENV_DIR" ]; then
             VENV_DIR="${INSTALL_DIR}/venv"
             echo -e "${GREEN}Created virtual environment at: ${VENV_DIR}${NC}"
             echo -e "${YELLOW}Installing required packages...${NC}"
-            "${VENV_DIR}/bin/pip" install python-nmap requests pymetasploit3 psutil netifaces
+            "${VENV_DIR}/bin/pip" install requests pymetasploit3 psutil netifaces
         else
             echo -e "${RED}Error: Could not create a virtual environment.${NC}"
             echo -e "Please install required modules manually:"
-            echo -e "  ${GREEN}pip install python-nmap requests pymetasploit3 psutil netifaces${NC}"
+            echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces${NC}"
             exit 1
         fi
     fi
@@ -104,7 +104,7 @@ if [ -z "$SYSTEM_PYTHON" ] && [ ! -d "$VENV_DIR" ]; then
     echo -e "  ${GREEN}cd ${INSTALL_DIR}${NC}"
     echo -e "  ${GREEN}python3 -m venv venv${NC}"
     echo -e "  ${GREEN}source venv/bin/activate${NC}"
-    echo -e "  ${GREEN}pip install python-nmap requests pymetasploit3 psutil netifaces${NC}"
+    echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces${NC}"
     exit 1
 fi
 
@@ -234,6 +234,13 @@ fi
 if [ ! -f "${PYTHON_SCRIPT}" ]; then
     echo -e "${RED}ERROR: Cannot find the Python script at ${PYTHON_SCRIPT}${NC}"
     echo "Make sure you're running this script from the correct directory."
+    exit 1
+fi
+
+# Check if nmap is installed
+if ! command -v nmap &> /dev/null; then
+    echo -e "${RED}Error: Nmap is required but not installed.${NC}"
+    echo "Please install nmap manually for your distribution and try again."
     exit 1
 fi
 

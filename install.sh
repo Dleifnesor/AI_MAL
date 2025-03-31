@@ -85,6 +85,27 @@ if ! command_exists nmap; then
     fi
 fi
 
+# Check if dos2unix is installed
+if ! command_exists dos2unix; then
+    echo "[!] dos2unix is not installed. Attempting to install..."
+    
+    # Check the package manager and install dos2unix
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y dos2unix
+    elif command_exists yum; then
+        sudo yum install -y dos2unix
+    elif command_exists dnf; then
+        sudo dnf install -y dos2unix
+    elif command_exists pacman; then
+        sudo pacman -S --noconfirm dos2unix
+    elif command_exists brew; then
+        brew install dos2unix
+    else
+        echo "[-] Could not determine package manager. Please install dos2unix manually."
+    fi
+fi
+
 # Verify nmap installation
 if command_exists nmap; then
     NMAP_VERSION=$(nmap --version | head -n 1)
@@ -93,6 +114,39 @@ if command_exists nmap; then
 else
     echo "[-] nmap is not installed. Please install it manually."
     exit 1
+fi
+
+# Check for Metasploit Framework
+echo "[+] Checking for Metasploit Framework..."
+if command_exists msfconsole; then
+    echo "[+] Metasploit Framework found"
+    
+    # Check if PostgreSQL is installed for Metasploit
+    if command_exists psql; then
+        echo "[+] PostgreSQL found for Metasploit database"
+        
+        # Check if PostgreSQL is running
+        if command_exists systemctl && systemctl is-active --quiet postgresql; then
+            echo "[+] PostgreSQL service is running"
+        else
+            echo "[!] Starting PostgreSQL service..."
+            if command_exists systemctl; then
+                sudo systemctl start postgresql
+            fi
+        fi
+        
+        # Initialize Metasploit database if needed
+        echo "[+] Initializing Metasploit database..."
+        if command_exists msfdb; then
+            sudo msfdb init
+        fi
+    else
+        echo "[!] PostgreSQL not found. Metasploit will run without database support."
+    fi
+else
+    echo "[!] Metasploit Framework not found. MSF integration will not be available."
+    echo "    To install Metasploit Framework, follow instructions at:"
+    echo "    https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
 fi
 
 # Check Ollama installation
@@ -159,9 +213,21 @@ else
     echo "      ollama pull gemma3:1b"
 fi
 
-# Make the main file executable
-echo "[+] Setting executable permissions..."
+# Make the main files executable and fix line endings
+echo "[+] Setting executable permissions and fixing line endings..."
 chmod +x "$INSTALL_DIR/AI_MAL"
+
+# Fix line endings on bash scripts to avoid "bad interpreter" errors
+if command_exists dos2unix; then
+    echo "[+] Converting line endings with dos2unix..."
+    dos2unix "$INSTALL_DIR/AI_MAL"
+    dos2unix "$INSTALL_DIR/ai-mal-env"
+else
+    echo "[!] dos2unix not found, attempting to fix line endings manually..."
+    # Manual fix for line endings using sed if dos2unix is not available
+    sed -i 's/\r$//' "$INSTALL_DIR/AI_MAL"
+    sed -i 's/\r$//' "$INSTALL_DIR/ai-mal-env"
+fi
 
 # Create a symbolic link to the AI_MAL script in /usr/local/bin if possible
 if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
