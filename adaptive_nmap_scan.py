@@ -620,8 +620,8 @@ class NetworkDiscovery:
         return sum([bin(int(x)).count('1') for x in netmask.split('.')])
 
 class AdaptiveNmapScanner:
-    """Main class for adaptive Nmap scanning with AI integration."""
-    
+    """Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration."""
+
     def __init__(
         self,
         target=None,
@@ -647,30 +647,55 @@ class AdaptiveNmapScanner:
         dos_attack=False,
         show_live_ai=False
     ):
-        """Initialize the scanner with given parameters."""
-        # Target settings
+        """Initialize the scanner with the given parameters."""
+        # Store all initialization parameters as attributes
         self.target = target
-        self.auto_discover = auto_discover
-        self.scan_all = scan_all
-        self.network = network
-        self.interface = interface
-        self.host_timeout = host_timeout
-        self.discovered_hosts = []
-        self.current_target_index = 0
-        
-        # Scanning settings
+        self.ollama_model = ollama_model
         self.max_iterations = max_iterations
         self.continuous = continuous
         self.delay = delay
+        self.msf_integration = msf_integration  # Ensure this attribute is set
+        self.exploit = exploit
+        self.msf_workspace = msf_workspace
         self.stealth = stealth
-        
-        # Ollama settings
-        # If model isn't one of our default models, check if it exists and download if needed
-        self.ollama_url = "http://localhost:11434/api/generate"
-        self.ollama_model = ollama_model
-        self._ensure_model_available()
+        self.auto_script = auto_script
+        self.quiet = quiet
+        self.debug = debug
+        self.auto_discover = auto_discover
+        self.interface = interface
+        self.scan_all = scan_all
+        self.network = network
+        self.host_timeout = host_timeout
+        self.custom_scripts = custom_scripts
+        self.script_type = script_type
+        self.execute_scripts = execute_scripts
+        self.dos_attack = dos_attack
         self.show_live_ai = show_live_ai
-
+        
+        # Add logger to the class instance
+        self.logger = logger
+        
+        # Set up remaining components
+        self.ollama_url = "http://localhost:11434/api/generate"
+        self.running = True
+        self.scan_history = []
+        self.viewer = TerminalViewer(quiet=quiet)
+        self.msf_client = None
+        self.discovered_hosts = []
+        self.current_target_index = 0
+        
+        # Network discovery setup
+        self.network_discovery = None
+        if self.auto_discover:
+            self.network_discovery = NetworkDiscovery(
+                interface=self.interface,
+                network=self.network,
+                timeout=self.host_timeout
+            )
+        
+        # If model isn't one of our default models, check if it exists and download if needed
+        self._ensure_model_available()
+    
     def _ensure_model_available(self):
         """Ensure the specified Ollama model is available, downloading it if needed."""
         try:
@@ -1874,101 +1899,125 @@ if __name__ == "__main__":
             return False
 
     def run(self):
-        """Main execution method."""
+        """Main method to run the scan process."""
         try:
-            # Set up Metasploit if needed
-            if self.msf_integration:
-                self.setup_metasploit()
+            # Handle Ctrl+C gracefully
+            signal.signal(signal.SIGINT, self._signal_handler)
             
-            # Display start banner
-            scan_type = "Adaptive Reconnaissance"
-            if self.msf_integration:
-                scan_type += " with Metasploit Integration"
-            if self.exploit:
-                scan_type += " and Exploitation"
-            if self.dos_attack:
-                scan_type += " and DoS Testing"
-                
-            self.viewer.display_start_banner(self.target, scan_type, self.ollama_model)
+            # Discover hosts if auto-discover is enabled
+            if self.auto_discover:
+                if not self._discover_network():
+                    self.logger.error("Network discovery failed. Exiting.")
+                    return
             
-            # Run iterative scanning process
+            # Check if we have any targets
+            if not self.target and not self.discovered_hosts:
+                self.logger.error("No targets specified and no hosts discovered. Exiting.")
+                return
+            
+            # Setup Metasploit RPC client if integration is enabled
+            if hasattr(self, 'msf_integration') and self.msf_integration:
+                if not self.setup_metasploit():
+                    self.logger.warning("Metasploit integration failed. Continuing without it.")
+                    self.msf_integration = False
+            
+            # Main scan loop
             iteration = 1
-            continue_scanning = True
-            
-            while continue_scanning and self.running:
-                self.logger.info(f"Starting scan iteration {iteration} for {self.target}")
-                self.viewer.section(f"ITERATION {iteration}")
+            while True:
+                # Get the next target if we're scanning multiple hosts
+                if self.auto_discover and self.scan_all:
+                    if not self.next_target():
+                        break
                 
-                # Generate scan parameters
+                # Display scan banner
+                self.viewer.display_start_banner(
+                    self.target if self.target else self.discovered_hosts[self.current_target_index],
+                    "Adaptive" if iteration > 1 else "Initial",
+                    self.ollama_model
+                )
+                
+                # Generate and display scan parameters for this iteration
                 scan_params = self.generate_scan_parameters(iteration)
                 
                 # Run Nmap scan
                 result = self.run_nmap_scan(scan_params)
                 
-                if not result:
-                    self.logger.error(f"Scan failed for {self.target}")
-                    self.viewer.error(f"Scan failed for {self.target}")
-                    break
-                
-                # Add to scan history
-                self.scan_history.append({
-                    'iteration': iteration,
-                    'target': self.target,
-                    'params': scan_params,
-                    'result': result
-                })
-                
-                # Summarize results
-                self.summarize_results(result)
-                
-                # Process results with Metasploit if enabled
-                if self.msf_integration:
-                    self.process_results_with_metasploit(result)
-                
-                # Generate custom script if requested
-                if self.auto_script or self.custom_scripts:
-                    if self.script_type == "auto":
-                        script_type = self.determine_best_script_type()
-                    else:
-                        script_type = self.script_type
+                # Process results
+                if result:
+                    self.summarize_results(result)
+                    self.scan_history.append(result)
+                    
+                    # Process with Metasploit if integration is enabled
+                    if hasattr(self, 'msf_integration') and self.msf_integration:
+                        self.process_results_with_metasploit(result)
                         
-                    script_path = self.generate_custom_script(script_type)
+                        # Run exploits if enabled
+                        if hasattr(self, 'exploit') and self.exploit and self.msf_client:
+                            if self.target:
+                                self.run_exploits_on_host(self.target)
+                            elif self.discovered_hosts:
+                                self.run_exploits_on_host(self.discovered_hosts[self.current_target_index])
+                        
+                        # Run custom resource script if auto-script is enabled
+                        if hasattr(self, 'auto_script') and self.auto_script and self.msf_client:
+                            script_path = self.generate_resource_script()
+                            if script_path:
+                                self.run_resource_script(script_path)
+                
+                # Generate custom scripts if enabled
+                if hasattr(self, 'custom_scripts') and self.custom_scripts:
+                    if not hasattr(self, 'script_type'):
+                        self.script_type = "bash"  # Default to bash if not specified
+                    
+                    target_info = None
+                    if result and 'scan' in result:
+                        if self.target:
+                            target_info = result['scan'].get(self.target)
+                        elif self.discovered_hosts:
+                            target = self.discovered_hosts[self.current_target_index]
+                            target_info = result['scan'].get(target)
+                    
+                    script_path = self.generate_custom_script(
+                        script_type=self.script_type,
+                        target_info=target_info
+                    )
+                    
+                    # Execute script if enabled
+                    if hasattr(self, 'execute_scripts') and self.execute_scripts and script_path:
+                        self.execute_generated_script(script_path)
                 
                 # Perform DoS attack if enabled
-                if self.dos_attack:
-                    self.perform_dos_attack(self.target)
+                if hasattr(self, 'dos_attack') and self.dos_attack:
+                    if self.target:
+                        self.perform_dos_attack(self.target)
+                    elif self.discovered_hosts:
+                        self.perform_dos_attack(self.discovered_hosts[self.current_target_index])
                 
-                # Check if we should continue
+                # Stop if we've reached the max iterations or are not in continuous mode
                 iteration += 1
-                if iteration > self.max_iterations:
-                    self.logger.info(f"Reached maximum iterations ({self.max_iterations})")
-                    continue_scanning = False
-                elif self.continuous:
-                    self.logger.info(f"Continuous mode enabled, continuing to next iteration")
+                if not self.continuous and iteration > self.max_iterations:
+                    break
+                
+                # Delay between iterations
+                if self.continuous or iteration <= self.max_iterations:
                     time.sleep(self.delay)
-                else:
-                    self.logger.info(f"Not in continuous mode, stopping after first iteration")
-                    continue_scanning = False
             
-            # Check if we should move to the next target
-            if self.running and self.scan_all and self.next_target():
-                # Reset scan history for the new target
-                self.scan_history = []
-                
-                # Run scan process for the new target
-                self.run()
-                
-            # Display completion message
-            if self.running:
-                self.viewer.success("Scan process completed")
-            else:
-                self.viewer.warning("Scan process interrupted")
+            self.viewer.success("Scan process completed.")
             
         except Exception as e:
-            self.logger.error(f"Error during scan process: {e}")
-            self.viewer.error(f"Scan process failed: {str(e)}")
-            if self.debug:
-                self.logger.error(traceback.format_exc())
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Error during scan process: {e}")
+            else:
+                logger.error(f"Error during scan process: {e}")
+            if hasattr(self, 'debug') and self.debug:
+                if hasattr(self, 'logger'):
+                    self.logger.exception("Detailed exception information:")
+                else:
+                    logger.exception("Detailed exception information:")
+        finally:
+            # Cleanup
+            if hasattr(self, 'msf_client') and self.msf_client:
+                self.msf_client.close()
     
     def determine_best_script_type(self):
         """Determine the best script type based on scan results."""
@@ -2548,66 +2597,6 @@ This is a basic response generated when the AI model is unavailable."""
             
         return prompt
 
-def main():
-    """Main entry point for the script."""
-    # Parse command line arguments
-    args = parse_arguments()
-    
-    # Configure logging based on debug flag
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        for handler in logger.handlers:
-            handler.setLevel(logging.DEBUG)
-    
-    # Print version and exit if requested
-    if args.version:
-        print(f"Advanced Adaptive Nmap Scanner v1.2.1")
-        print("AI-powered network reconnaissance and exploitation framework")
-        return 0
-    
-    # Create and run scanner
-    try:
-        scanner = AdaptiveNmapScanner(
-            target=args.target,
-            ollama_model=args.model,
-            max_iterations=args.iterations,
-            continuous=args.continuous,
-            delay=args.delay,
-            msf_integration=args.msf,
-            exploit=args.exploit,
-            msf_workspace=args.workspace,
-            stealth=args.stealth,
-            auto_script=args.auto_script,
-            quiet=args.quiet,
-            debug=args.debug,
-            auto_discover=args.auto_discover,
-            interface=args.interface,
-            scan_all=args.scan_all,
-            network=args.network,
-            host_timeout=args.host_timeout,
-            custom_scripts=args.custom_scripts,
-            script_type=args.script_type,
-            execute_scripts=args.execute_scripts,
-            dos_attack=args.dos,
-            show_live_ai=args.show_live_ai
-        )
-        
-        scanner.run()
-        return 0
-        
-    except KeyboardInterrupt:
-        logger.info("Scan interrupted by user")
-        print("\nScan interrupted by user")
-        return 1
-        
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        if args.debug:
-            logger.error(traceback.format_exc())
-        print(f"\nError: {str(e)}")
-        return 1
-
-
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -2797,12 +2786,25 @@ def parse_arguments():
     )
     
     # Additional setup for network option
-    if args.network and scanner.network_discovery:
+    if args.network and hasattr(scanner, 'network_discovery') and scanner.network_discovery:
         scanner.network_discovery.network = args.network
         logger.info(f"Using specified network: {args.network}")
     
-    # Start scanning
-    scanner.run()
+    # Return the configured scanner
+    return scanner
+
+def main():
+    """Main entry point."""
+    try:
+        # Parse arguments and get scanner
+        scanner = parse_arguments()
+        
+        # Run the scanner
+        scanner.run()
+    except Exception as e:
+        logger.error(f"Error in main execution: {e}")
+        if logging.getLogger().level == logging.DEBUG:
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main() 
