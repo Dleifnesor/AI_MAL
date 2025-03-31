@@ -23,20 +23,10 @@ import tempfile
 import stat
 import itertools
 from typing import List, Dict, Any, Optional, Tuple
+import xml.etree.ElementTree as ET
 
 # Third-party imports
-# Try to import python_nmap first (symlinked during installation)
-try:
-    import python_nmap as nmap
-except ImportError:
-    # Fall back to the standard package name if the symlink wasn't created
-    try:
-        import nmap
-        logging.info("Using standard nmap module instead of python_nmap")
-    except ImportError:
-        print("ERROR: Could not import nmap module. Please install python-nmap package:")
-        print("  pip install python-nmap")
-        sys.exit(1)
+# Note: we're removing the python-nmap dependency and using direct subprocess calls
 import requests
 import netifaces
 import pymetasploit3
@@ -617,7 +607,277 @@ class NetworkDiscovery:
     # Helper methods
     def _netmask_to_cidr(self, netmask):
         """Convert a netmask to CIDR notation."""
-        return sum([bin(int(x)).count('1') for x in netmask.split('.')])
+        return sum(bin(int(x)).count('1') for x in netmask.split('.'))
+
+# Custom Nmap scanner implementation using subprocess
+class DirectNmapScanner:
+    """Direct implementation of nmap scanning using subprocess instead of python-nmap."""
+    
+    @staticmethod
+    def check_nmap_installed():
+        """Check if nmap is installed and available on the system."""
+        try:
+            result = subprocess.run(['nmap', '--version'], 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                universal_newlines=True,
+                check=False)
+            if result.returncode == 0:
+                logger.debug(f"Nmap found: {result.stdout.strip()}")
+                return True
+            else:
+                logger.error(f"Nmap check failed: {result.stderr}")
+                return False
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            logger.error(f"Nmap not found or not executable: {e}")
+            return False
+
+    @staticmethod
+    def scan(hosts, arguments):
+        """Run an nmap scan using subprocess and return results in a dictionary format.
+        
+        Args:
+            hosts: Target IP address or hostname
+            arguments: Nmap command line arguments as a string
+            
+        Returns:
+            Dictionary with scan results in a format similar to python-nmap
+        """
+        # Verify nmap is installed
+        if not DirectNmapScanner.check_nmap_installed():
+            logger.error("Nmap is not installed on this system")
+            return None
+            
+        # Create temporary file for XML output
+        fd, xml_output = tempfile.mkstemp(suffix='.xml', prefix='nmap_')
+        os.close(fd)
+        
+        try:
+            # Build command
+            cmd = ['nmap', '-oX', xml_output]
+            
+            # Add all arguments
+            if arguments:
+                cmd.extend(arguments.split())
+                
+            # Add target
+            if hosts not in arguments:
+                cmd.append(hosts)
+            
+            # Log the command
+            logger.debug(f"Running nmap command: {' '.join(cmd)}")
+            
+            # Run scan
+            start_time = time.time()
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            stdout, stderr = process.communicate()
+            elapsed = time.time() - start_time
+            
+            # Check for errors
+            if process.returncode != 0:
+                logger.error(f"Nmap scan failed with return code {process.returncode}")
+                logger.error(f"Error: {stderr}")
+                return None
+                
+            # Parse XML output into nmap-like dictionary
+            return DirectNmapScanner.parse_xml(xml_output, cmd, elapsed, stdout, stderr)
+            
+        except Exception as e:
+            logger.error(f"Error running nmap scan: {e}")
+            return None
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(xml_output)
+            except:
+                pass
+                
+    @staticmethod
+    def parse_xml(xml_file, cmd, elapsed, stdout, stderr):
+        """Parse nmap XML output into a dictionary.
+        
+        Args:
+            xml_file: Path to XML file to parse
+            cmd: Original command that was run
+            elapsed: Time elapsed during scan
+            stdout: Standard output from nmap
+            stderr: Standard error from nmap
+            
+        Returns:
+            Dictionary with scan results
+        """
+        try:
+            # Parse XML
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            
+            # Create result dictionary in python-nmap compatible format
+            result = {
+                'nmap': {
+                    'command_line': ' '.join(cmd),
+                    'scaninfo': {},
+                    'scanstats': {
+                        'timestr': root.find('runstats/finished').get('timestr', '') if root.find('runstats/finished') is not None else '',
+                        'elapsed': root.find('runstats/finished').get('elapsed', str(elapsed)) if root.find('runstats/finished') is not None else str(elapsed),
+                        'uphosts': root.find('runstats/hosts').get('up', '0') if root.find('runstats/hosts') is not None else '0',
+                        'downhosts': root.find('runstats/hosts').get('down', '0') if root.find('runstats/hosts') is not None else '0',
+                        'totalhosts': root.find('runstats/hosts').get('total', '0') if root.find('runstats/hosts') is not None else '0',
+                    }
+                },
+                'scan': {}
+            }
+            
+            # Extract scan info
+            for scaninfo in root.findall('scaninfo'):
+                result['nmap']['scaninfo'][scaninfo.get('protocol', '')] = {
+                    'method': scaninfo.get('type', ''),
+                    'services': scaninfo.get('services', '')
+                }
+            
+            # Process each host
+            for host in root.findall('host'):
+                # Get host address (prefer IPv4)
+                addr = None
+                for address in host.findall('address'):
+                    if address.get('addrtype') == 'ipv4':
+                        addr = address.get('addr')
+                        break
+                if not addr and host.find('address') is not None:
+                    addr = host.find('address').get('addr', '')
+                if not addr:
+                    # Skip hosts without an address
+                    continue
+                    
+                # Initialize host data structure
+                result['scan'][addr] = {
+                    'hostnames': [],
+                    'addresses': {},
+                    'vendor': {},
+                    'status': {},
+                    'tcp': {},
+                    'udp': {}
+                }
+                
+                # Get all addresses
+                for address in host.findall('address'):
+                    addr_type = address.get('addrtype', '')
+                    result['scan'][addr]['addresses'][addr_type] = address.get('addr', '')
+                    if address.get('vendor') and address.get('addr'):
+                        result['scan'][addr]['vendor'][address.get('addr')] = address.get('vendor', '')
+                
+                # Get status
+                status = host.find('status')
+                if status is not None:
+                    result['scan'][addr]['status'] = {
+                        'state': status.get('state', ''),
+                        'reason': status.get('reason', '')
+                    }
+                
+                # Get hostnames
+                hostnames = host.find('hostnames')
+                if hostnames is not None:
+                    for hostname in hostnames.findall('hostname'):
+                        result['scan'][addr]['hostnames'].append({
+                            'name': hostname.get('name', ''),
+                            'type': hostname.get('type', '')
+                        })
+                
+                # Get ports
+                ports = host.find('ports')
+                if ports is not None:
+                    for port in ports.findall('port'):
+                        protocol = port.get('protocol', '')
+                        port_id = port.get('portid', '')
+                        
+                        if not protocol or not port_id:
+                            continue
+                        
+                        # Create port data
+                        port_data = {
+                            'state': '',
+                            'reason': '',
+                            'name': '',
+                            'product': '',
+                            'version': '',
+                            'extrainfo': '',
+                            'conf': '',
+                            'cpe': ''
+                        }
+                        
+                        # Get state
+                        state = port.find('state')
+                        if state is not None:
+                            port_data['state'] = state.get('state', '')
+                            port_data['reason'] = state.get('reason', '')
+                        
+                        # Get service info
+                        service = port.find('service')
+                        if service is not None:
+                            port_data['name'] = service.get('name', '')
+                            port_data['product'] = service.get('product', '')
+                            port_data['version'] = service.get('version', '')
+                            port_data['extrainfo'] = service.get('extrainfo', '')
+                            port_data['conf'] = service.get('conf', '')
+                            
+                            # Get CPE
+                            cpe = service.find('cpe')
+                            if cpe is not None and cpe.text:
+                                port_data['cpe'] = cpe.text
+                        
+                        # Add port to result
+                        result['scan'][addr][protocol][port_id] = port_data
+                
+                # Get OS detection
+                os_matches = host.find('os')
+                if os_matches is not None:
+                    result['scan'][addr]['osmatch'] = []
+                    for osmatch in os_matches.findall('osmatch'):
+                        os_data = {
+                            'name': osmatch.get('name', ''),
+                            'accuracy': osmatch.get('accuracy', ''),
+                            'osclass': []
+                        }
+                        
+                        for osclass in osmatch.findall('osclass'):
+                            class_data = {
+                                'type': osclass.get('type', ''),
+                                'vendor': osclass.get('vendor', ''),
+                                'osfamily': osclass.get('osfamily', ''),
+                                'osgen': osclass.get('osgen', ''),
+                                'accuracy': osclass.get('accuracy', '')
+                            }
+                            os_data['osclass'].append(class_data)
+                        
+                        result['scan'][addr]['osmatch'].append(os_data)
+            
+            # All done
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error parsing nmap XML output: {e}")
+            logger.debug(traceback.format_exc())
+            return None
+
+# Make DirectNmapScanner available as a PortScanner
+class PortScanner:
+    """PortScanner class to mimic python-nmap interface."""
+    
+    def __init__(self):
+        """Initialize the port scanner."""
+        # Nothing to initialize
+        pass
+        
+    def scan(self, hosts, arguments):
+        """Run nmap scan and return results."""
+        return DirectNmapScanner.scan(hosts, arguments)
+
+# Replace nmap with our custom scanner
+nmap = type('nmap', (), {'PortScanner': PortScanner})
 
 class AdaptiveNmapScanner:
     """Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration."""
@@ -695,7 +955,7 @@ class AdaptiveNmapScanner:
         
         # If model isn't one of our default models, check if it exists and download if needed
         self._ensure_model_available()
-    
+        
     def _ensure_model_available(self):
         """Ensure the specified Ollama model is available, downloading it if needed."""
         try:
@@ -984,8 +1244,8 @@ class AdaptiveNmapScanner:
             self.logger.info(f"Starting msfrpcd: {' '.join(cmd)}")
             subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
                 start_new_session=True
             )
             
@@ -1003,8 +1263,8 @@ class AdaptiveNmapScanner:
                     ["systemctl", "start", "msfrpcd"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    check=True
-                )
+                        check=True
+                    )
                 time.sleep(5)
             except Exception as e2:
                 self.logger.error(f"Error starting msfrpcd using systemctl: {e2}")
@@ -1154,7 +1414,7 @@ class AdaptiveNmapScanner:
             # If we should automatically run exploits
             if self.exploit:
                 self.run_exploits_on_host(self.target)
-            else:
+                    else:
                 # Generate a Metasploit resource script
                 script_path = self.generate_resource_script()
                 
@@ -1173,7 +1433,7 @@ class AdaptiveNmapScanner:
                         else:
                             self.viewer.warning(f"Failed to execute resource script: {script_path}")
             
-        except Exception as e:
+                except Exception as e:
             self.logger.error(f"Error finding matching exploits: {e}")
     
     def generate_resource_script(self):
@@ -1590,8 +1850,8 @@ echo "HTTP flood attack completed"
                 
                 self.logger.info(f"Generic flood attack timeout on {target}")
                 return True
-            
-        except Exception as e:
+                    
+            except Exception as e:
             self.logger.error(f"Error performing generic flood attack: {e}")
             return False
     
@@ -1766,7 +2026,7 @@ echo "Reconnaissance completed"
         script = f"""#!/usr/bin/env python3
 # Reconnaissance Script for {target}
 # Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-# This script performs basic reconnaissance on a target system
+# This script performs basic reconnaissance on the target system
 
 import socket
 import subprocess
@@ -1908,12 +2168,12 @@ if __name__ == "__main__":
             if self.auto_discover:
                 if not self._discover_network():
                     self.logger.error("Network discovery failed. Exiting.")
-                    return
+            return
             
             # Check if we have any targets
             if not self.target and not self.discovered_hosts:
                 self.logger.error("No targets specified and no hosts discovered. Exiting.")
-                return
+            return
             
             # Setup Metasploit RPC client if integration is enabled
             if hasattr(self, 'msf_integration') and self.msf_integration:
@@ -2175,55 +2435,179 @@ if __name__ == "__main__":
         
         target = self.target if self.target else self.discovered_hosts[self.current_target_index]
         
-        # Fix: Remove -oX - from parameters if present
-        params = []
-        for param in scan_params:
-            if param != "-oX" and param != "-":
-                params.append(param)
+        # Use subprocess to call nmap directly instead of using python-nmap
+        self.logger.info(f"Running Nmap scan with parameters: {' '.join(scan_params)}")
+        self.viewer.status(f"Running Nmap scan against {target}")
         
-        self.logger.info(f"Running Nmap scan with parameters: {' '.join(params)}")
-        
-        # Create Nmap scanner
-        nm = nmap.PortScanner()
-        
-        # Create a thread to run the scan
-        scan_result = [None]
-        scan_thread = threading.Thread(target=self.run_scan, args=(nm, target, params, scan_result))
-        
-        # Start animation
-        animation = self.viewer.scanning_animation(f"Scanning {target}")
-        
-        # Start scan thread
-        scan_thread.daemon = True
-        scan_thread.start()
-        
+        # Create a temporary file for XML output
         try:
-            # Wait for scan to complete or timeout
-            scan_thread.join()
+            fd, xml_output = tempfile.mkstemp(suffix='.xml', prefix='nmap_')
+            os.close(fd)
+            
+            # Build the nmap command
+            nmap_cmd = ['nmap', '-oX', xml_output]
+            
+            # Add all parameters except target (which might already be in params)
+            for param in scan_params:
+                if param != target:  # Avoid adding target twice
+                    nmap_cmd.append(param)
+                    
+            # Start animation
+            animation = self.viewer.scanning_animation(f"Scanning {target}")
+            
+            # Run nmap as a subprocess
+            self.logger.debug(f"Executing: {' '.join(nmap_cmd)}")
+            process = subprocess.Popen(
+                nmap_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Wait for the process to complete
+            stdout, stderr = process.communicate()
             
             # Stop animation
             animation.set()
             
-            # Return the result
-            result = scan_result[0]
-            if not result:
-                self.logger.warning(f"No results found for target {target}")
+            # Check if scan was successful
+            if process.returncode != 0:
+                self.logger.error(f"Nmap scan failed with return code {process.returncode}")
+                self.logger.error(f"Error: {stderr}")
+                self.viewer.error(f"Nmap scan failed: {stderr}")
                 return None
                 
+            # Parse XML output
+            try:
+                tree = ET.parse(xml_output)
+                root = tree.getroot()
+                
+                # Create result dictionary in python-nmap compatible format
+                result = {
+                    'nmap': {
+                        'command_line': root.get('args', ''),
+                        'scaninfo': {},
+                        'scanstats': {
+                            'timestr': root.find('runstats/finished').get('timestr', '') if root.find('runstats/finished') is not None else '',
+                            'elapsed': root.find('runstats/finished').get('elapsed', '') if root.find('runstats/finished') is not None else '',
+                            'uphosts': root.find('runstats/hosts').get('up', '0') if root.find('runstats/hosts') is not None else '0',
+                            'downhosts': root.find('runstats/hosts').get('down', '0') if root.find('runstats/hosts') is not None else '0',
+                            'totalhosts': root.find('runstats/hosts').get('total', '0') if root.find('runstats/hosts') is not None else '0',
+                        }
+                    },
+                    'scan': {}
+                }
+                
+                # Process each host
+                for host in root.findall('host'):
+                    # Get IP address
+                    addr_elem = host.find('address')
+                    if addr_elem is None or addr_elem.get('addrtype') != 'ipv4':
+                        continue
+                        
+                    addr = addr_elem.get('addr')
+                    if not addr:
+                        continue
+                    
+                    # Initialize host data
+                    result['scan'][addr] = {
+                        'hostnames': [],
+                        'addresses': {},
+                        'vendor': {},
+                        'status': {},
+                        'tcp': {},
+                        'udp': {}
+                    }
+                    
+                    # Get hostnames
+                    for hostname in host.findall('hostnames/hostname'):
+                        result['scan'][addr]['hostnames'].append({
+                            'name': hostname.get('name', ''),
+                            'type': hostname.get('type', '')
+                        })
+                    
+                    # Get status
+                    status = host.find('status')
+                    if status is not None:
+                        result['scan'][addr]['status'] = {
+                            'state': status.get('state', ''),
+                            'reason': status.get('reason', '')
+                        }
+                    
+                    # Get ports
+                    for port in host.findall('ports/port'):
+                        protocol = port.get('protocol', '')
+                        port_id = port.get('portid', '')
+                        
+                        if not protocol or not port_id:
+                            continue
+                            
+                        # Initialize port data if protocol not already in dict
+                        if protocol not in result['scan'][addr]:
+                            result['scan'][addr][protocol] = {}
+                        
+                        result['scan'][addr][protocol][port_id] = {
+                            'state': '',
+                            'name': '',
+                            'product': '',
+                            'version': '',
+                            'extrainfo': ''
+                        }
+                        
+                        # Get state
+                        state = port.find('state')
+                        if state is not None:
+                            result['scan'][addr][protocol][port_id]['state'] = state.get('state', '')
+                        
+                        # Get service details
+                        service = port.find('service')
+                        if service is not None:
+                            result['scan'][addr][protocol][port_id]['name'] = service.get('name', '')
+                            result['scan'][addr][protocol][port_id]['product'] = service.get('product', '')
+                            result['scan'][addr][protocol][port_id]['version'] = service.get('version', '')
+                            result['scan'][addr][protocol][port_id]['extrainfo'] = service.get('extrainfo', '')
+                    
+                    # Get OS information
+                    osmatch = host.findall('os/osmatch')
+                    if osmatch:
+                        result['scan'][addr]['osmatch'] = []
+                        for match in osmatch:
+                            result['scan'][addr]['osmatch'].append({
+                                'name': match.get('name', ''),
+                                'accuracy': match.get('accuracy', '')
+                            })
+                
+                # Calculate scan duration
+                elapsed = float(result['nmap']['scanstats'].get('elapsed', '0'))
+                
+                # Get open port stats
+                if target in result['scan']:
+                    tcp_count = len(result['scan'][target].get('tcp', {}))
+                    udp_count = len(result['scan'][target].get('udp', {}))
+                    self.logger.info(f"Scan completed in {int(elapsed)}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
+                
+                # Display scan summary
+                self.viewer.scan_summary(target, result)
+                
+                # Cleanup XML file
+                try:
+                    os.unlink(xml_output)
+                except:
+                    pass
+            
             return result
+                
         except Exception as e:
-            animation.set()
-            self.logger.error(f"Error during scan: {e}")
+                self.logger.error(f"Error parsing Nmap output: {e}")
+                self.viewer.error(f"Error parsing Nmap output: {str(e)}")
             return None
         
-    def run_scan(self, nm, target, params, scan_result):
-        """Thread function to run the scan."""
-        try:
-            # Run the scan
-            scan_result[0] = nm.scan(hosts=target, arguments=' '.join(params))
         except Exception as e:
+            if 'animation' in locals():
+                animation.set()
             self.logger.error(f"Error during scan: {e}")
-            scan_result[0] = None
+            self.viewer.error(f"Scan error: {str(e)}")
+            return None
     
     def summarize_results(self, result):
         """Summarize scan results in a readable format."""

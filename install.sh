@@ -1,734 +1,197 @@
 #!/bin/bash
+# Installation script for AI_MAL
+# This script installs dependencies and sets up the environment
 
-# AI_MAL Installation Script
-# This script installs AI_MAL and its dependencies on a Kali Linux system
+# Determine the installation directory (where the script is located)
+INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$INSTALL_DIR" || { echo "Could not change to install directory"; exit 1; }
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Print welcome message
+echo "====================================================="
+echo "       Installing AI_MAL - AI-Powered Penetration Testing Tool"
+echo "====================================================="
+echo
 
-# ASCII Art Banner
-echo -e "\n                               @@@@@@@@                         
-                              @@@@@@@@@@                        
-                              @@@     @@@                       
-                             @@@@     @@@                       
-                             @@@@     @@@                       
-                             @@@@     @@@                       
-                             @@@@     @@@                       
-                       @@@@@@@@@@     @@@                       
-                      @@@@@@@@@@@     @@@@@@@@@                 
-                     @@@     @@@@     @@@@@@@@@@@               
-                     @@@      @@@     @@@@    @@@               
-                     @@@      @@@     @@@      @@@@@@@@@        
-        @@@@@@@@@    @@@      @@@     @@@      @@@@@@@@@@       
-       @@@@@@@@@@@@  @@@      @@@     @@@      @@@     @@@      
-      @@@@@       @@@@@@      @@@     @@@      @@@     @@@      
-        @@@@        @@@@      @@@     @@@      @@@     @@@      
-         @@@@@       @@@@     @@@     @@@      @@@     @@@      
-           @@@@       @@@                              @@@      
-            @@@@                                       @@@      
-              @@@@                                     @@@      
-                @@@@                                   @@@      
-                  @@@@                                 @@@      
-                    @@@@@@                             @@@      
-                      @@@@                           @@@@@      
-                      @@@                          @@@@@@       
-                      @@@@                       @@@@@@         
-                       @@@                         @@@          
-                        @@@@                     @@@@           
-                         @@@@@@@@@@@@@@@@@@@@@@@@@@@            
-                           @@@@@@@@@@@@@@@@@@@@@@               
- Advanced Intelligent Machine-Aided Learning
- for Network Penetration
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" > /dev/null 2>&1
+}
 
-"
-
-echo -e "\nStarting AI_MAL installation...\n"
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}Error: This script requires root privileges.${NC}"
-  echo "Please run with: sudo $0"
-  exit 1
-fi
-
-# Check system compatibility
-if [ ! -f /etc/os-release ]; then
-  echo -e "${RED}Error: Cannot determine operating system.${NC}"
-  exit 1
-fi
-
-source /etc/os-release
-if [[ "$ID" != "kali" && "$ID_LIKE" != *"debian"* ]]; then
-  echo -e "${YELLOW}Warning: This installer is optimized for Kali Linux.${NC}"
-  echo "Your system: $PRETTY_NAME"
-  read -p "Continue anyway? (y/n) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+# Check for Python 3
+if ! command_exists python3; then
+    echo "Python 3 is not installed. Please install Python 3 and try again."
     exit 1
-  fi
 fi
 
-# Installation directory
-INSTALL_DIR="/opt/ai_mal"
-mkdir -p $INSTALL_DIR
+# Create a virtual environment if it doesn't exist
+if [ ! -d "venv" ]; then
+    echo "[+] Creating virtual environment..."
+    python3 -m venv venv || { echo "Failed to create virtual environment"; exit 1; }
+fi
 
-echo -e "\n${GREEN}Step 1: Updating system and installing dependencies...${NC}"
-# Update system and install required packages
-apt update && apt upgrade -y
+# Create the virtual environment activation wrapper script
+echo "[+] Creating virtual environment wrapper script..."
+cat > "$INSTALL_DIR/ai-mal-env" << 'EOF'
+#!/bin/bash
+# Activate the virtual environment and run any specified command
 
-# Install required system packages
-echo "Installing system dependencies..."
-apt install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    nmap \
-    metasploit-framework \
-    dos2unix \
-    curl \
-    git \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    net-tools \
-    netcat \
-    postgresql \
-    postgresql-contrib \
-    postgresql-client
+# Determine script location
+INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Verify critical packages
-echo "Verifying critical package installations..."
-for package in python3 nmap metasploit-framework postgresql; do
-    if ! dpkg -l | grep -q "^ii  $package "; then
-        echo -e "${RED}Error: Failed to install $package${NC}"
-        exit 1
-    fi
-done
+# Source the virtual environment
+source "$INSTALL_DIR/venv/bin/activate"
 
-echo -e "\n${GREEN}Step 2: Setting up Python virtual environment...${NC}"
-# Create virtual environment
-echo "Creating Python virtual environment at $INSTALL_DIR/venv..."
-python3 -m venv $INSTALL_DIR/venv
+# Execute the command with arguments
+exec "$@"
+EOF
 
-# Activate virtual environment
-source $INSTALL_DIR/venv/bin/activate
+# Make the wrapper script executable
+chmod +x "$INSTALL_DIR/ai-mal-env"
 
-# Install Python dependencies in the virtual environment
-echo -e "Installing Python packages in virtual environment..."
-# Upgrade pip first
+# Activate the virtual environment
+echo "[+] Activating virtual environment..."
+source venv/bin/activate || { echo "Failed to activate virtual environment"; exit 1; }
+
+# Upgrade pip and install required packages
+echo "[+] Installing Python dependencies..."
 pip install --upgrade pip
 
-# Install packages one by one to better handle errors
-echo "Installing python-nmap..."
-pip install python-nmap
+# Install required packages directly
+pip install requests pymetasploit3 psutil netifaces || { 
+    echo "Failed to install Python dependencies"
+    exit 1
+}
 
-echo "Installing requests..."
-pip install requests
-
-echo "Installing pymetasploit3..."
-pip install pymetasploit3
-
-echo "Installing psutil..."
-pip install psutil
-
-echo "Installing netifaces..."
-pip install netifaces
-
-# Create a symbolic link for python_nmap to nmap module
-echo "Creating compatibility symlink for python_nmap..."
-# Try to detect site-packages location more reliably
-SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
-if [ $? -ne 0 ]; then
-    # Fallback to a more traditional approach
-    PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        # Try common locations
-        for dir in \
-            "${INSTALL_DIR}/venv/lib/python${PYTHON_VERSION}/site-packages" \
-            "${INSTALL_DIR}/venv/lib64/python${PYTHON_VERSION}/site-packages" \
-            "${INSTALL_DIR}/venv/local/lib/python${PYTHON_VERSION}/dist-packages"
-        do
-            if [ -d "$dir" ]; then
-                SITE_PACKAGES_DIR="$dir"
-                break
-            fi
-        done
-    fi
-fi
-
-# Fix for deep recursive import paths in Python 3.13
-if [ -d "${SITE_PACKAGES_DIR}/nmap" ]; then
-    echo "Found nmap module at ${SITE_PACKAGES_DIR}/nmap"
+# Check if nmap is installed
+echo "[+] Checking for system dependencies..."
+if ! command_exists nmap; then
+    echo "[!] nmap is not installed. Attempting to install..."
     
-    # Fix recursive import path issue by directly modifying the module
-    NMAP_INIT="${SITE_PACKAGES_DIR}/nmap/__init__.py"
-    if [ -f "$NMAP_INIT" ]; then
-        echo "Fixing nmap module to prevent recursive imports..."
-        
-        # Add code to fix circular references in the __init__.py file
-        cat > "${NMAP_INIT}.new" << EOL
-import sys
-# Prevent circular imports - a common issue in Python 3.13
-if 'nmap.nmap' in sys.modules:
-    sys.modules['nmap'] = sys.modules['nmap.nmap']
-
-# Continue with original import code
-from nmap.nmap import *
-EOL
-        
-        # Backup original and replace with fixed version
-        cp "${NMAP_INIT}" "${NMAP_INIT}.bak"
-        mv "${NMAP_INIT}.new" "${NMAP_INIT}"
-        echo -e "${GREEN}✓ Fixed nmap module to prevent circular imports${NC}"
-    fi
-    
-    # Create symlink for compatibility with direct python_nmap imports
-    ln -sf "${SITE_PACKAGES_DIR}/nmap" "${SITE_PACKAGES_DIR}/python_nmap"
-    echo -e "${GREEN}✓ Created symlink for python_nmap module${NC}"
-elif pip show python-nmap >/dev/null 2>&1; then
-    # Try to find the nmap module using pip
-    NMAP_PATH=$(pip show python-nmap | grep Location | cut -d' ' -f2)
-    if [ -n "$NMAP_PATH" ] && [ -d "${NMAP_PATH}/nmap" ]; then
-        # Fix recursive import path issue by directly modifying the module
-        NMAP_INIT="${NMAP_PATH}/nmap/__init__.py"
-        if [ -f "$NMAP_INIT" ]; then
-            echo "Fixing nmap module to prevent recursive imports..."
-            
-            # Add code to fix circular references in the __init__.py file
-            cat > "${NMAP_INIT}.new" << EOL
-import sys
-# Prevent circular imports - a common issue in Python 3.13
-if 'nmap.nmap' in sys.modules:
-    sys.modules['nmap'] = sys.modules['nmap.nmap']
-
-# Continue with original import code
-from nmap.nmap import *
-EOL
-            
-            # Backup original and replace with fixed version
-            cp "${NMAP_INIT}" "${NMAP_INIT}.bak"
-            mv "${NMAP_INIT}.new" "${NMAP_INIT}"
-            echo -e "${GREEN}✓ Fixed nmap module to prevent circular imports${NC}"
-        fi
-        
-        ln -sf "${NMAP_PATH}/nmap" "${NMAP_PATH}/python_nmap"
-        echo -e "${GREEN}✓ Created symlink for python_nmap module${NC}"
+    # Check the package manager and install nmap
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y nmap
+    elif command_exists yum; then
+        sudo yum install -y nmap
+    elif command_exists dnf; then
+        sudo dnf install -y nmap
+    elif command_exists pacman; then
+        sudo pacman -S --noconfirm nmap
+    elif command_exists brew; then
+        brew install nmap
     else
-        echo -e "${YELLOW}Warning: Could not create symlink for python_nmap automatically.${NC}"
-        echo "Attempting alternative fix..."
-        
-        # Create a simple compatibility module
-        COMPAT_DIR="${INSTALL_DIR}/venv/lib/python_compat"
-        mkdir -p "$COMPAT_DIR"
-        
-        cat > "${COMPAT_DIR}/python_nmap.py" << EOL
-# Compatibility module for python_nmap import
-from nmap import *
-EOL
-        
-        # Add the compatibility directory to Python path
-        cat > "${SITE_PACKAGES_DIR}/python_nmap.pth" << EOL
-${COMPAT_DIR}
-EOL
-        echo -e "${GREEN}✓ Created compatibility module for python_nmap${NC}"
-    fi
-else
-    echo -e "${RED}Error: python-nmap package not found. Please install it manually:${NC}"
-    echo "  source ${INSTALL_DIR}/venv/bin/activate && pip install python-nmap"
-fi
-
-# Verify pymetasploit3 installation
-echo -e "\n${YELLOW}Verifying pymetasploit3 installation...${NC}"
-if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
-  echo -e "${RED}Warning: pymetasploit3 not properly installed. Trying alternative method...${NC}"
-  pip uninstall -y pymetasploit3
-  pip install --force-reinstall pymetasploit3
-  
-  # Verify again
-  if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
-    echo -e "${RED}Error: Could not properly install pymetasploit3.${NC}"
-    echo "You may need to manually fix this issue before using Metasploit integration."
-  else
-    echo -e "${GREEN}pymetasploit3 successfully installed!${NC}"
-  fi
-else
-  echo -e "${GREEN}pymetasploit3 correctly installed!${NC}"
-fi
-
-# Create a wrapper script to activate the virtual environment
-echo "Creating virtual environment wrapper..."
-cat > $INSTALL_DIR/venv_wrapper.sh << EOL
-#!/bin/bash
-# This script activates the virtual environment and runs the given command
-source $INSTALL_DIR/venv/bin/activate
-exec "\$@"
-EOL
-chmod +x $INSTALL_DIR/venv_wrapper.sh
-
-# Create and run the nmap fix script
-echo "Creating nmap fix script..."
-cat > $INSTALL_DIR/fix_nmap.py << 'EOL'
-#!/usr/bin/env python3
-"""
-Fix script for python-nmap package to prevent circular import issues.
-This is especially important for Python 3.13 which has stricter import rules.
-"""
-
-import os
-import sys
-import importlib
-import importlib.util
-import site
-import shutil
-
-def find_nmap_module():
-    """Find the nmap module location."""
-    try:
-        # Try importing nmap and get its location
-        spec = importlib.util.find_spec('nmap')
-        if spec and spec.origin:
-            # Get the directory containing __init__.py
-            module_dir = os.path.dirname(spec.origin)
-            return module_dir
-    except ImportError:
-        pass
-    
-    # If direct import fails, try finding it in site-packages
-    try:
-        site_packages = site.getsitepackages()
-        for path in site_packages:
-            nmap_path = os.path.join(path, 'nmap')
-            if os.path.isdir(nmap_path) and os.path.exists(os.path.join(nmap_path, '__init__.py')):
-                return nmap_path
-    except Exception:
-        pass
-    
-    return None
-
-def fix_nmap_module(module_dir):
-    """Fix the nmap module to prevent circular imports."""
-    init_file = os.path.join(module_dir, '__init__.py')
-    if not os.path.exists(init_file):
-        print(f"Error: __init__.py not found in {module_dir}")
-        return False
-    
-    # Backup the original file
-    backup_file = init_file + '.bak'
-    try:
-        shutil.copy2(init_file, backup_file)
-        print(f"Created backup: {backup_file}")
-    except Exception as e:
-        print(f"Warning: Could not create backup: {e}")
-    
-    # Read the content of __init__.py
-    try:
-        with open(init_file, 'r') as f:
-            content = f.read()
-    except Exception as e:
-        print(f"Error reading {init_file}: {e}")
-        return False
-    
-    # Create new content with circular import fix
-    new_content = """import sys
-# Prevent circular imports - a common issue in Python 3.13
-if 'nmap.nmap' in sys.modules:
-    sys.modules['nmap'] = sys.modules['nmap.nmap']
-
-# Original content follows
-""" + content
-    
-    # Write the modified content
-    try:
-        with open(init_file, 'w') as f:
-            f.write(new_content)
-        print(f"Successfully modified {init_file} to prevent circular imports")
-        return True
-    except Exception as e:
-        print(f"Error writing to {init_file}: {e}")
-        # Restore backup if write fails
-        try:
-            shutil.copy2(backup_file, init_file)
-            print(f"Restored original file from backup")
-        except:
-            pass
-        return False
-
-def create_symlink(module_dir):
-    """Create a symlink from python_nmap to nmap."""
-    site_packages = os.path.dirname(module_dir)
-    symlink_path = os.path.join(site_packages, 'python_nmap')
-    
-    # Remove existing symlink if it exists
-    if os.path.exists(symlink_path):
-        try:
-            if os.path.islink(symlink_path):
-                os.unlink(symlink_path)
-            else:
-                print(f"Warning: {symlink_path} exists but is not a symlink")
-                return False
-        except Exception as e:
-            print(f"Error removing existing symlink: {e}")
-            return False
-    
-    # Create symlink
-    try:
-        os.symlink(module_dir, symlink_path)
-        print(f"Created symlink: {symlink_path} -> {module_dir}")
-        return True
-    except Exception as e:
-        print(f"Error creating symlink: {e}")
-        return False
-
-def main():
-    print("Python-nmap fix utility")
-    print("=======================")
-    print(f"Python version: {sys.version}")
-    print("")
-    
-    # Find nmap module
-    print("Looking for nmap module...")
-    module_dir = find_nmap_module()
-    
-    if not module_dir:
-        print("Error: Could not find nmap module. Please ensure python-nmap is installed.")
-        return 1
-    
-    print(f"Found nmap module at: {module_dir}")
-    
-    # Fix the module
-    if fix_nmap_module(module_dir):
-        print("Successfully fixed nmap module.")
-    else:
-        print("Failed to fix nmap module.")
-    
-    # Create symlink
-    if create_symlink(module_dir):
-        print("Successfully created symlink for python_nmap.")
-    else:
-        print("Failed to create symlink for python_nmap.")
-    
-    print("\nFix completed. Please restart any running scripts that use python-nmap.")
-    return 0
-
-if __name__ == "__main__":
-    sys.exit(main())
-EOL
-
-# Make the fix script executable
-chmod +x $INSTALL_DIR/fix_nmap.py
-
-# Run the fix script from within the virtual environment
-echo -e "\n${GREEN}Running nmap fix script...${NC}"
-$INSTALL_DIR/venv/bin/python $INSTALL_DIR/fix_nmap.py
-
-# Deactivate virtual environment
-deactivate
-
-echo -e "\n${GREEN}Step 3: Setting up Metasploit...${NC}"
-# Start PostgreSQL and initialize Metasploit database
-systemctl start postgresql
-systemctl enable postgresql
-
-# Initialize Metasploit database if not already done
-if [ ! -f ~/.msf4/db ]; then
-  echo "Initializing Metasploit database..."
-  msfdb init
-fi
-
-# Set up Metasploit RPC daemon service
-echo "Creating Metasploit RPC service..."
-cat > /etc/systemd/system/msfrpcd.service << EOL
-[Unit]
-Description=Metasploit rpc daemon
-After=network.target postgresql.service
-Wants=postgresql.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553
-Restart=always
-RestartSec=1
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-# Reload, enable and start service
-systemctl daemon-reload
-systemctl enable msfrpcd.service
-systemctl start msfrpcd.service
-
-echo -e "\n${GREEN}Step 4: Installing Ollama...${NC}"
-echo "Installing Ollama (this may take a moment)..."
-
-# Use the official installer but redirect the output to a log file
-echo "Downloading and installing Ollama..."
-curl -fsSL https://ollama.com/install.sh | sh > /tmp/ollama_install.log 2>&1
-INSTALL_STATUS=$?
-
-# Check if installation was successful based on the exit code
-if [ $INSTALL_STATUS -ne 0 ] || ! command -v ollama &>/dev/null; then
-  echo -e "${RED}Error: Ollama installation failed.${NC}"
-  echo "Please check the installation log at /tmp/ollama_install.log"
-  echo "You may need to install Ollama manually by following instructions at: https://ollama.com/download"
-else
-  echo -e "${GREEN}Ollama successfully installed!${NC}"
-fi
-
-# Ensure Ollama service is started and running
-echo -e "\n${GREEN}Starting Ollama service...${NC}"
-# Check if Ollama is already running
-if pgrep ollama >/dev/null; then
-  echo "Ollama is already running."
-else
-  # For systems with systemd
-  if command -v systemctl >/dev/null && systemctl list-unit-files | grep -q ollama; then
-    echo "Starting Ollama using systemd..."
-    systemctl enable ollama
-    systemctl start ollama
-  else
-    # For systems without systemd or where Ollama doesn't register as a service
-    echo "Starting Ollama manually..."
-    nohup ollama serve > /var/log/ollama.log 2>&1 &
-    echo "Ollama started with PID: $!"
-  fi
-fi
-
-# Verify Ollama is accessible
-echo "Verifying Ollama API is accessible..."
-MAX_RETRIES=10
-RETRY_DELAY=2
-retry_count=0
-
-while [ $retry_count -lt $MAX_RETRIES ]; do
-  if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
-    echo -e "${GREEN}Ollama API is up and running!${NC}"
-    break
-  else
-    echo -e "${YELLOW}Waiting for Ollama API to become available... (${retry_count}/${MAX_RETRIES})${NC}"
-    sleep $RETRY_DELAY
-    retry_count=$((retry_count + 1))
-  fi
-done
-
-if [ $retry_count -eq $MAX_RETRIES ]; then
-  echo -e "${RED}Warning: Could not verify Ollama API is running. You may need to start it manually with 'ollama serve'.${NC}"
-fi
-
-echo -e "\n${GREEN}Step 5: Setting up AI_MAL...${NC}"
-# Copy files to installation directory
-cp adaptive_nmap_scan.py $INSTALL_DIR/
-cp AI_MAL $INSTALL_DIR/
-
-# Fix line endings (in case files came from Windows)
-dos2unix $INSTALL_DIR/adaptive_nmap_scan.py
-dos2unix $INSTALL_DIR/AI_MAL
-
-# Make files executable
-chmod +x $INSTALL_DIR/adaptive_nmap_scan.py
-chmod +x $INSTALL_DIR/AI_MAL
-
-# Create directory for generated scripts
-mkdir -p $INSTALL_DIR/generated_scripts
-
-# Create symlink for system-wide access
-ln -sf $INSTALL_DIR/AI_MAL /usr/local/bin/AI_MAL
-
-echo -e "\n${GREEN}Step 6: Pulling Ollama models...${NC}"
-echo "This may take some time depending on your internet speed..."
-
-# Check if Ollama API is accessible before trying to pull models
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/ | grep -q "200"; then
-  # Pull the primary model: qwen2.5-coder:7b
-  echo "Pulling qwen2.5-coder:7b model (this may take 5-10 minutes)..."
-  ollama pull qwen2.5-coder:7b > /tmp/ollama_pull_qwen.log 2>&1 &
-  QWEN_PID=$!
-  
-  # Show a simple progress indicator while pulling qwen model
-  echo -n "Downloading qwen2.5-coder:7b model: "
-  while kill -0 $QWEN_PID 2>/dev/null; do
-    echo -n "."
-    sleep 2
-  done
-  echo " Done!"
-  
-  # Also pull the smaller model for compatibility with limited resources
-  echo "Pulling gemma3:1b model as a backup for systems with limited resources..."
-  ollama pull gemma3:1b > /tmp/ollama_pull_gemma.log 2>&1 &
-  GEMMA_PID=$!
-  
-  # Show a simple progress indicator while pulling gemma model
-  echo -n "Downloading gemma3:1b model: "
-  while kill -0 $GEMMA_PID 2>/dev/null; do
-    echo -n "."
-    sleep 2
-  done
-  echo " Done!"
-  
-  # Verify models are available
-  echo "Verifying models are accessible..."
-  MODEL_STATUS=0
-  
-  if ollama list | grep -q "qwen2.5-coder:7b"; then
-    echo -e "${GREEN}✓ Successfully installed qwen2.5-coder:7b model!${NC}"
-  else
-    echo -e "${YELLOW}⚠ Warning: qwen2.5-coder:7b model may not have been installed correctly.${NC}"
-    echo "You can try installing it manually with: ollama pull qwen2.5-coder:7b"
-    MODEL_STATUS=1
-  fi
-  
-  if ollama list | grep -q "gemma3:1b"; then
-    echo -e "${GREEN}✓ Successfully installed gemma3:1b model!${NC}"
-  else
-    echo -e "${YELLOW}⚠ Warning: gemma3:1b model may not have been installed correctly.${NC}"
-    echo "You can try installing it manually with: ollama pull gemma3:1b"
-    MODEL_STATUS=1
-  fi
-  
-  if [ $MODEL_STATUS -eq 0 ]; then
-    echo -e "${GREEN}All models successfully installed!${NC}"
-  fi
-else
-  echo -e "${RED}Warning: Ollama API is not accessible. Could not pull models.${NC}"
-  echo "You will need to manually pull the models after starting Ollama:"
-  echo "  ollama pull qwen2.5-coder:7b"
-  echo "  ollama pull gemma3:1b"
-fi
-
-echo -e "\n${GREEN}Step 7: Setting up autostart services...${NC}"
-echo "Creating systemd service to automatically start Ollama and Metasploit on system boot..."
-
-# Create AI_MAL autostart service file
-cat > /etc/systemd/system/ai_mal_deps.service << EOL
-[Unit]
-Description=AI_MAL Dependencies Service
-After=network.target postgresql.service
-Wants=postgresql.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c "systemctl start msfrpcd.service"
-ExecStart=/bin/bash -c "if command -v systemctl &>/dev/null && systemctl list-unit-files | grep -q ollama; then systemctl start ollama.service; else nohup ollama serve > /var/log/ollama.log 2>&1 & fi"
-ExecStop=/bin/bash -c "systemctl stop msfrpcd.service"
-ExecStop=/bin/bash -c "if command -v systemctl &>/dev/null && systemctl list-unit-files | grep -q ollama; then systemctl stop ollama.service; else pkill -f 'ollama serve'; fi"
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-# Enable the service to start on boot
-systemctl daemon-reload
-systemctl enable ai_mal_deps.service
-systemctl start ai_mal_deps.service
-
-# Verify the service is active
-if systemctl is-active --quiet ai_mal_deps.service; then
-  echo -e "${GREEN}AI_MAL dependencies autostart service successfully installed and activated!${NC}"
-  echo "The service will automatically start Ollama and Metasploit RPC on system boot."
-else
-  echo -e "${YELLOW}Warning: AI_MAL dependencies autostart service installation may have failed.${NC}"
-  echo "You may need to manually start Ollama and Metasploit each time the system boots."
-fi
-
-# Add autostart info to installation completion message
-echo -e "\n${GREEN}Installation complete!${NC}"
-echo -e "You can now run AI_MAL with: ${YELLOW}AI_MAL [options] [target]${NC}"
-echo -e "For help and available options, run: ${YELLOW}AI_MAL --help${NC}"
-echo
-echo -e "${RED}IMPORTANT: AI_MAL requires root privileges for most features.${NC}"
-echo -e "Run with sudo: ${YELLOW}sudo AI_MAL [options] [target]${NC}"
-echo
-echo -e "${YELLOW}Examples:${NC}"
-echo "sudo AI_MAL --auto-discover --model qwen2.5-coder:7b"
-echo "sudo AI_MAL 192.168.1.1 --msf --exploit"
-echo "sudo AI_MAL --model gemma3:1b (for systems with limited RAM)"
-echo
-echo -e "${GREEN}Thank you for installing AI_MAL!${NC}"
-
-# Verify python_nmap import works
-echo -e "\n${GREEN}Step 8: Verifying python-nmap installation...${NC}"
-cd $INSTALL_DIR
-source $INSTALL_DIR/venv/bin/activate
-
-echo "Testing python_nmap import..."
-if python -c "import python_nmap; print('python_nmap import successful')" 2>/dev/null; then
-    echo -e "${GREEN}✓ python_nmap import works correctly${NC}"
-else
-    echo -e "${YELLOW}Warning: python_nmap import not working. Attempting to fix...${NC}"
-    
-    # Try to create a simple compatibility module directly in the site-packages
-    SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
-    
-    cat > "${SITE_PACKAGES_DIR}/python_nmap.py" << EOL
-# Compatibility module for python_nmap import
-from nmap import *
-EOL
-    
-    # Test again
-    if python -c "import python_nmap; print('python_nmap import successful')" 2>/dev/null; then
-        echo -e "${GREEN}✓ Fixed python_nmap import successfully${NC}"
-    else
-        echo -e "${RED}Error: Could not fix python_nmap import automatically.${NC}"
-        echo "You may need to manually edit the adaptive_nmap_scan.py file:"
-        echo "  Change 'import python_nmap as nmap' to 'import nmap'"
-        echo "  at line 27 in ${INSTALL_DIR}/adaptive_nmap_scan.py"
-    fi
-fi
-
-# Deactivate virtual environment
-deactivate
-
-# Check if Nmap is installed
-echo -e "${BLUE}Checking for Nmap...${NC}"
-if command -v nmap &>/dev/null; then
-    NMAP_VERSION=$(nmap --version | head -n1)
-    echo -e "Nmap version: ${GREEN}${NMAP_VERSION}${NC}"
-else
-    echo -e "${YELLOW}Nmap not found. Installing Nmap...${NC}"
-    if [ "$EUID" -eq 0 ]; then
-        apt-get update && apt-get install -y nmap
-    else
-        echo -e "${RED}Error: Root privileges required to install Nmap.${NC}"
-        echo "Please install Nmap manually with: sudo apt-get install nmap"
+        echo "[-] Could not determine package manager. Please install nmap manually."
         exit 1
     fi
 fi
 
-# Installation complete
-echo ""
-echo -e "${GREEN}AI_MAL installation complete!${NC}"
-echo ""
-echo -e "To run AI_MAL, use the command: ${BLUE}AI_MAL${NC}"
-echo -e "For help and options, run: ${BLUE}AI_MAL --help${NC}"
-echo ""
-
-# Check system memory and provide recommendations for low-memory systems
-MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
-if [ "$MEM_GB" -lt 8 ]; then
-    echo -e "${YELLOW}LOW MEMORY WARNING:${NC}"
-    echo -e "Your system has ${MEM_GB}GB of RAM, which may cause performance issues with Ollama models."
-    echo -e "Recommendations for low-memory systems:"
-    echo -e "  - Use a smaller model with --model gemma3:1b instead of qwen2.5-coder:7b"
-    echo -e "  - Increase Ollama timeout in the code if you experience timeouts"
-    echo -e "  - Consider adding a swap file if you have less than 8GB RAM"
-    echo -e "  - Close other memory-intensive applications before running AI_MAL"
-    echo -e ""
+# Verify nmap installation
+if command_exists nmap; then
+    NMAP_VERSION=$(nmap --version | head -n 1)
+    echo "[+] Found $NMAP_VERSION"
+    echo "[+] AI_MAL will use system nmap via subprocess"
+else
+    echo "[-] nmap is not installed. Please install it manually."
+    exit 1
 fi
 
-echo -e "${RED}IMPORTANT SECURITY NOTICE:${NC}"
-echo -e "This tool is designed for legitimate security testing only."
-echo -e "Always ensure you have proper authorization before scanning or exploiting any network or system."
-echo ""
+# Check Ollama installation
+echo "[+] Checking for Ollama..."
+if ! command_exists ollama; then
+    echo "[!] Ollama not found. Installing..."
+    
+    # Check system type and install Ollama
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux installation
+        curl -fsSL https://ollama.com/install.sh | sh
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS installation
+        if command_exists brew; then
+            brew install ollama
+        else
+            echo "[!] Homebrew not found. Installing Ollama manually..."
+            curl -fsSL https://ollama.com/install.sh | sh
+        fi
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+        # Windows installation instructions
+        echo "[!] Windows detected. Please install Ollama manually:"
+        echo "   Visit https://ollama.com/download and download the Windows installer"
+        echo "   Ollama must be running before using AI_MAL"
+    else
+        echo "[-] Unsupported operating system. Please install Ollama manually from https://ollama.com/download"
+    fi
+else
+    echo "[+] Ollama already installed"
+fi
 
-echo -e "${GREEN}Autostart Status:${NC}"
-echo -e "  Ollama and Metasploit RPC will start automatically on system boot."
-echo -e "  To disable autostart: ${YELLOW}sudo systemctl disable ai_mal_deps.service${NC}"
-echo -e "  To manually start dependencies: ${YELLOW}sudo systemctl start ai_mal_deps.service${NC}"
-echo -e "" 
+# Check if Ollama API is accessible and pull models
+echo "[+] Checking Ollama API and pulling models..."
+if curl -s "http://localhost:11434/api/tags" > /dev/null; then
+    echo "[+] Ollama API is accessible. Pulling required models..."
+    
+    # Pull primary model: qwen2.5-coder:7b (recommended for better results)
+    echo "[+] Pulling qwen2.5-coder:7b model (primary model)..."
+    echo "    This may take some time depending on your internet connection..."
+    ollama pull qwen2.5-coder:7b
+    
+    # Pull backup model: gemma3:1b (for low-resource compatibility)
+    echo "[+] Pulling gemma3:1b model (for systems with limited resources)..."
+    echo "    This is a smaller model for systems with limited RAM..."
+    ollama pull gemma3:1b
+    
+    # Verify models were installed
+    if ollama list | grep -q "qwen2.5-coder:7b"; then
+        echo "[+] Successfully installed qwen2.5-coder:7b model"
+    else
+        echo "[!] Warning: qwen2.5-coder:7b model may not have installed correctly"
+    fi
+    
+    if ollama list | grep -q "gemma3:1b"; then
+        echo "[+] Successfully installed gemma3:1b model"
+    else
+        echo "[!] Warning: gemma3:1b model may not have installed correctly"
+    fi
+else
+    echo "[!] Could not connect to Ollama API at http://localhost:11434"
+    echo "    Make sure Ollama is running before using AI_MAL"
+    echo "    You'll need to pull the models manually with:"
+    echo "      ollama pull qwen2.5-coder:7b"
+    echo "      ollama pull gemma3:1b"
+fi
+
+# Make the main file executable
+echo "[+] Setting executable permissions..."
+chmod +x "$INSTALL_DIR/AI_MAL"
+
+# Create a symbolic link to the AI_MAL script in /usr/local/bin if possible
+if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
+    echo "[+] Creating symlink in /usr/local/bin..."
+    ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
+    echo "[+] AI_MAL installed system-wide. You can run it from any directory with 'AI_MAL'"
+else
+    echo "[!] Could not create symlink in /usr/local/bin (permission denied)"
+    echo "    You can run AI_MAL from this directory with './AI_MAL'"
+fi
+
+# Final success message
+echo
+echo "====================================================="
+echo "       AI_MAL Installation Complete"
+echo "====================================================="
+echo
+echo "Examples:"
+echo "  # Basic scan of a target"
+echo "  AI_MAL --target 192.168.1.1"
+echo
+echo "  # Auto-discover hosts and scan with stealth mode"
+echo "  AI_MAL --auto-discover --stealth"
+echo
+echo "  # Use gemma3:1b model for systems with less than 4GB RAM"
+echo "  AI_MAL --auto-discover --model gemma3:1b --stealth"
+echo
+echo "  # Full integration with Metasploit"
+echo "  AI_MAL --target 192.168.1.1 --msf --exploit"
+echo
+echo "Read the documentation for more information."
+echo "For help, run: AI_MAL --help"
+echo
