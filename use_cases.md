@@ -211,4 +211,55 @@ sudo AI_MAL 192.168.1.1 --debug --log debug.log
    sudo systemctl status ai_mal_deps.service
    sudo systemctl status msfrpcd.service
    ```
+
+## Command-Line Arguments Reference
+
+The following table provides a comprehensive list of all available command-line arguments in AI_MAL:
+
+| Argument | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `--auto-discover` | Automatically discovers network interfaces and active hosts | None | `sudo AI_MAL --auto-discover` |
+| `--interface INTERFACE` | Specifies network interface for scanning | None | `sudo AI_MAL --interface eth0` |
+| `--network CIDR` | Specifies network range in CIDR notation | None | `sudo AI_MAL --network 192.168.1.0/24` |
+| `--scan-all` | Scans all discovered hosts instead of just the first one | False | `sudo AI_MAL --scan-all` |
+| `--host-timeout SECONDS` | Sets timeout for host discovery | 1 | `sudo AI_MAL --host-timeout 3` |
+| `--iterations N` | Sets maximum number of scan iterations | 3 | `sudo AI_MAL --iterations 5` |
+| `--continuous` | Runs scan in continuous mode until stopped | False | `sudo AI_MAL --continuous` |
+| `--delay SECONDS` | Sets delay between scan iterations | 2 | `sudo AI_MAL --delay 5` |
+| `--stealth` | Enables stealth mode to minimize detection | False | `sudo AI_MAL --stealth` |
+| `--ports [all\|quick\|RANGE]` | Specifies ports to scan | quick | `sudo AI_MAL --ports 80,443,8080-8090` |
+| `--services` | Enables detailed service detection | False | `sudo AI_MAL --services` |
+| `--version` | Enables version detection | False | `sudo AI_MAL --version` |
+| `--os` | Enables OS detection | False | `sudo AI_MAL --os` |
+| `--vuln` | Enables vulnerability scanning | False | `sudo AI_MAL --vuln` |
+| `--exploit` | Attempts exploitation of vulnerabilities | False | `sudo AI_MAL --exploit` |
+| `--custom FILE` | Specifies custom vulnerability checks file | None | `sudo AI_MAL --custom vuln_checks.txt` |
+| `--msf` | Enables Metasploit integration | False | `sudo AI_MAL --msf` |
+| `--workspace NAME` | Sets Metasploit workspace name | adaptive_scan | `sudo AI_MAL --workspace client_pentest` |
+| `--auto-script` | Generates and runs Metasploit resource scripts | False | `sudo AI_MAL --auto-script` |
+| `--dos` | Attempts Denial of Service attacks | False | `sudo AI_MAL --dos` |
+| `--custom-scripts` | Enables AI-powered script generation | False | `sudo AI_MAL --custom-scripts` |
+| `--script-type TYPE` | Specifies script generation type | bash | `sudo AI_MAL --script-type python` |
+| `--execute-scripts` | Automatically executes generated scripts | False | `sudo AI_MAL --execute-scripts` |
+| `--model MODEL` | Specifies Ollama model to use | qwen2.5-coder:7b | `sudo AI_MAL --model gemma3:1b` |
+| `--timeout SECONDS` | Sets timeout for model responses | 30 | `sudo AI_MAL --timeout 45` |
+| `--max-threads N` | Limits concurrent scan operations | 4 | `sudo AI_MAL --max-threads 2` |
+| `--memory-limit SIZE` | Sets memory limit for operations | None | `sudo AI_MAL --memory-limit 4G` |
+| `--quiet` | Reduces verbosity of output | False | `sudo AI_MAL --quiet` |
+| `--debug` | Enables detailed debug logging | False | `sudo AI_MAL --debug` |
+| `--show-live-ai` | Shows AI's thought process in real-time | False | `sudo AI_MAL --show-live-ai` |
+| `--full-auto` | Enables full autonomous mode | False | `sudo AI_MAL --full-auto` |
+| `--help` | Shows help message and exits | None | `sudo AI_MAL --help` |
+| `--version` | Shows version information and exits | None | `sudo AI_MAL --version` |
+
+### Notes:
+- All commands require root privileges (use `sudo`)
+- Multiple arguments can be combined in a single command
+- Some arguments may have dependencies on others (e.g., `--exploit` requires `--msf`)
+- Memory-intensive operations may require adjusting `--memory-limit` and `--max-threads`
+- The `--model` argument supports any model available in Ollama, but `qwen2.5-coder:7b` and `gemma3:1b` are recommended
+
+## Additional Resources
+
+// ... rest of existing content ...
    
