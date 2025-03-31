@@ -139,6 +139,62 @@ pip install psutil
 echo "Installing netifaces..."
 pip install netifaces
 
+# Create a symbolic link for python_nmap to nmap module
+echo "Creating compatibility symlink for python_nmap..."
+# Try to detect site-packages location more reliably
+SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
+if [ $? -ne 0 ]; then
+    # Fallback to a more traditional approach
+    PYTHON_VERSION=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        # Try common locations
+        for dir in \
+            "${INSTALL_DIR}/venv/lib/python${PYTHON_VERSION}/site-packages" \
+            "${INSTALL_DIR}/venv/lib64/python${PYTHON_VERSION}/site-packages" \
+            "${INSTALL_DIR}/venv/local/lib/python${PYTHON_VERSION}/dist-packages"
+        do
+            if [ -d "$dir" ]; then
+                SITE_PACKAGES_DIR="$dir"
+                break
+            fi
+        done
+    fi
+fi
+
+# Create the symlink if we found a valid site-packages directory
+if [ -n "$SITE_PACKAGES_DIR" ] && [ -d "${SITE_PACKAGES_DIR}/nmap" ]; then
+    ln -sf "${SITE_PACKAGES_DIR}/nmap" "${SITE_PACKAGES_DIR}/python_nmap"
+    echo -e "${GREEN}✓ Created symlink for python_nmap module${NC}"
+elif pip show python-nmap >/dev/null 2>&1; then
+    # Try to find the nmap module using pip
+    NMAP_PATH=$(pip show python-nmap | grep Location | cut -d' ' -f2)
+    if [ -n "$NMAP_PATH" ] && [ -d "${NMAP_PATH}/nmap" ]; then
+        ln -sf "${NMAP_PATH}/nmap" "${NMAP_PATH}/python_nmap"
+        echo -e "${GREEN}✓ Created symlink for python_nmap module${NC}"
+    else
+        echo -e "${YELLOW}Warning: Could not create symlink for python_nmap automatically.${NC}"
+        echo "Attempting alternative fix..."
+        
+        # Create a simple compatibility module
+        COMPAT_DIR="${INSTALL_DIR}/venv/lib/python_compat"
+        mkdir -p "$COMPAT_DIR"
+        
+        cat > "${COMPAT_DIR}/python_nmap.py" << EOL
+# Compatibility module for python_nmap import
+from nmap import *
+EOL
+        
+        # Add the compatibility directory to Python path
+        cat > "${SITE_PACKAGES_DIR}/python_nmap.pth" << EOL
+${COMPAT_DIR}
+EOL
+        echo -e "${GREEN}✓ Created compatibility module for python_nmap${NC}"
+    fi
+else
+    echo -e "${RED}Error: python-nmap package not found. Please install it manually:${NC}"
+    echo "  source ${INSTALL_DIR}/venv/bin/activate && pip install python-nmap"
+fi
+
 # Verify pymetasploit3 installation
 echo -e "\n${YELLOW}Verifying pymetasploit3 installation...${NC}"
 if ! python -c "from pymetasploit3.msfrpc import MsfRpcClient; print('pymetasploit3 correctly installed')" 2>/dev/null; then
@@ -392,6 +448,39 @@ echo "sudo AI_MAL 192.168.1.1 --msf --exploit"
 echo "sudo AI_MAL --model gemma3:1b (for systems with limited RAM)"
 echo
 echo -e "${GREEN}Thank you for installing AI_MAL!${NC}"
+
+# Verify python_nmap import works
+echo -e "\n${GREEN}Step 8: Verifying python-nmap installation...${NC}"
+cd $INSTALL_DIR
+source $INSTALL_DIR/venv/bin/activate
+
+echo "Testing python_nmap import..."
+if python -c "import python_nmap; print('python_nmap import successful')" 2>/dev/null; then
+    echo -e "${GREEN}✓ python_nmap import works correctly${NC}"
+else
+    echo -e "${YELLOW}Warning: python_nmap import not working. Attempting to fix...${NC}"
+    
+    # Try to create a simple compatibility module directly in the site-packages
+    SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
+    
+    cat > "${SITE_PACKAGES_DIR}/python_nmap.py" << EOL
+# Compatibility module for python_nmap import
+from nmap import *
+EOL
+    
+    # Test again
+    if python -c "import python_nmap; print('python_nmap import successful')" 2>/dev/null; then
+        echo -e "${GREEN}✓ Fixed python_nmap import successfully${NC}"
+    else
+        echo -e "${RED}Error: Could not fix python_nmap import automatically.${NC}"
+        echo "You may need to manually edit the adaptive_nmap_scan.py file:"
+        echo "  Change 'import python_nmap as nmap' to 'import nmap'"
+        echo "  at line 27 in ${INSTALL_DIR}/adaptive_nmap_scan.py"
+    fi
+fi
+
+# Deactivate virtual environment
+deactivate
 
 # Check if Nmap is installed
 echo -e "${BLUE}Checking for Nmap...${NC}"

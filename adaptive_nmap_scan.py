@@ -25,7 +25,18 @@ import itertools
 from typing import List, Dict, Any, Optional, Tuple
 
 # Third-party imports
-import python_nmap as nmap  # Corrected import for python-nmap package
+# Try to import python_nmap first (symlinked during installation)
+try:
+    import python_nmap as nmap
+except ImportError:
+    # Fall back to the standard package name if the symlink wasn't created
+    try:
+        import nmap
+        logging.info("Using standard nmap module instead of python_nmap")
+    except ImportError:
+        print("ERROR: Could not import nmap module. Please install python-nmap package:")
+        print("  pip install python-nmap")
+        sys.exit(1)
 import requests
 import netifaces
 import pymetasploit3
