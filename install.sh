@@ -203,6 +203,53 @@ else
     echo "[+] Ollama already installed"
 fi
 
+# Configure Ollama to listen on all interfaces
+echo "[+] Configuring Ollama to accept external connections..."
+if command_exists systemctl && systemctl list-unit-files | grep -q "ollama.service"; then
+    # Create systemd override directory if it doesn't exist
+    sudo mkdir -p /etc/systemd/system/ollama.service.d/
+    
+    # Create or update the override.conf file
+    cat << EOF | sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_ORIGINS=*"
+EOF
+    
+    # Reload systemd and restart Ollama
+    echo "[+] Reloading systemd configuration and restarting Ollama..."
+    sudo systemctl daemon-reload
+    sudo systemctl restart ollama
+    
+    # Wait for Ollama to start up
+    echo "[+] Waiting for Ollama to start..."
+    sleep 5
+else
+    echo "[!] Ollama service not found, adding environment variables to system profile..."
+    # Add environment variables to system-wide profile
+    PROFILE_FILE="/etc/profile.d/ollama.sh"
+    cat << EOF | sudo tee "$PROFILE_FILE" > /dev/null
+#!/bin/bash
+export OLLAMA_HOST=0.0.0.0:11434
+export OLLAMA_ORIGINS=*
+EOF
+    sudo chmod +x "$PROFILE_FILE"
+    
+    # Source the profile
+    echo "[+] Added Ollama environment variables to system profile"
+    echo "[!] You may need to restart Ollama manually with: ollama serve"
+    
+    # Try to restart Ollama if it's running
+    if pgrep ollama > /dev/null; then
+        echo "[+] Stopping and restarting Ollama..."
+        pkill ollama
+        sleep 2
+        nohup ollama serve > /dev/null 2>&1 &
+        echo "[+] Waiting for Ollama to start..."
+        sleep 5
+    fi
+fi
+
 # Check if Ollama API is accessible and pull models
 echo "[+] Checking Ollama API and pulling models..."
 if curl -s "http://localhost:11434/api/tags" > /dev/null; then
