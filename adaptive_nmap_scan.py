@@ -2589,7 +2589,7 @@ def main():
             script_type=args.script_type,
             execute_scripts=args.execute_scripts,
             dos_attack=args.dos,
-            show_live_ai=args.show_ai
+            show_live_ai=args.show_live_ai
         )
         
         scanner.run()
@@ -2650,27 +2650,110 @@ def parse_arguments():
     # Scan options
     scan_group = parser.add_argument_group("Scan Options")
     scan_group.add_argument(
-        "--iterations", 
+        "--iterations", "-i",
         type=int, 
         default=3,
         help="Maximum number of scan iterations"
     )
     scan_group.add_argument(
-        "--continuous", 
+        "--continuous", "-c",
         action="store_true",
         help="Continuously scan the target"
     )
     scan_group.add_argument(
-        "--delay", 
+        "--delay", "-d",
         type=int, 
         default=2,
         help="Delay between scan iterations in seconds"
+    )
+    scan_group.add_argument(
+        "--stealth", 
+        action="store_true",
+        help="Enable stealth mode to minimize detection"
+    )
+    scan_group.add_argument(
+        "--model", "-m",
+        default="qwen2.5-coder:7b",
+        help="Ollama model to use (qwen2.5-coder:7b, gemma3:1b, etc.)"
+    )
+    
+    # Metasploit options
+    msf_group = parser.add_argument_group("Metasploit Options")
+    msf_group.add_argument(
+        "--msf", 
+        action="store_true",
+        help="Enable Metasploit integration"
+    )
+    msf_group.add_argument(
+        "--exploit", 
+        action="store_true",
+        help="Automatically attempt exploitation"
+    )
+    msf_group.add_argument(
+        "--workspace", 
+        default="adaptive_scan",
+        help="Metasploit workspace name"
+    )
+    msf_group.add_argument(
+        "--auto-script", 
+        action="store_true",
+        help="Auto-generate Metasploit resource scripts"
+    )
+    msf_group.add_argument(
+        "--dos", 
+        action="store_true",
+        help="Attempt DoS attacks against target hosts"
+    )
+    
+    # Script generation options
+    script_group = parser.add_argument_group("Script Generation Options")
+    script_group.add_argument(
+        "--custom-scripts", 
+        action="store_true",
+        help="Generate custom scripts based on scan results"
+    )
+    script_group.add_argument(
+        "--script-type", 
+        choices=["bash", "python", "ruby"],
+        default="bash",
+        help="Type of scripts to generate"
+    )
+    script_group.add_argument(
+        "--execute-scripts", 
+        action="store_true",
+        help="Execute generated scripts (use with caution)"
+    )
+    
+    # AI display options
+    ai_group = parser.add_argument_group("AI Display Options")
+    ai_group.add_argument(
+        "--show-live-ai", 
+        action="store_true",
+        help="Show the AI's thought process in real-time"
+    )
+    
+    # General options
+    general_group = parser.add_argument_group("General Options")
+    general_group.add_argument(
+        "--full-auto", 
+        action="store_true",
+        help="Full autonomous mode (enables multiple features)"
+    )
+    general_group.add_argument(
+        "--quiet", 
+        action="store_true",
+        help="Reduce output verbosity"
+    )
+    general_group.add_argument(
+        "--debug", 
+        action="store_true",
+        help="Enable debug logging"
     )
     
     args = parser.parse_args()
     
     # Full auto mode implications
-    if args.full_auto:
+    if hasattr(args, 'full_auto') and args.full_auto:
         args.continuous = True
         args.msf = True
         args.exploit = True
@@ -2694,11 +2777,11 @@ def parse_arguments():
         max_iterations=args.iterations,
         continuous=args.continuous,
         delay=args.delay,
-        msf_integration=args.msf,
-        exploit=args.exploit,
-        msf_workspace=args.workspace,
-        stealth=args.stealth,
-        auto_script=args.auto_script,
+        msf_integration=args.msf if hasattr(args, 'msf') else False,
+        exploit=args.exploit if hasattr(args, 'exploit') else False,
+        msf_workspace=args.workspace if hasattr(args, 'workspace') else "adaptive_scan",
+        stealth=args.stealth if hasattr(args, 'stealth') else False,
+        auto_script=args.auto_script if hasattr(args, 'auto_script') else False,
         quiet=args.quiet,
         debug=args.debug,
         auto_discover=args.auto_discover,
@@ -2706,11 +2789,11 @@ def parse_arguments():
         scan_all=args.scan_all,
         network=args.network,
         host_timeout=args.host_timeout,
-        custom_scripts=args.custom_scripts,
-        script_type=args.script_type,
-        execute_scripts=args.execute_scripts,
-        dos_attack=args.dos,
-        show_live_ai=args.show_live_ai
+        custom_scripts=args.custom_scripts if hasattr(args, 'custom_scripts') else False,
+        script_type=args.script_type if hasattr(args, 'script_type') else "bash",
+        execute_scripts=args.execute_scripts if hasattr(args, 'execute_scripts') else False,
+        dos_attack=args.dos if hasattr(args, 'dos') else False,
+        show_live_ai=args.show_live_ai if hasattr(args, 'show_live_ai') else False
     )
     
     # Additional setup for network option
