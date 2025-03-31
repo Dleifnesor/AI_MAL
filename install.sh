@@ -23,6 +23,45 @@ if ! command_exists python3; then
     exit 1
 fi
 
+# Check and install dos2unix
+if ! command_exists dos2unix; then
+    echo "[!] dos2unix is not installed. Attempting to install..."
+    
+    # Check the package manager and install dos2unix
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y dos2unix
+    elif command_exists yum; then
+        sudo yum install -y dos2unix
+    elif command_exists dnf; then
+        sudo dnf install -y dos2unix
+    elif command_exists pacman; then
+        sudo pacman -S --noconfirm dos2unix
+    elif command_exists brew; then
+        brew install dos2unix
+    else
+        echo "[-] Could not determine package manager. Please install dos2unix manually."
+    fi
+fi
+
+# Fix line endings in all script files
+echo "[+] Fixing line endings in script files..."
+if command_exists dos2unix; then
+    dos2unix "$INSTALL_DIR/AI_MAL"
+    dos2unix "$INSTALL_DIR/adaptive_nmap_scan.py"
+else
+    echo "[!] dos2unix not found, attempting to fix line endings manually..."
+    sed -i 's/\r$//' "$INSTALL_DIR/AI_MAL"
+    sed -i 's/\r$//' "$INSTALL_DIR/adaptive_nmap_scan.py"
+fi
+
+# Fix any syntax errors in Python files
+echo "[+] Checking for and fixing syntax errors in Python files..."
+# Fix indentation in the adaptive_nmap_scan.py file
+sed -i '1417s/^                else:/            else:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+sed -i '2594s/^                return None/            return None/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+sed -i '2596s/^        except Exception as e:/    except Exception as e:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+
 # Create a virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
     echo "[+] Creating virtual environment..."
@@ -44,6 +83,13 @@ source "$INSTALL_DIR/venv/bin/activate"
 # Execute the command with arguments
 exec "$@"
 EOF
+
+# Fix line endings in the wrapper script
+if command_exists dos2unix; then
+    dos2unix "$INSTALL_DIR/ai-mal-env"
+else
+    sed -i 's/\r$//' "$INSTALL_DIR/ai-mal-env"
+fi
 
 # Make the wrapper script executable
 chmod +x "$INSTALL_DIR/ai-mal-env"
@@ -82,27 +128,6 @@ if ! command_exists nmap; then
     else
         echo "[-] Could not determine package manager. Please install nmap manually."
         exit 1
-    fi
-fi
-
-# Check if dos2unix is installed
-if ! command_exists dos2unix; then
-    echo "[!] dos2unix is not installed. Attempting to install..."
-    
-    # Check the package manager and install dos2unix
-    if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y dos2unix
-    elif command_exists yum; then
-        sudo yum install -y dos2unix
-    elif command_exists dnf; then
-        sudo dnf install -y dos2unix
-    elif command_exists pacman; then
-        sudo pacman -S --noconfirm dos2unix
-    elif command_exists brew; then
-        brew install dos2unix
-    else
-        echo "[-] Could not determine package manager. Please install dos2unix manually."
     fi
 fi
 
@@ -213,21 +238,9 @@ else
     echo "      ollama pull gemma3:1b"
 fi
 
-# Make the main files executable and fix line endings
-echo "[+] Setting executable permissions and fixing line endings..."
+# Make the main files executable
+echo "[+] Setting executable permissions..."
 chmod +x "$INSTALL_DIR/AI_MAL"
-
-# Fix line endings on bash scripts to avoid "bad interpreter" errors
-if command_exists dos2unix; then
-    echo "[+] Converting line endings with dos2unix..."
-    dos2unix "$INSTALL_DIR/AI_MAL"
-    dos2unix "$INSTALL_DIR/ai-mal-env"
-else
-    echo "[!] dos2unix not found, attempting to fix line endings manually..."
-    # Manual fix for line endings using sed if dos2unix is not available
-    sed -i 's/\r$//' "$INSTALL_DIR/AI_MAL"
-    sed -i 's/\r$//' "$INSTALL_DIR/ai-mal-env"
-fi
 
 # Create a symbolic link to the AI_MAL script in /usr/local/bin if possible
 if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
@@ -253,7 +266,7 @@ echo "  # Auto-discover hosts and scan with stealth mode"
 echo "  AI_MAL --auto-discover --stealth"
 echo
 echo "  # Use gemma3:1b model for systems with less than 4GB RAM"
-echo "  AI_MAL --auto-discover --model gemma3:1b --stealth"
+echo "  AI_MAL --model gemma3:1b --stealth"
 echo
 echo "  # Full integration with Metasploit"
 echo "  AI_MAL --target 192.168.1.1 --msf --exploit"

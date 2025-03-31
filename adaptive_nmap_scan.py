@@ -1414,7 +1414,7 @@ class AdaptiveNmapScanner:
             # If we should automatically run exploits
             if self.exploit:
                 self.run_exploits_on_host(self.target)
-                    else:
+            else:
                 # Generate a Metasploit resource script
                 script_path = self.generate_resource_script()
                 
@@ -1432,8 +1432,7 @@ class AdaptiveNmapScanner:
                             self.viewer.success(f"Successfully executed resource script: {script_path}")
                         else:
                             self.viewer.warning(f"Failed to execute resource script: {script_path}")
-            
-                except Exception as e:
+        except Exception as e:
             self.logger.error(f"Error finding matching exploits: {e}")
     
     def generate_resource_script(self):
@@ -1826,32 +1825,24 @@ echo "HTTP flood attack completed"
             ]
             
             # Execute attack
-            self.logger.debug(f"Executing: {' '.join(cmd)}")
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                universal_newlines=True
             )
             
-            # Wait for it to complete or timeout after 5 seconds
-            try:
-                output, error = process.communicate(timeout=5)
-                
-                if process.returncode == 0:
-                    self.logger.info(f"Generic flood attack completed on {target}")
-                    return True
-                else:
-                    self.logger.error(f"Generic flood attack failed: {error.decode()}")
-                    return False
-            except subprocess.TimeoutExpired:
-                # Kill the process if it's taking too long
-                process.kill()
-                process.communicate()
-                
-                self.logger.info(f"Generic flood attack timeout on {target}")
+            # Wait for it to complete
+            output, error = process.communicate()
+            
+            if process.returncode == 0:
+                self.logger.info(f"Generic flood attack completed on {target}")
                 return True
-                    
-            except Exception as e:
+            else:
+                self.logger.error(f"Generic flood attack failed: {error}")
+                return False
+                
+        except Exception as e:
             self.logger.error(f"Error performing generic flood attack: {e}")
             return False
     
@@ -2594,13 +2585,13 @@ if __name__ == "__main__":
                     os.unlink(xml_output)
                 except:
                     pass
-            
-            return result
                 
-        except Exception as e:
+                return result
+                
+            except Exception as e:
                 self.logger.error(f"Error parsing Nmap output: {e}")
                 self.viewer.error(f"Error parsing Nmap output: {str(e)}")
-            return None
+                return None
         
         except Exception as e:
             if 'animation' in locals():
