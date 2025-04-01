@@ -1,4 +1,4 @@
-See [use-cases.md](use-cases.md) for full details on each arg
+See [use_cases.md](use_cases.md) for full details on each arg
 
 ## Features
 
