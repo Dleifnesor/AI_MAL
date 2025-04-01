@@ -87,11 +87,11 @@ if [ -z "$VENV_DIR" ]; then
             VENV_DIR="${INSTALL_DIR}/venv"
             echo -e "${GREEN}Created virtual environment at: ${VENV_DIR}${NC}"
             echo -e "${YELLOW}Installing required packages...${NC}"
-            "${VENV_DIR}/bin/pip" install requests pymetasploit3 psutil netifaces
+            "${VENV_DIR}/bin/pip" install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python
         else
             echo -e "${RED}Error: Could not create a virtual environment.${NC}"
             echo -e "Please install required modules manually:"
-            echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces${NC}"
+            echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python${NC}"
             exit 1
         fi
     fi
@@ -104,7 +104,7 @@ if [ -z "$SYSTEM_PYTHON" ] && [ ! -d "$VENV_DIR" ]; then
     echo -e "  ${GREEN}cd ${INSTALL_DIR}${NC}"
     echo -e "  ${GREEN}python3 -m venv venv${NC}"
     echo -e "  ${GREEN}source venv/bin/activate${NC}"
-    echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces${NC}"
+    echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python${NC}"
     exit 1
 fi
 
