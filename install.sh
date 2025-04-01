@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit on error
+set -e
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -60,7 +63,7 @@ if ! command -v ollama &> /dev/null; then
     # Pull required models
     echo -e "${GREEN}Pulling AI models...${NC}"
     ollama pull qwen2.5-coder:7b
-    ollama pull gemma3:1b
+    ollama pull mistral:7b
 fi
 
 # Create virtual environment
@@ -70,42 +73,45 @@ source venv/bin/activate
 
 # Install package in development mode
 echo -e "${GREEN}Installing AI_MAL package...${NC}"
-pip install --upgrade pip
 pip install -e .
 
 # Create necessary directories
 echo -e "${GREEN}Creating directories...${NC}"
 mkdir -p msf_resources
 mkdir -p scan_results
+mkdir -p generated_scripts
 mkdir -p logs
 
 # Set up environment variables
 echo -e "${GREEN}Setting up environment variables...${NC}"
 cat > .env << EOL
-OLLAMA_HOST=http://localhost:11434
-DEFAULT_MODEL=qwen2.5-coder:7b
-FALLBACK_MODEL=gemma3:1b
-MSF_WORKSPACE=ai_mal_workspace
+OLLAMA_MODEL=qwen2.5-coder:7b
+OLLAMA_FALLBACK_MODEL=mistral:7b
 SCAN_RESULTS_DIR=scan_results
+MSF_RESOURCES_DIR=msf_resources
+GENERATED_SCRIPTS_DIR=generated_scripts
 LOG_DIR=logs
 EOL
 
 # Create symbolic link for command-line access
 echo -e "${GREEN}Creating command-line shortcut...${NC}"
-ln -sf "$(pwd)/main.py" /usr/local/bin/AI_MAL
-chmod +x /usr/local/bin/AI_MAL
+ln -sf "$(pwd)/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
 
 # Set up completion script
 echo -e "${GREEN}Setting up command completion...${NC}"
 cat > /etc/bash_completion.d/AI_MAL << EOL
-_ai_mal_completions()
+_AI_MAL_completions()
 {
     local cur=\${COMP_WORDS[COMP_CWORD]}
-    local opts="--msf --exploit --model --full-auto --dos --custom-scripts --script-type --execute-scripts --timeout --max-threads --memory-limit --debug --verbose --log"
-    COMPREPLY=( \$(compgen -W "\${opts}" -- \${cur}) )
+    COMPREPLY=( \$(compgen -W "--msf --exploit --model --fallback-model --full-auto --custom-scripts --script-type --execute-scripts --stealth --continuous --delay --services --version --os --vuln --dos --output-dir --output-format --quiet --iterations --custom-vuln --ai-analysis" -- \$cur) )
 }
-complete -F _ai_mal_completions AI_MAL
+complete -F _AI_MAL_completions AI_MAL
 EOL
+
+# Set permissions
+echo -e "${GREEN}Setting permissions...${NC}"
+chmod +x /usr/local/bin/AI_MAL
+chmod -R 755 scan_results msf_resources generated_scripts logs
 
 # Print success message
 echo -e "${GREEN}Installation completed successfully!${NC}"
