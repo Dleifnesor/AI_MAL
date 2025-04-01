@@ -3104,7 +3104,7 @@ def parse_arguments():
     args = parser.parse_args()
     
     # Full auto mode implications
-    if hasattr(args, 'full_auto') and args.full_auto:
+    if args.full_auto:
         args.continuous = True
         args.msf = True
         args.exploit = True
@@ -3128,11 +3128,11 @@ def parse_arguments():
         max_iterations=args.iterations,
         continuous=args.continuous,
         delay=args.delay,
-        msf_integration=args.msf if hasattr(args, 'msf') else False,
-        exploit=args.exploit if hasattr(args, 'exploit') else False,
-        msf_workspace=args.workspace if hasattr(args, 'workspace') else "adaptive_scan",
-        stealth=args.stealth if hasattr(args, 'stealth') else False,
-        auto_script=args.auto_script if hasattr(args, 'auto_script') else False,
+        msf_integration=args.msf,
+        exploit=args.exploit,
+        msf_workspace=args.workspace,
+        stealth=args.stealth,
+        auto_script=args.auto_script,
         quiet=args.quiet,
         debug=args.debug,
         auto_discover=args.auto_discover,
@@ -3140,19 +3140,13 @@ def parse_arguments():
         scan_all=args.scan_all,
         network=args.network,
         host_timeout=args.host_timeout,
-        custom_scripts=args.custom_scripts if hasattr(args, 'custom_scripts') else False,
-        script_type=args.script_type if hasattr(args, 'script_type') else "bash",
-        execute_scripts=args.execute_scripts if hasattr(args, 'execute_scripts') else False,
-        dos_attack=args.dos if hasattr(args, 'dos') else False,
-        show_live_ai=args.show_live_ai if hasattr(args, 'show_live_ai') else False
+        custom_scripts=args.custom_scripts,
+        script_type=args.script_type,
+        execute_scripts=args.execute_scripts,
+        dos_attack=args.dos,
+        show_live_ai=args.show_live_ai
     )
     
-    # Additional setup for network option
-    if args.network and hasattr(scanner, 'network_discovery') and scanner.network_discovery:
-        scanner.network_discovery.network = args.network
-        logger.info(f"Using specified network: {args.network}")
-    
-    # Return the configured scanner
     return scanner
 
 def main():
@@ -3167,6 +3161,7 @@ def main():
         logger.error(f"Error in main execution: {e}")
         if logging.getLogger().level == logging.DEBUG:
             traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

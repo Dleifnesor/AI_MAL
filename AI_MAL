@@ -255,11 +255,24 @@ if [ -n "$VENV_DIR" ]; then
     source "${VENV_DIR}/bin/activate"
 fi
 
+# Check if Ollama is running
+if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
+    echo -e "${RED}Error: Ollama service is not running.${NC}"
+    echo -e "Please start Ollama with: ${GREEN}ollama serve${NC}"
+    exit 1
+fi
+
 # Execute the Python script with all arguments
 if [ -n "$SYSTEM_PYTHON" ]; then
-    python3 "${PYTHON_SCRIPT}" "$@"
+    python3 "${PYTHON_SCRIPT}" "$@" || {
+        echo -e "${RED}Error: Failed to execute the scan.${NC}"
+        exit 1
+    }
 else
-    "${VENV_DIR}/bin/python3" "${PYTHON_SCRIPT}" "$@"
+    "${VENV_DIR}/bin/python3" "${PYTHON_SCRIPT}" "$@" || {
+        echo -e "${RED}Error: Failed to execute the scan.${NC}"
+        exit 1
+    }
 fi
 
 # Deactivate virtual environment if it was activated
