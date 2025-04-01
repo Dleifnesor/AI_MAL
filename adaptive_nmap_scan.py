@@ -2845,97 +2845,68 @@ if __name__ == "__main__":
             traceback.print_exc()
 
     def execute_nmap_scan(self, target, scan_type="basic"):
-        """Execute an Nmap scan with the given parameters."""
+        """Execute Nmap scan with specified options."""
         try:
-            # Set up command-line arguments for Nmap
+            # Set up command arguments
             cmd = ["nmap"]
             
-            # Apply port settings
+            # Add port specification
             if self.ports == "all":
-                cmd.extend(["-p-"])  # Scan all 65535 ports
+                cmd.append("-p-")
             elif self.ports == "quick":
-                cmd.extend(["-F"])   # Fast scan - top 100 ports
+                cmd.append("-F")
             elif self.ports:
-                cmd.extend(["-p", self.ports])  # Custom port specification
+                cmd.extend(["-p", str(self.ports)])
             
-            # Apply scan type options
-            if scan_type == "basic" or scan_type == "initial":
-                cmd.extend(["-sV", "-sC", "--min-rate=1000"])
-            elif scan_type == "stealth" or (scan_type == "basic" and self.stealth):
-                cmd.extend(["-sS", "-T2"])
+            # Add scan type options
+            if scan_type == "basic":
+                cmd.append("-sS")
+            elif scan_type == "stealth":
+                cmd.extend(["-sS", "-T2", "--randomize-hosts"])
             elif scan_type == "comprehensive":
-                cmd.extend(["-sS", "-sV", "-sC", "-A", "-T4", "--min-rate=800"])
-            elif scan_type == "vuln" or self.vulnerability_scan:
-                cmd.extend(["-sV", "--script=vuln", "-T3"])
+                cmd.extend(["-sS", "-sV", "-O", "--version-intensity", "5"])
+            elif scan_type == "vulnerability":
+                cmd.extend(["-sS", "-sV", "-O", "--script", "vuln"])
             
             # Add additional options based on flags
-            if self.services or self.version_detection:
-                cmd.extend(["-sV"])
+            if self.services:
+                cmd.append("-sV")
+            if self.version_detection:
+                cmd.extend(["-sV", "--version-intensity", "5"])
             if self.os_detection:
-                cmd.extend(["-O"])
+                cmd.append("-O")
+            if self.vulnerability_scan:
+                cmd.append("--script=vuln")
             
-            # Add target
-            cmd.append(target)
+            # Add target and output format
+            cmd.extend(["-oX", "-", target])
             
-            # Add output format if specified
-            if self.output_file:
-                if self.output_format == "xml":
-                    cmd.extend(["-oX", self.output_file])
-                elif self.output_format == "json":
-                    cmd.extend(["-oX", f"{self.output_file}.xml"])  # We'll convert to JSON later
-                else:  # text
-                    cmd.extend(["-oN", self.output_file])
+            # Execute Nmap command
+            logging.debug(f"Executing Nmap command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
-            # Always add XML output for parsing
-            temp_xml = os.path.join(tempfile.gettempdir(), f"nmap_scan_{int(time.time())}.xml")
-            cmd.extend(["-oX", temp_xml])
-            
-            # Execute the command
-            self.logger.debug(f"Executing Nmap command: {' '.join(cmd)}")
-            
-            if not self.quiet:
-                print(f"\nExecuting: {' '.join(cmd)}\n")
-            
-            # Use animation when not in quiet mode
-            if not self.quiet:
-                animation = SingleLineAnimation(f"Running Nmap scan against {target}")
-            else:
-                animation = DummyAnimator()
-            
-            # Execute Nmap and capture output
-            process = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            stdout, stderr = process.communicate()
-            animation.set()  # Stop animation
-            
-            # Check for errors
-            if process.returncode != 0:
-                self.logger.error(f"Nmap scan failed: {stderr}")
+            if result.returncode != 0:
+                logging.error(f"Nmap scan failed: {result.stderr}")
                 return None
             
             # Parse XML output
             try:
-                tree = ET.parse(temp_xml)
-                os.unlink(temp_xml)  # Clean up temp file
+                root = ET.fromstring(result.stdout)
+                scan_results = self.parse_nmap_xml(root)
                 
                 # Convert to JSON if requested
-                if self.output_file and self.output_format == "json":
-                    self.xml_to_json(temp_xml, self.output_file)
+                if self.output_format == "json":
+                    json_file = f"scan_results_{target}.json"
+                    self.xml_to_json(result.stdout, json_file)
+                    logging.info(f"Results saved to {json_file}")
                 
-                return self.parse_nmap_xml(tree)
-            except Exception as e:
-                self.logger.error(f"Failed to parse Nmap output: {e}")
+                return scan_results
+            except ET.ParseError as e:
+                logging.error(f"Error parsing Nmap XML output: {e}")
                 return None
-            
+                
         except Exception as e:
-            self.logger.error(f"Error executing Nmap scan: {e}")
-            if self.debug:
-                traceback.print_exc()
+            logging.error(f"Error executing Nmap scan: {e}")
             return None
     
     def xml_to_json(self, xml_file, json_file):
