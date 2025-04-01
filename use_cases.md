@@ -48,9 +48,29 @@ AI_MAL 192.168.1.1 --os
 # Enable vulnerability scanning
 AI_MAL 192.168.1.1 --vuln
 
-# Enable DoS testing
-AI_MAL 192.168.1.1 --dos
+# Combine multiple scanning options
+AI_MAL 192.168.1.1 --services --version --vuln
 ```
+
+### Denial of Service Testing
+```bash
+# Perform DoS vulnerability testing
+AI_MAL 192.168.1.1 --dos
+
+# Combined DoS testing with other scan types
+AI_MAL 192.168.1.1 --services --version --dos
+
+# Full penetration test with DoS assessment
+AI_MAL 192.168.1.1 --services --version --vuln --dos --msf --exploit
+```
+
+The `--dos` option performs actual DoS vulnerability testing against discovered services:
+* Uses specialized Nmap DoS-related NSE scripts
+* Tests HTTP servers for Slowloris vulnerability
+* Performs controlled HTTP flood testing using Apache Benchmark
+* Conducts SYN flood testing using hping3
+* Verifies service responsiveness after each test
+* Provides a detailed vulnerability report for each service
 
 ## Metasploit Integration
 
@@ -67,6 +87,9 @@ AI_MAL 192.168.1.1 --msf --exploit
 ```bash
 # Full automation with Metasploit exploitation
 AI_MAL 192.168.1.1 --msf --exploit --full-auto
+
+# Comprehensive scan with all options
+AI_MAL 192.168.1.1 --services --version --os --vuln --msf --exploit --full-auto
 ```
 
 ## Custom Script Generation
@@ -152,11 +175,12 @@ AI_MAL 192.168.1.1 --output-format xml
 3. Limit scan intensity on production networks
 4. Follow responsible disclosure practices
 5. Document all testing activities
+6. **Special Caution with DoS Testing**: The `--dos` option performs actual denial of service testing that could impact production systems
 
 ### Performance Optimization
 1. Choose appropriate model based on system resources
    - For systems with >8GB RAM: `--model qwen2.5-coder:7b`
-   - For systems with <8GB RAM: `--model gemma:7b` or `--model phi:latest`
+   - For systems with <8GB RAM: `--model gemma:7b`
 2. Use stealth mode for initial reconnaissance
 3. When generating scripts, start with Python for maximum compatibility
 4. Specify fallback models in case primary models are unavailable
@@ -187,6 +211,12 @@ AI_MAL 192.168.1.1 --services --version --os --vuln --msf --exploit --custom-scr
 AI_MAL 192.168.1.1 --msf --exploit --full-auto --custom-scripts --execute-scripts
 ```
 
+#### DoS Vulnerability Assessment
+```bash
+# Focused DoS testing with minimal scanning
+AI_MAL 192.168.1.1 --services --dos
+```
+
 ## Command-Line Arguments Reference
 
 The following table provides a comprehensive list of all available command-line arguments in AI_MAL:
@@ -200,14 +230,14 @@ The following table provides a comprehensive list of all available command-line 
 | `--version` | Enables version detection | False | `AI_MAL 192.168.1.1 --version` |
 | `--os` | Enables OS detection | False | `AI_MAL 192.168.1.1 --os` |
 | `--vuln` | Enables vulnerability scanning | False | `AI_MAL 192.168.1.1 --vuln` |
-| `--dos` | Attempts Denial of Service attacks | False | `AI_MAL 192.168.1.1 --dos` |
+| `--dos` | Performs denial of service vulnerability testing | False | `AI_MAL 192.168.1.1 --dos` |
 | `--msf` | Enables Metasploit integration | False | `AI_MAL 192.168.1.1 --msf` |
 | `--exploit` | Attempts exploitation of vulnerabilities | False | `AI_MAL 192.168.1.1 --exploit` |
 | `--custom-scripts` | Enables AI-powered script generation | False | `AI_MAL 192.168.1.1 --custom-scripts` |
 | `--script-type` | Specifies script generation type | python | `AI_MAL 192.168.1.1 --script-type bash` |
 | `--execute-scripts` | Automatically executes generated scripts | False | `AI_MAL 192.168.1.1 --execute-scripts` |
 | `--model` | Specifies Ollama model to use | qwen2.5-coder:7b | `AI_MAL 192.168.1.1 --model gemma:7b` |
-| `--fallback-model` | Specifies fallback Ollama model | mistral:7b | `AI_MAL 192.168.1.1 --fallback-model llama3:8b` |
+| `--fallback-model` | Specifies fallback Ollama model | gemma:7b | `AI_MAL 192.168.1.1 --fallback-model gemma:7b` |
 | `--full-auto` | Enables full autonomous mode | False | `AI_MAL 192.168.1.1 --full-auto` |
 | `--output-dir` | Sets output directory for results | scan_results | `AI_MAL 192.168.1.1 --output-dir ./results` |
 | `--output-format` | Sets output format for scan results | json | `AI_MAL 192.168.1.1 --output-format xml` |
@@ -215,6 +245,7 @@ The following table provides a comprehensive list of all available command-line 
 | `--ai-analysis` | Enables AI analysis of results | True | `AI_MAL 192.168.1.1 --ai-analysis` |
 | `--quiet` | Suppresses progress output and logging to console | False | `AI_MAL 192.168.1.1 --quiet` |
 | `--no-gui` | Disables the terminal GUI interface | False | `AI_MAL 192.168.1.1 --no-gui` |
+| `--custom-vuln` | Path to custom vulnerability definitions | None | `AI_MAL 192.168.1.1 --custom-vuln vuln.json` |
 
 ### Notes:
 - Multiple arguments can be combined in a single command
@@ -222,6 +253,12 @@ The following table provides a comprehensive list of all available command-line 
 - By default, only `qwen2.5-coder:7b` and `gemma:7b` will be auto-installed if needed
 - Any other Ollama model can be used with `--model` if already installed on your system
 - The tool will automatically choose the best available model if your specified model is not available
+
+### DoS Testing Prerequisites
+To fully utilize the DoS testing capabilities (`--dos`), you need:
+- Nmap with NSE scripts (including http-slowloris, syn-flood)
+- Apache Benchmark (ab) for HTTP flood testing
+- hping3 for SYN flood testing
 
 ## Troubleshooting
 
@@ -242,13 +279,19 @@ The following table provides a comprehensive list of all available command-line 
    - Error message: `"Error generating scripts"`
    - Solution: Check that the target is properly scanned before generating scripts
 
+4. **DoS testing tool errors**
+   - Error message: `"Error during [test_type] test"`
+   - Solution: Ensure the required DoS testing tools (ab, hping3) are installed:
+     - Install Apache Benchmark: `apt-get install apache2-utils`
+     - Install hping3: `apt-get install hping3`
+
 ### Debug Mode
 To troubleshoot issues, you can add the following environment variables:
 ```bash
 export DEBUG=1
 export OLLAMA_HOST=http://localhost:11434
 export OLLAMA_MODEL=qwen2.5-coder:7b
-export OLLAMA_FALLBACK_MODEL=mistral:7b
+export OLLAMA_FALLBACK_MODEL=gemma:7b
 ```
 
 ### Recovery Procedures

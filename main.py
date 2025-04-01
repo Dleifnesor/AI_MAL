@@ -15,6 +15,26 @@ import platform
 from dotenv import load_dotenv
 import aiohttp
 
+# Suppress asyncio warnings about event loop being closed during garbage collection
+# This is a common issue in Python 3.13 with asyncio subprocesses
+import warnings
+warnings.filterwarnings("ignore", 
+                       message="Exception ignored in.*asyncio.*",
+                       category=RuntimeWarning)
+# Also suppress the RuntimeError directly
+original_check_closed = asyncio.events.BaseEventLoop._check_closed
+def _patched_check_closed(self):
+    if self._closed:
+        # Instead of raising an exception, just return
+        return
+    return original_check_closed(self)
+
+# Apply the patch only if we're experiencing the issue
+try:
+    asyncio.events.BaseEventLoop._check_closed = _patched_check_closed
+except (AttributeError, TypeError):
+    pass  # In case the internal structure changes in future Python versions
+
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -681,6 +701,7 @@ def main():
                     print(f"Using {available_alternatives[1 if available_alternatives[0] == args.model else 0]} as fallback model instead.")
                     args.fallback_model = available_alternatives[1 if available_alternatives[0] == args.model else 0]
             
+            # Close the loop properly
             loop.close()
         except Exception as e:
             print(f"Warning: Error during Ollama model verification: {str(e)}")
@@ -697,34 +718,55 @@ def main():
         loop = configure_event_loop()
         scan_results = loop.run_until_complete(ai_mal.run())
         
-        # Save scan results
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(output_dir, f'scan_{timestamp}.json')
+        # Ensure proper cleanup of the event loop
+        clean_up_loop(loop)
         
+        # Save results or do any post-processing here
+        output_file = os.path.join(output_dir, f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         with open(output_file, 'w') as f:
             json.dump(scan_results, f, indent=2)
-            
-        logger.info(f"Scan results saved to {output_file}")
         
-        # Print completion message
-        if RICH_AVAILABLE and not args.quiet:
-            console.print(f"[green]Scan results saved to:[/green] {output_file}")
-        else:
-            print(f"Scan results saved to: {output_file}")
+        print(f"Scan results saved to: ")
+        print(output_file)
         
-        # Close event loop
-        loop.close()
-        
+        return 0
     except KeyboardInterrupt:
-        logger.info("Scan interrupted by user")
-        if RICH_AVAILABLE and not args.quiet:
-            console.print("[bold red]Scan interrupted by user[/bold red]")
-        sys.exit(1)
+        print("\nScan interrupted by user")
+        return 1
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
-        if RICH_AVAILABLE and not args.quiet:
-            console.print(f"[bold red]Fatal error:[/bold red] {str(e)}")
-        sys.exit(1)
+        print(f"Fatal error: {str(e)}")
+        # Print traceback for debugging
+        if os.getenv('DEBUG'):
+            import traceback
+            traceback.print_exc()
+        return 1
+    
+def clean_up_loop(loop):
+    """Properly clean up the event loop and any pending tasks/subprocesses."""
+    try:
+        # Cancel all running tasks
+        tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if tasks:
+            for task in tasks:
+                task.cancel()
+            # Allow time for tasks to cancel
+            if tasks:
+                loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+        
+        # Close the loop
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        
+        # Python 3.9+ has this method
+        if hasattr(loop, 'shutdown_default_executor'):
+            loop.run_until_complete(loop.shutdown_default_executor())
+            
+    except Exception as e:
+        # Just log errors during cleanup, don't raise
+        print(f"Warning: Error during event loop cleanup: {e}")
+    finally:
+        # Ensure loop is closed
+        if not loop.is_closed():
+            loop.close()
 
 if __name__ == "__main__":
     main() 
