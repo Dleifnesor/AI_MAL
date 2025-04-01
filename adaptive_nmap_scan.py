@@ -49,6 +49,9 @@ if not logger.handlers:
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(console_handler)
 
+# Set root logger level to INFO to ensure we see all messages
+logging.getLogger().setLevel(logging.INFO)
+
 # Animation and display-related classes
 class DummyAnimator:
     """Dummy animator for when quiet mode is enabled."""
@@ -2150,125 +2153,80 @@ if __name__ == "__main__":
             return False
 
     def run(self):
-        """Main method to run the scan process."""
+        """Main execution method."""
         try:
-            # Handle Ctrl+C gracefully
-            signal.signal(signal.SIGINT, self._signal_handler)
+            # Display start banner
+            self.display_start_banner(self.target, "DoS Attack" if self.dos_attack else "Standard Scan", self.ollama_model)
             
-            # Discover hosts if auto-discover is enabled
+            # Ensure Ollama model is available
+            logger.info(f"Using existing model: {self.ollama_model}")
+            self._ensure_model_available()
+            
+            # Initialize network discovery if needed
             if self.auto_discover:
-                if not self._discover_network():
-                    self.logger.error("Network discovery failed. Exiting.")
-            return
+                logger.info("Starting network discovery...")
+                self._discover_network()
             
-            # Check if we have any targets
-            if not self.target and not self.discovered_hosts:
-                self.logger.error("No targets specified and no hosts discovered. Exiting.")
-            return
-            
-            # Setup Metasploit RPC client if integration is enabled
-            if hasattr(self, 'msf_integration') and self.msf_integration:
-                if not self.setup_metasploit():
-                    self.logger.warning("Metasploit integration failed. Continuing without it.")
-                    self.msf_integration = False
+            # Setup Metasploit if requested
+            if self.msf_integration:
+                logger.info("Setting up Metasploit integration...")
+                self.setup_metasploit()
             
             # Main scan loop
             iteration = 1
-            while True:
-                # Get the next target if we're scanning multiple hosts
-                if self.auto_discover and self.scan_all:
-                    if not self.next_target():
-                        break
+            while iteration <= self.max_iterations:
+                logger.info(f"Starting scan iteration {iteration}/{self.max_iterations}")
                 
-                # Display scan banner
-                self.viewer.display_start_banner(
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "Adaptive" if iteration > 1 else "Initial",
-                    self.ollama_model
-                )
-                
-                # Generate and display scan parameters for this iteration
+                # Generate scan parameters
                 scan_params = self.generate_scan_parameters(iteration)
+                logger.info(f"Using scan parameters: {scan_params}")
                 
-                # Run Nmap scan
+                # Run the scan
+                logger.info(f"Running Nmap scan on target: {self.target}")
                 result = self.run_nmap_scan(scan_params)
                 
                 # Process results
                 if result:
+                    logger.info("Processing scan results...")
                     self.summarize_results(result)
-                    self.scan_history.append(result)
                     
-                    # Process with Metasploit if integration is enabled
-                    if hasattr(self, 'msf_integration') and self.msf_integration:
-                        self.process_results_with_metasploit(result)
-                        
-                        # Run exploits if enabled
-                        if hasattr(self, 'exploit') and self.exploit and self.msf_client:
-                            if self.target:
-                                self.run_exploits_on_host(self.target)
-                            elif self.discovered_hosts:
-                                self.run_exploits_on_host(self.discovered_hosts[self.current_target_index])
-                        
-                        # Run custom resource script if auto-script is enabled
-                        if hasattr(self, 'auto_script') and self.auto_script and self.msf_client:
-                            script_path = self.generate_resource_script()
-                            if script_path:
-                                self.run_resource_script(script_path)
+                    # Handle DoS attack if requested
+                    if self.dos_attack:
+                        logger.info("Initiating DoS attack...")
+                        success = self.perform_dos_attack(self.target)
+                        logger.info(f"DoS attack {'successful' if success else 'failed'}")
+                    
+                    # Handle exploitation if requested
+                    if self.exploit:
+                        logger.info("Attempting exploitation...")
+                        self.run_exploits_on_host(self.target)
+                    
+                    # Generate custom scripts if requested
+                    if self.custom_scripts:
+                        logger.info("Generating custom scripts...")
+                        script_type = self.determine_best_script_type()
+                        self.generate_custom_script(script_type)
                 
-                # Generate custom scripts if enabled
-                if hasattr(self, 'custom_scripts') and self.custom_scripts:
-                    if not hasattr(self, 'script_type'):
-                        self.script_type = "bash"  # Default to bash if not specified
-                    
-                    target_info = None
-                    if result and 'scan' in result:
-                        if self.target:
-                            target_info = result['scan'].get(self.target)
-                        elif self.discovered_hosts:
-                            target = self.discovered_hosts[self.current_target_index]
-                            target_info = result['scan'].get(target)
-                    
-                    script_path = self.generate_custom_script(
-                        script_type=self.script_type,
-                        target_info=target_info
-                    )
-                    
-                    # Execute script if enabled
-                    if hasattr(self, 'execute_scripts') and self.execute_scripts and script_path:
-                        self.execute_generated_script(script_path)
-                
-                # Perform DoS attack if enabled
-                if hasattr(self, 'dos_attack') and self.dos_attack:
-                    if self.target:
-                        self.perform_dos_attack(self.target)
-                    elif self.discovered_hosts:
-                        self.perform_dos_attack(self.discovered_hosts[self.current_target_index])
-                
-                # Stop if we've reached the max iterations or are not in continuous mode
-                iteration += 1
-                if not self.continuous and iteration > self.max_iterations:
+                # Check if we should continue
+                if not self.continuous:
                     break
                 
-                # Delay between iterations
-                if self.continuous or iteration <= self.max_iterations:
+                # Wait before next iteration
+                if iteration < self.max_iterations:
+                    logger.info(f"Waiting {self.delay} seconds before next iteration...")
                     time.sleep(self.delay)
+                
+                iteration += 1
             
-            self.viewer.success("Scan process completed.")
+            logger.info("Scan completed successfully")
             
+        except KeyboardInterrupt:
+            logger.info("Scan interrupted by user")
         except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Error during scan process: {e}")
-            else:
-                logger.error(f"Error during scan process: {e}")
-            if hasattr(self, 'debug') and self.debug:
-                if hasattr(self, 'logger'):
-                    self.logger.exception("Detailed exception information:")
-                else:
-                    logger.exception("Detailed exception information:")
-        finally:
-            # Cleanup
-            if hasattr(self, 'msf_client') and self.msf_client:
-                self.msf_client.close()
+            logger.error(f"Error during scan: {e}")
+            if self.debug:
+                traceback.print_exc()
+            raise
     
     def determine_best_script_type(self):
         """Determine the best script type based on scan results."""
