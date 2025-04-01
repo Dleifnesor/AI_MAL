@@ -44,7 +44,6 @@ apt-get install -y \
     git \
     nmap \
     metasploit-framework \
-    msfvenom \
     curl \
     wget \
     build-essential \

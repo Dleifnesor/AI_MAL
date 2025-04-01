@@ -1,10 +1,6 @@
 """
-AI_MAL - AI-Powered Penetration Testing Tool
+Core components for AI_MAL
 """
-
-__version__ = "0.1.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
 
 from ai_mal.core.adaptive import AdaptiveScanner
 from ai_mal.core.ai_manager import AIManager

@@ -9,6 +9,7 @@ from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 import json
 import asyncio
+from pathlib import Path
 
 from .scanner import DirectNmapScanner
 from .metasploit_manager import MetasploitManager
@@ -41,6 +42,193 @@ class ScanConfig:
     quiet: bool = False
     iterations: int = 1
     generate_script: bool = False
+
+class AdaptiveScanner:
+    def __init__(self, target: str):
+        self.target = target
+        self.scan_results = {}
+
+    async def scan(self, **kwargs) -> Dict[str, Any]:
+        """Perform an adaptive Nmap scan based on provided options."""
+        try:
+            # Build Nmap command
+            cmd = ['nmap']
+            
+            # Add target
+            cmd.append(self.target)
+            
+            # Add scan options based on kwargs
+            if kwargs.get('stealth', False):
+                cmd.extend(['-sS', '-T2'])
+            else:
+                cmd.extend(['-sV', '-sC'])
+            
+            if kwargs.get('services', False):
+                cmd.append('-sV')
+            
+            if kwargs.get('version', False):
+                cmd.append('-sV')
+            
+            if kwargs.get('os', False):
+                cmd.append('-O')
+            
+            if kwargs.get('vuln', False):
+                cmd.append('--script=vuln')
+            
+            if kwargs.get('dos', False):
+                cmd.append('--script=dos')
+            
+            # Add output options
+            cmd.extend(['-oX', '-'])
+            
+            # Run Nmap scan
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                logger.error(f"Nmap scan failed: {stderr.decode()}")
+                return {}
+            
+            # Parse XML output
+            root = ET.fromstring(stdout.decode())
+            
+            # Convert to dictionary
+            self.scan_results = self._parse_nmap_xml(root)
+            
+            return self.scan_results
+            
+        except Exception as e:
+            logger.error(f"Error during scan: {str(e)}")
+            return {}
+
+    def _parse_nmap_xml(self, root: ET.Element) -> Dict[str, Any]:
+        """Parse Nmap XML output into a dictionary."""
+        results = {
+            'hosts': [],
+            'scan_info': {},
+            'scan_stats': {}
+        }
+        
+        # Parse scan info
+        for scaninfo in root.findall('scaninfo'):
+            results['scan_info'] = {
+                'type': scaninfo.get('type'),
+                'protocol': scaninfo.get('protocol'),
+                'numservices': scaninfo.get('numservices'),
+                'services': scaninfo.get('services')
+            }
+        
+        # Parse hosts
+        for host in root.findall('host'):
+            host_data = {
+                'status': {},
+                'addresses': [],
+                'hostnames': [],
+                'ports': [],
+                'os': {},
+                'scripts': []
+            }
+            
+            # Status
+            status = host.find('status')
+            if status is not None:
+                host_data['status'] = {
+                    'state': status.get('state'),
+                    'reason': status.get('reason'),
+                    'reason_ttl': status.get('reason_ttl')
+                }
+            
+            # Addresses
+            for addr in host.findall('address'):
+                host_data['addresses'].append({
+                    'addr': addr.get('addr'),
+                    'addrtype': addr.get('addrtype'),
+                    'vendor': addr.get('vendor')
+                })
+            
+            # Hostnames
+            for hostname in host.findall('hostnames/hostname'):
+                host_data['hostnames'].append({
+                    'name': hostname.get('name'),
+                    'type': hostname.get('type')
+                })
+            
+            # Ports
+            for port in host.findall('ports/port'):
+                port_data = {
+                    'portid': port.get('portid'),
+                    'protocol': port.get('protocol'),
+                    'state': {},
+                    'service': {}
+                }
+                
+                state = port.find('state')
+                if state is not None:
+                    port_data['state'] = {
+                        'state': state.get('state'),
+                        'reason': state.get('reason'),
+                        'reason_ttl': state.get('reason_ttl')
+                    }
+                
+                service = port.find('service')
+                if service is not None:
+                    port_data['service'] = {
+                        'name': service.get('name'),
+                        'product': service.get('product'),
+                        'version': service.get('version'),
+                        'extrainfo': service.get('extrainfo'),
+                        'ostype': service.get('ostype'),
+                        'method': service.get('method'),
+                        'conf': service.get('conf')
+                    }
+                
+                host_data['ports'].append(port_data)
+            
+            # OS
+            os = host.find('os')
+            if os is not None:
+                for osmatch in os.findall('osmatch'):
+                    host_data['os'] = {
+                        'name': osmatch.get('name'),
+                        'accuracy': osmatch.get('accuracy'),
+                        'line': osmatch.get('line')
+                    }
+            
+            # Scripts
+            for script in host.findall('hostscript/script'):
+                script_data = {
+                    'id': script.get('id'),
+                    'output': script.get('output')
+                }
+                host_data['scripts'].append(script_data)
+            
+            results['hosts'].append(host_data)
+        
+        # Parse scan stats
+        for runstats in root.findall('runstats'):
+            finished = runstats.find('finished')
+            if finished is not None:
+                results['scan_stats']['finished'] = {
+                    'time': finished.get('time'),
+                    'timestr': finished.get('timestr'),
+                    'elapsed': finished.get('elapsed'),
+                    'summary': finished.get('summary')
+                }
+            
+            hosts = runstats.find('hosts')
+            if hosts is not None:
+                results['scan_stats']['hosts'] = {
+                    'up': hosts.get('up'),
+                    'down': hosts.get('down'),
+                    'total': hosts.get('total')
+                }
+        
+        return results
 
 class AdaptiveNmapScanner:
     """Advanced Adaptive Nmap Scanner with Metasploit Integration."""
