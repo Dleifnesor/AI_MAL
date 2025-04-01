@@ -425,136 +425,59 @@ if ! setup_postgresql; then
     echo "    Some features may be limited"
 fi
 
-# Function to verify Ollama installation
-verify_ollama() {
-    local max_retries=30
-    local retry_count=1
-    
-    echo "[+] Verifying Ollama installation..."
-    while [ $retry_count -le $max_retries ]; do
-        if curl -s http://localhost:11434/api/version > /dev/null; then
-            echo "[+] Ollama is running and accessible"
-            return 0
-        fi
-        echo -n "."
-        sleep 1
-        retry_count=$((retry_count + 1))
-    done
-    
-    echo "[-] Ollama failed to start or is not accessible"
-    return 1
-}
-
-# Function to pull Ollama model with retries
-pull_ollama_model() {
-    local model=$1
-    local max_retries=3
-    local retry_count=1
-    
-    echo "[+] Pulling Ollama model: $model"
-    while [ $retry_count -le $max_retries ]; do
-        if curl -s -X POST http://localhost:11434/api/pull -d "{\"name\": \"$model\"}" > /dev/null; then
-            echo "[+] Successfully pulled model: $model"
-            return 0
-        fi
-        echo "[!] Failed to pull model (attempt $retry_count/$max_retries)"
-        retry_count=$((retry_count + 1))
-        sleep 5
-    done
-    
-    echo "[-] Failed to pull model after $max_retries attempts"
-    return 1
-}
-
-# Install and configure Ollama
-echo "[+] Installing Ollama..."
+# Function to install Ollama
 install_ollama() {
-    local system_type=$(get_system_type)
-    local linux_distro=$(get_linux_distro)
+    echo "[+] Installing Ollama..."
     
-    case $system_type in
-        "linux")
-            case $linux_distro in
-                "ubuntu"|"debian")
-                    curl -fsSL https://ollama.com/install.sh | sudo sh || {
-                        echo "[-] Failed to install Ollama using install script"
-                        return 1
-                    }
-                    ;;
-                "fedora"|"centos"|"rhel")
-                    curl -fsSL https://ollama.com/install.sh | sudo sh || {
-                        echo "[-] Failed to install Ollama using install script"
-                        return 1
-                    }
-                    ;;
-                *)
-                    echo "[-] Unsupported Linux distribution: $linux_distro"
-                    return 1
-                    ;;
-            esac
-            
-            # Start Ollama service
-            if command_exists systemctl; then
-                sudo systemctl start ollama || {
-                    echo "[-] Failed to start Ollama service"
-                    return 1
-                }
-            else
-                sudo service ollama start || {
-                    echo "[-] Failed to start Ollama service"
-                    return 1
-                }
-            fi
-            ;;
-            
-        "macos")
-            if command_exists brew; then
-                brew install ollama || {
-                    echo "[-] Failed to install Ollama using Homebrew"
-                    return 1
-                }
-                brew services start ollama || {
-                    echo "[-] Failed to start Ollama service"
-                    return 1
-                }
-            else
-                echo "[-] Homebrew not found. Please install Homebrew first"
-                return 1
-            fi
-            ;;
-            
-        "windows")
-            echo "[-] Windows installation not supported in this script"
-            echo "    Please install Ollama manually from https://ollama.com/download"
-            return 1
-            ;;
-            
-        *)
-            echo "[-] Unsupported operating system: $system_type"
-            return 1
-            ;;
-    esac
+    # Check if Ollama is already installed
+    if command_exists ollama; then
+        echo "[+] Ollama is already installed"
+        return 0
+    fi
     
-    # Wait for Ollama to start and verify installation
-    if ! verify_ollama; then
+    # Download and install Ollama
+    echo "[+] Downloading Ollama..."
+    curl -fsSL https://ollama.com/install.sh | sudo sh || {
+        echo "[-] Failed to install Ollama"
+        return 1
+    }
+    
+    # Verify installation
+    if ! command_exists ollama; then
+        echo "[-] Ollama installation failed"
         return 1
     fi
     
-    # Configure Ollama to accept external connections
-    echo "[+] Configuring Ollama to accept external connections..."
-    if [ -f /etc/ollama/config.json ]; then
-        sudo sed -i 's/"listen": "127.0.0.1"/"listen": "0.0.0.0"/' /etc/ollama/config.json
-        if command_exists systemctl; then
-            sudo systemctl restart ollama
-        else
-            sudo service ollama restart
-        fi
+    # Start Ollama service
+    echo "[+] Starting Ollama service..."
+    if command_exists systemctl; then
+        sudo systemctl enable ollama
+        sudo systemctl start ollama
+    else
+        nohup ollama serve > /var/log/ollama.log 2>&1 &
     fi
     
+    # Wait for Ollama to be ready
+    echo "[+] Waiting for Ollama to start..."
+    for i in {1..30}; do
+        if curl -s http://localhost:11434/api/version > /dev/null; then
+            echo "[+] Ollama is ready"
+            break
+        fi
+        echo -n "."
+        sleep 1
+        if [ $i -eq 30 ]; then
+            echo -e "\n[-] Ollama failed to start within 30 seconds"
+            return 1
+        fi
+    done
+    
     # Pull required models
-    local models=("llama2" "mistral" "codellama")
+    echo "[+] Pulling required models..."
+    local models=("llama2" "mistral" "codellama" "gemma3:1b" "qwen2.5-coder:7b")
     for model in "${models[@]}"; do
-        if ! pull_ollama_model "$model"; then
+        echo "[+] Pulling model: $model"
+        if ! ollama pull "$model"; then
             echo "[!] Warning: Failed to pull model: $model"
             echo "    Some features may be limited"
         fi
@@ -563,7 +486,7 @@ install_ollama() {
     return 0
 }
 
-# Run Ollama installation
+# Install Ollama
 if ! install_ollama; then
     echo "[!] Warning: Ollama installation completed with errors"
     echo "    Some features may be limited"
