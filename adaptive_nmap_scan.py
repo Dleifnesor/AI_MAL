@@ -2550,11 +2550,24 @@ if __name__ == "__main__":
             os.close(fd)
             self.logger.debug(f"Created temporary XML file: {xml_output}")
             
-            # Build the nmap command
+            # Build the nmap command with optimized parameters
             nmap_cmd = ['nmap']
             
             # Add XML output first
             nmap_cmd.extend(['-oX', xml_output])
+            
+            # Add optimized parameters
+            nmap_cmd.extend([
+                '--min-parallelism', '10',  # Increase parallel probes
+                '--max-retries', '2',       # Limit retries
+                '--max-scan-delay', '5s',   # Limit scan delay
+                '--min-rate', '100',        # Minimum packets per second
+                '--max-rate', '1000',       # Maximum packets per second
+                '--nsock-engine', 'epoll',  # Use epoll for better performance
+                '--no-stylesheet',          # Don't include stylesheet in XML
+                '--no-system-dns',          # Don't use system DNS
+                '--dns-servers', '8.8.8.8,8.8.4.4'  # Use Google DNS
+            ])
             
             # Add all parameters except target
             for param in scan_params:
@@ -2578,7 +2591,9 @@ if __name__ == "__main__":
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
+                encoding='utf-8',
+                errors='replace'  # Handle invalid UTF-8 gracefully
             )
             
             # Read output in real-time with timeout
@@ -2598,10 +2613,23 @@ if __name__ == "__main__":
                 try:
                     output_line = process.stdout.readline()
                     if output_line:
-                        output_lines.append(output_line.strip())
-                        if not self.quiet:
-                            print(output_line.strip())
-                        self.logger.debug(f"Nmap output: {output_line.strip()}")
+                        # Filter out NSOCK debug messages
+                        if not any(msg in output_line for msg in [
+                            "NSOCK INFO",
+                            "NSOCK ERROR",
+                            "NSOCK WARNING",
+                            "NSOCK DEBUG",
+                            "Ethernet",
+                            "UDP",
+                            "TCP",
+                            "CONNECT",
+                            "SEND",
+                            "CLOSE"
+                        ]):
+                            output_lines.append(output_line.strip())
+                            if not self.quiet:
+                                print(output_line.strip())
+                            self.logger.debug(f"Nmap output: {output_line.strip()}")
                 except Exception as e:
                     self.logger.error(f"Error reading stdout: {e}")
                     break
@@ -2611,12 +2639,18 @@ if __name__ == "__main__":
                     error_line = process.stderr.readline()
                     if error_line:
                         error_text = error_line.strip()
-                        # Filter out common NSOCK info messages
+                        # Filter out common debug messages
                         if not any(msg in error_text for msg in [
                             "NSOCK INFO",
                             "NSOCK ERROR",
                             "NSOCK WARNING",
-                            "NSOCK DEBUG"
+                            "NSOCK DEBUG",
+                            "Ethernet",
+                            "UDP",
+                            "TCP",
+                            "CONNECT",
+                            "SEND",
+                            "CLOSE"
                         ]):
                             error_lines.append(error_text)
                             if not self.quiet:
