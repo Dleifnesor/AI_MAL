@@ -16,9 +16,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 class MetasploitManager:
-    def __init__(self):
+    def __init__(self, workspace: str = None):
         self.msf_resources_dir = os.getenv('MSF_RESOURCES_DIR', 'msf_resources')
         os.makedirs(self.msf_resources_dir, exist_ok=True)
+        # Store the workspace name
+        self.workspace = workspace or f"ai_mal_{datetime.now().strftime('%Y%m%d')}"
+        logger.info(f"Initializing Metasploit Manager with workspace: {self.workspace}")
         # Verify Metasploit is installed
         self._check_metasploit()
 
@@ -52,12 +55,20 @@ class MetasploitManager:
                     continue
                     
                 for port in host.get('ports', []):
+                    # Skip ports that are not open
+                    if port.get('state', '') != 'open':
+                        continue
+                        
                     # Extract service info
-                    service = port.get('service', '').lower()
+                    service = port.get('service', '')
+                    if not service:
+                        continue
+                        
+                    service = str(service).lower()
                     version = port.get('version', '')
                     port_num = port.get('port')
                     
-                    if not service or not port_num:
+                    if not port_num:
                         continue
                     
                     # Skip common services that would generate too many results
@@ -68,7 +79,7 @@ class MetasploitManager:
                     logger.info(f"Searching exploits for {service} {version} on port {port_num}")
                     service_exploits = await self._search_exploits(
                         service=service,
-                        product=service.split()[0],
+                        product=service.split()[0] if ' ' in service else service,
                         version=version
                     )
                     
@@ -101,37 +112,55 @@ class MetasploitManager:
         try:
             results = []
             
+            if not exploits:
+                logger.warning("No exploits provided to run")
+                return results
+                
             for exploit in exploits:
-                # Skip exploits without target information
-                if not exploit.get('target_host') or not exploit.get('target_port'):
-                    continue
-                
-                exploit_name = exploit.get('name', 'unknown')
-                logger.info(f"Preparing to run exploit {exploit_name}")
+                try:
+                    # Skip exploits without target information
+                    if not exploit.get('target_host') or not exploit.get('target_port'):
+                        logger.warning(f"Skipping exploit without target information: {exploit.get('name', 'unknown')}")
+                        continue
                     
-                # Generate resource script
-                resource_script = self._generate_resource_script(exploit)
-                
-                # Save resource script
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                safe_name = exploit_name.replace("/", "_").replace("\\", "_")
-                script_path = os.path.join(
-                    self.msf_resources_dir,
-                    f'exploit_{safe_name}_{timestamp}.rc'
-                )
-                
-                with open(script_path, 'w') as f:
-                    f.write(resource_script)
-                
-                # Run exploit
-                logger.info(f"Running exploit {exploit_name} using resource script {script_path}")
-                result = await self._run_msf_console(script_path)
-                
-                results.append({
-                    "exploit": exploit,
-                    "result": result,
-                    "script_path": script_path
-                })
+                    exploit_name = exploit.get('name', 'unknown')
+                    logger.info(f"Preparing to run exploit {exploit_name}")
+                        
+                    # Generate resource script
+                    resource_script = self._generate_resource_script(exploit)
+                    
+                    # Save resource script
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    safe_name = exploit_name.replace("/", "_").replace("\\", "_")
+                    script_path = os.path.join(
+                        self.msf_resources_dir,
+                        f'exploit_{safe_name}_{timestamp}.rc'
+                    )
+                    
+                    with open(script_path, 'w') as f:
+                        f.write(resource_script)
+                    
+                    # Run exploit
+                    logger.info(f"Running exploit {exploit_name} using resource script {script_path}")
+                    result = await self._run_msf_console(script_path)
+                    
+                    results.append({
+                        "exploit": exploit,
+                        "result": result,
+                        "script_path": script_path
+                    })
+                except Exception as e:
+                    logger.error(f"Error running exploit {exploit.get('name', 'unknown')}: {str(e)}")
+                    results.append({
+                        "exploit": exploit,
+                        "result": {
+                            "status": "error",
+                            "error": str(e),
+                            "output": "",
+                            "duration": 0
+                        },
+                        "script_path": ""
+                    })
             
             return results
             
@@ -227,6 +256,10 @@ class MetasploitManager:
             script = f"""# Resource script for {exploit['name']}
 # Generated on {datetime.now().isoformat()}
 
+# Set workspace
+workspace -a {self.workspace}
+workspace -s {self.workspace}
+
 # Load the exploit
 use {exploit['name']}
 
@@ -288,14 +321,28 @@ run
     async def _run_msf_console(self, resource_script: str) -> Dict[str, Any]:
         """
         Run Metasploit console with resource script
+        
+        Args:
+            resource_script: Path to a resource script file or the script content
         """
         try:
+            # Check if resource_script is a file path or script content
+            if os.path.isfile(resource_script):
+                script_path = resource_script
+            else:
+                # Create a temporary resource script file
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                script_path = os.path.join(self.msf_resources_dir, f'temp_{timestamp}.rc')
+                with open(script_path, 'w') as f:
+                    f.write(resource_script)
+                logger.debug(f"Created temporary resource script at {script_path}")
+            
             # Build command
             cmd = [
                 'msfconsole',
                 '-q',
                 '-r',
-                resource_script
+                script_path
             ]
             
             # Run console

@@ -522,6 +522,27 @@ async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
     
     return results
 
+async def list_ollama_models() -> List[str]:
+    """
+    List all available models in Ollama without installing them
+    
+    Returns:
+        List of available model names
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://localhost:11434/api/tags") as response:
+                if response.status != 200:
+                    logger.warning(f"Ollama API not available: {response.status}")
+                    return []
+                
+                data = await response.json()
+                models = [model["name"] for model in data.get("models", [])]
+                return models
+    except Exception as e:
+        logger.warning(f"Failed to list Ollama models: {str(e)}")
+        return []
+
 def configure_event_loop():
     """Configure event loop based on platform"""
     if platform.system() == 'Windows':
@@ -611,40 +632,54 @@ def main():
             # Create a new event loop for checking and pulling models
             loop = configure_event_loop()
             
-            # Define a list of models to check
-            models_to_check = [primary_model, fallback_model]
-            backup_models = ['llama3:8b', 'gemma:7b', 'phi:latest', 'tinyllama:latest']
+            # Check for available models first
+            available_models = []
+            try:
+                available_models = loop.run_until_complete(list_ollama_models())
+                if available_models:
+                    print(f"Found {len(available_models)} available Ollama models")
+            except Exception as e:
+                print(f"Warning: Could not check available Ollama models: {str(e)}")
             
-            # Add some backup models
-            models_to_check.extend(backup_models)
+            # Define the default models that should be auto-installed if not available
+            default_models = ['qwen2.5-coder:7b', 'gemma:7b']
+            models_to_check = []
             
-            # Remove duplicates
-            models_to_check = list(dict.fromkeys(models_to_check))
+            # Only add models to auto-install list if they're in our default set
+            if primary_model in default_models:
+                models_to_check.append(primary_model)
             
-            # Check and pull models
-            model_results = loop.run_until_complete(check_and_pull_ollama_models(models_to_check))
+            if fallback_model in default_models and fallback_model != primary_model:
+                models_to_check.append(fallback_model)
             
+            # Check and pull default models if needed
+            if models_to_check:
+                print(f"Checking if default models need to be installed: {', '.join(models_to_check)}")
+                model_results = loop.run_until_complete(check_and_pull_ollama_models(models_to_check))
+            else:
+                model_results = {}
+                
             # Check if primary model is available
-            if not model_results.get(primary_model, False):
-                print(f"Warning: Primary model {primary_model} is not available.")
+            primary_available = primary_model in available_models or model_results.get(primary_model, False)
+            if not primary_available:
+                print(f"Warning: Primary model {primary_model} is not available and is not a default model for auto-install.")
                 
                 # Try to find an available model to use instead
-                for model_name, available in model_results.items():
-                    if available:
-                        print(f"Using {model_name} as primary model instead.")
-                        args.model = model_name
-                        break
-                        
+                available_alternatives = [m for m in default_models if m in available_models or model_results.get(m, False)]
+                if available_alternatives:
+                    print(f"Using {available_alternatives[0]} as primary model instead.")
+                    args.model = available_alternatives[0]
+                
             # Check if fallback model is available
-            if not model_results.get(fallback_model, False):
-                print(f"Warning: Fallback model {fallback_model} is not available.")
+            fallback_available = fallback_model in available_models or model_results.get(fallback_model, False)
+            if not fallback_available:
+                print(f"Warning: Fallback model {fallback_model} is not available and is not a default model for auto-install.")
                 
                 # Try to find an available model to use as fallback
-                for model_name, available in model_results.items():
-                    if available and model_name != args.model:
-                        print(f"Using {model_name} as fallback model instead.")
-                        args.fallback_model = model_name
-                        break
+                available_alternatives = [m for m in default_models if m in available_models or model_results.get(m, False)]
+                if available_alternatives and available_alternatives[0] != args.model and len(available_alternatives) > 1:
+                    print(f"Using {available_alternatives[1 if available_alternatives[0] == args.model else 0]} as fallback model instead.")
+                    args.fallback_model = available_alternatives[1 if available_alternatives[0] == args.model else 0]
             
             loop.close()
         except Exception as e:

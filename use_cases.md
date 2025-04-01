@@ -102,11 +102,14 @@ AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
 # Use default model (qwen2.5-coder:7b)
 AI_MAL 192.168.1.1 --model qwen2.5-coder:7b
 
-# Use lightweight model
+# Use lightweight model (gemma:7b)
 AI_MAL 192.168.1.1 --model gemma:7b
 
+# Use any other pre-installed Ollama model
+AI_MAL 192.168.1.1 --model mistral:7b
+
 # Specify fallback model
-AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model mistral:7b
+AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model gemma:7b
 ```
 
 ### AI Analysis
@@ -216,17 +219,20 @@ The following table provides a comprehensive list of all available command-line 
 ### Notes:
 - Multiple arguments can be combined in a single command
 - Some arguments may have dependencies on others (e.g., `--exploit` requires `--msf`)
-- The `--model` argument supports any model available in Ollama
-- Tool will attempt to download models if they don't exist and fallback gracefully
+- By default, only `qwen2.5-coder:7b` and `gemma:7b` will be auto-installed if needed
+- Any other Ollama model can be used with `--model` if already installed on your system
+- The tool will automatically choose the best available model if your specified model is not available
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Model not found errors**
-   - Error message: `"model 'gemma3:1b' not found"`
-   - Solution: Check available models with `ollama list` or try another model with `--model`
-   - The tool will automatically attempt to use available models or fallback to built-in analysis
+   - Error message: `"model 'xxxx' not found"`
+   - Solution: Only qwen2.5-coder:7b and gemma:7b are auto-installed. For other models:
+     - Install them manually first: `ollama pull model_name`
+     - Or use one of the default models: `--model qwen2.5-coder:7b` or `--model gemma:7b`
+   - The tool will automatically fall back to an available default model if your specified model is not found
 
 2. **Metasploit connection issues**
    - Error message: `"Error running Metasploit"`
@@ -247,9 +253,9 @@ export OLLAMA_FALLBACK_MODEL=mistral:7b
 
 ### Recovery Procedures
 1. If AI models fail to load, the tool will automatically:
-   - Try fallback model
-   - Try backup models (llama3:8b, gemma:7b, phi:latest, tinyllama:latest)
-   - Use built-in fallback analysis if all models fail
+   - Try fallback model if specified
+   - Try one of the default models (qwen2.5-coder:7b or gemma:7b) if available
+   - Use built-in fallback analysis if no models are available
 
 2. If the GUI interface fails, use the `--no-gui` option:
    ```bash
