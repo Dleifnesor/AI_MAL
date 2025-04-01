@@ -72,7 +72,40 @@ get_linux_distro() {
 # Check for essential system dependencies
 echo -e "${YELLOW}[+] Checking essential system dependencies...${NC}"
 MISSING_DEPS=()
-ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev" "bc")
+ESSENTIAL_DEPS=(
+    "curl" 
+    "git" 
+    "python3" 
+    "python3-pip" 
+    "python3-venv" 
+    "gcc" 
+    "python3-dev" 
+    "libpq-dev" 
+    "libffi-dev" 
+    "bc"
+    "smbclient"
+    "libsmbclient-dev"
+    "build-essential"
+    "libssl-dev"
+    "libffi-dev"
+    "python3-dev"
+    "libxml2-dev"
+    "libxslt1-dev"
+    "zlib1g-dev"
+    "libncurses5-dev"
+    "libncursesw5-dev"
+    "libreadline-dev"
+    "libsqlite3-dev"
+    "libbz2-dev"
+    "libexpat1-dev"
+    "liblzma-dev"
+    "libgdbm-dev"
+    "libuuid1"
+    "uuid-dev"
+    "libgmp-dev"
+    "libmpfr-dev"
+    "libmpc-dev"
+)
 
 # Determine package manager based on system
 if command_exists apt-get; then
@@ -250,7 +283,6 @@ python3 -m pip install --upgrade \
     pymetasploit3 \
     psutil \
     netifaces \
-    smbclient \
     paramiko \
     scapy \
     h2 \
@@ -282,6 +314,23 @@ python3 -m pip install --upgrade \
     click \
     tabulate \
     || { echo -e "${RED}Failed to install Python dependencies${NC}"; exit 1; }
+
+# Install smbclient Python package after system dependencies
+echo -e "${YELLOW}[+] Installing smbclient Python package...${NC}"
+python3 -m pip install --upgrade smbclient || {
+    echo -e "${RED}Failed to install smbclient Python package${NC}"
+    echo -e "${YELLOW}Trying alternative installation method...${NC}"
+    # Try installing from source
+    git clone https://github.com/samba-team/samba.git
+    cd samba
+    ./configure
+    make
+    cd ..
+    python3 -m pip install ./samba/python/smbclient || {
+        echo -e "${RED}Failed to install smbclient from source${NC}"
+        echo -e "${YELLOW}Continuing without smbclient support...${NC}"
+    }
+}
 
 # Check if nmap is installed
 echo -e "${YELLOW}[+] Checking for system dependencies...${NC}"
