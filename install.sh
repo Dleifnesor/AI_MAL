@@ -93,7 +93,7 @@ msfdb init || {
 
 # Create virtual environment
 echo -e "${YELLOW}[+] Creating virtual environment...${NC}"
-python3 -m venv venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
+python3 -m venv --system-site-packages venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
 
 # Activate virtual environment
 echo -e "${YELLOW}[+] Activating virtual environment...${NC}"
@@ -112,7 +112,6 @@ python3 -m pip install --upgrade \
     netifaces \
     paramiko \
     scapy \
-    smbclient \
     rich \
     click \
     || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
