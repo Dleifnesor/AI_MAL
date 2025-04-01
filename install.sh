@@ -474,7 +474,7 @@ install_ollama() {
     
     # Pull required models
     echo "[+] Pulling required models..."
-    local models=("llama2" "mistral" "codellama" "gemma3:1b" "qwen2.5-coder:7b")
+    local models=("codellama" "gemma3:1b" "qwen2.5-coder:7b")
     for model in "${models[@]}"; do
         echo "[+] Pulling model: $model"
         if ! ollama pull "$model"; then
