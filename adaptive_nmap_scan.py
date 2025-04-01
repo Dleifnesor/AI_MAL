@@ -7,89 +7,30 @@
 import os
 import sys
 import time
-import json
-import socket
-import random
 import logging
 import argparse
-import ipaddress
-import datetime
 import subprocess
-import threading
+import datetime
 import traceback
-import re
-import signal
-import tempfile
-import stat
-import itertools
-from typing import List, Dict, Any, Optional, Tuple
 import xml.etree.ElementTree as ET
+from typing import List, Dict, Optional, Union
 
 # Third-party imports
-# Note: we're removing the python-nmap dependency and using direct subprocess calls
 import requests
 import netifaces
-import pymetasploit3
-from pymetasploit3.msfrpc import MsfRpcClient
-# Replace direct import with try-except
-try:
-    import smbclient
-    HAS_SMBCLIENT = True
-except ImportError:
-    # Define a placeholder and flag when smbclient is not available
-    HAS_SMBCLIENT = False
-    class DummySmbClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        class SambaClient:
-            def __init__(self, server=None, share=None, username=None, password=None, *args, **kwargs):
-                self.server = server
-                self.share = share
-                
-            def connect(self):
-                # Always fail with a meaningful error
-                raise Exception("SMB functionality disabled - smbclient module not available")
-                
-            def disconnect(self):
-                pass
-                
-    smbclient = DummySmbClient()
-import paramiko
-# Handle wmi import error
-try:
-    import wmi
-    HAS_WMI = True
-except ImportError:
-    HAS_WMI = False
-    class DummyWmi:
-        def __init__(self, *args, **kwargs):
-            pass
-            
-        def WMI(self, *args, **kwargs):
-            raise Exception("WMI functionality disabled - wmi module not available")
-    
-    wmi = DummyWmi()
-
-# Optional imports
-try:
-    import psutil
-    HAS_PSUTIL = True
-except ImportError:
-    HAS_PSUTIL = False
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.panel import Panel
+from rich.table import Table
+from rich.live import Live
+from rich.layout import Layout
 
 # Configure logging
-logger = logging.getLogger("adaptive_scanner")
-logger.setLevel(logging.INFO)
-
-# Add console handler if not already added
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(console_handler)
-
-# Set root logger level to INFO to ensure we see all messages
-logging.getLogger().setLevel(logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Animation and display-related classes
 class DummyAnimator:
@@ -1023,7 +964,7 @@ nmap = type('nmap', (), {'PortScanner': PortScanner})
 
 class AdaptiveNmapScanner:
     """Advanced Adaptive Nmap Scanner with Ollama and Metasploit Integration."""
-
+    
     def __init__(
         self,
         target=None,
@@ -1058,7 +999,6 @@ class AdaptiveNmapScanner:
         dos_threads=10,
         dos_duration=60,
         dos_payload=None,
-        # New parameters from use_cases.md
         ports="quick",
         services=False,
         version_detection=False,
@@ -1083,17 +1023,12 @@ class AdaptiveNmapScanner:
         model=None
     ):
         """Initialize the scanner with the given parameters."""
+        # Core parameters
         self.target = target
-        # Use model if provided, otherwise use ollama_model
-        self.ollama_model = model if model is not None else ollama_model
-        # Use iterations if provided, otherwise use max_iterations
-        self.max_iterations = iterations if iterations is not None else max_iterations
-        self.iterations = self.max_iterations  # Alias for parameter consistency
+        self.ollama_model = model or ollama_model
+        self.max_iterations = iterations or max_iterations
         self.continuous = continuous
         self.delay = delay
-        self.msf_integration = msf_integration
-        self.exploit = exploit
-        self.msf_workspace = msf_workspace
         self.stealth = stealth
         self.auto_script = auto_script
         self.quiet = quiet
@@ -1103,27 +1038,32 @@ class AdaptiveNmapScanner:
         self.scan_all = scan_all
         self.network = network
         self.host_timeout = host_timeout
+        
+        # Metasploit integration
+        self.msf_integration = msf_integration
+        self.exploit = exploit
+        self.msf_workspace = msf_workspace
+        self.msf_options = msf_options
+        self.msf_payload = msf_payload
+        self.msf_module = msf_module
+        self.post_exploitation = post_exploitation
+        
+        # Script generation and execution
         self.custom_scripts = custom_scripts
         self.script_type = script_type
         self.execute_scripts = execute_scripts
+        self.generate_script = generate_script
+        self.generate_script_name = generate_script_name
+        self.script_generation_type = script_generation_type
+        
+        # DoS attack parameters
         self.dos_attack = dos_attack
-        self.show_live_ai = show_live_ai
-        
-        # New red team parameters
-        self.red_team = red_team
-        self.persistence = persistence
-        self.exfil = exfil
-        self.exfil_method = exfil_method
-        self.exfil_data = exfil_data
-        self.exfil_server = exfil_server
-        
-        # Enhanced DoS parameters
         self.dos_method = dos_method
         self.dos_threads = dos_threads
         self.dos_duration = dos_duration
         self.dos_payload = dos_payload
         
-        # New parameters
+        # Advanced scanning options
         self.ports = ports
         self.services = services
         self.version_detection = version_detection
@@ -1132,18 +1072,21 @@ class AdaptiveNmapScanner:
         self.model_timeout = model_timeout
         self.max_threads = max_threads
         self.memory_limit = memory_limit
-        self.msf_options = msf_options
-        self.msf_payload = msf_payload
-        self.msf_module = msf_module
-        self.post_exploitation = post_exploitation
+        
+        # Output and logging
         self.log_file = log_file
         self.verbose = verbose
         self.custom_vuln_file = custom_vuln_file
         self.output_file = output_file
         self.output_format = output_format
-        self.generate_script = generate_script
-        self.generate_script_name = generate_script_name
-        self.script_generation_type = script_generation_type
+        
+        # Red team features
+        self.red_team = red_team
+        self.persistence = persistence
+        self.exfil = exfil
+        self.exfil_method = exfil_method
+        self.exfil_data = exfil_data
+        self.exfil_server = exfil_server
         
         # If red team mode is enabled, enable all related features
         if self.red_team:
@@ -1178,7 +1121,7 @@ class AdaptiveNmapScanner:
         
         # If model isn't one of our default models, check if it exists and download if needed
         self._ensure_model_available()
-        
+    
     def _ensure_model_available(self):
         """Ensure the specified Ollama model is available, downloading it if needed."""
         try:

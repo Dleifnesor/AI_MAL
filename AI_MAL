@@ -11,58 +11,15 @@ VERSION="1.0.0"
 
 # Find the right Python script and virtual environment
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-INSTALL_DIRS=("/opt/ai_mal" "/usr/local/ai_mal" "/usr/share/ai_mal" "/usr/local/bin" "$HOME/.local/bin")
+PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
+VENV_DIR="${SCRIPT_DIR}/venv"
 
-# First check if we're running from the source directory
-if [ -f "${SCRIPT_DIR}/adaptive_nmap_scan.py" ]; then
-    PYTHON_SCRIPT="${SCRIPT_DIR}/adaptive_nmap_scan.py"
-    # Check for venv in multiple locations relative to script dir
-    if [ -d "${SCRIPT_DIR}/venv" ]; then
-        VENV_DIR="${SCRIPT_DIR}/venv"
-    elif [ -d "${SCRIPT_DIR}/../venv" ]; then
-        VENV_DIR="${SCRIPT_DIR}/../venv"
-    fi
-else
-    # Check all possible installation directories
-    PYTHON_SCRIPT=""
-    for dir in "${INSTALL_DIRS[@]}"; do
-        if [ -f "${dir}/adaptive_nmap_scan.py" ]; then
-            PYTHON_SCRIPT="${dir}/adaptive_nmap_scan.py"
-            # Try to find venv in or near this directory
-            if [ -d "${dir}/venv" ]; then
-                VENV_DIR="${dir}/venv"
-            elif [ -d "${dir}/../venv" ]; then
-                VENV_DIR="${dir}/../venv"
-            fi
-            break
-        fi
-    done
-    
-    # If still not found, check if we're a symlink and look at the target
-    if [ -z "$PYTHON_SCRIPT" ] && [ -L "$0" ]; then
-        SYMLINK_TARGET=$(readlink -f "$0")
-        SYMLINK_DIR=$(dirname "$SYMLINK_TARGET")
-        if [ -f "${SYMLINK_DIR}/adaptive_nmap_scan.py" ]; then
-            PYTHON_SCRIPT="${SYMLINK_DIR}/adaptive_nmap_scan.py"
-            if [ -d "${SYMLINK_DIR}/venv" ]; then
-                VENV_DIR="${SYMLINK_DIR}/venv"
-            elif [ -d "${SYMLINK_DIR}/../venv" ]; then
-                VENV_DIR="${SYMLINK_DIR}/../venv"
-            fi
-        fi
-    fi
-fi
-
-# If Python script still not found, exit with error
-if [ -z "$PYTHON_SCRIPT" ]; then
+# Check if Python script exists
+if [ ! -f "${PYTHON_SCRIPT}" ]; then
     echo -e "${RED}ERROR: Cannot find the adaptive_nmap_scan.py script${NC}"
     echo -e "Make sure AI_MAL is properly installed."
     exit 1
 fi
-
-# Get the installation directory from where we found the script
-INSTALL_DIR=$(dirname "$PYTHON_SCRIPT")
-echo -e "${BLUE}Found AI_MAL installation at: ${INSTALL_DIR}${NC}"
 
 # Function to check and start dependencies
 start_dependencies() {
@@ -86,7 +43,6 @@ start_dependencies() {
         echo -e "${YELLOW}Initializing Metasploit database...${NC}"
         msfdb init || {
             echo -e "${YELLOW}Using alternative Metasploit DB setup...${NC}"
-            # Create msf user and database if needed
             sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null || true
             sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
             sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
@@ -106,8 +62,6 @@ start_dependencies() {
         done
     fi
     
-    echo -e "${YELLOW}[+] Waiting for services to be ready...${NC}"
-    sleep 3
     echo -e "${GREEN}[+] All services are ready${NC}"
 }
 
@@ -117,336 +71,24 @@ start_dependencies
 # Function to check if model is installed and download if needed
 check_model() {
     local model="$1"
+    echo -e "${YELLOW}[+] Checking if model $model is available...${NC}"
     
-    # Check if model is already installed in Ollama
-    if ! curl -s "http://localhost:11434/api/tags" | grep -q "\"name\":\"$model\""; then
-        echo -e "${YELLOW}[*] Model $model not found in Ollama.${NC}"
-        echo -e "${YELLOW}[*] Downloading model $model...${NC}"
-        
-        # Pull the model
+    if ! ollama list | grep -q "$model"; then
+        echo -e "${YELLOW}[+] Pulling model $model...${NC}"
         ollama pull "$model" || {
-            echo -e "${RED}[!] Failed to download model $model.${NC}"
-            echo -e "${RED}[!] Using default model qwen2.5-coder:7b instead.${NC}"
-            MODEL="qwen2.5-coder:7b"
-            # Update model in arguments
-            for i in "${!PYTHON_ARGS[@]}"; do
-                if [[ "${PYTHON_ARGS[$i]}" == "--model" ]]; then
-                    PYTHON_ARGS[$((i+1))]="qwen2.5-coder:7b"
-                    break
-                fi
-            done
-            
-            # Make sure default model is installed
-            if ! curl -s "http://localhost:11434/api/tags" | grep -q "\"name\":\"qwen2.5-coder:7b\""; then
-                echo -e "${YELLOW}[*] Downloading default model qwen2.5-coder:7b...${NC}"
-                ollama pull "qwen2.5-coder:7b" || {
-                    echo -e "${RED}[!] Failed to download default model. Please check your Ollama installation.${NC}"
-                    exit 1
-                }
-            fi
+            echo -e "${RED}Failed to pull model $model${NC}"
+            exit 1
         }
-    else
-        echo -e "${GREEN}[*] Model $model is already installed.${NC}"
     fi
 }
 
-# Determine the Python executable to use
-PYTHON_EXECUTABLE=""
-
-# If we found a venv, prioritize it
-if [ -n "$VENV_DIR" ] && [ -f "${VENV_DIR}/bin/python3" ]; then
-    PYTHON_EXECUTABLE="${VENV_DIR}/bin/python3"
-    echo -e "${GREEN}Using Python from virtual environment: ${PYTHON_EXECUTABLE}${NC}"
-else
-    # If no venv found, check if system Python has required modules
-    echo -e "${YELLOW}No virtual environment found or venv Python missing, checking system Python...${NC}"
-    MISSING_MODULES=0
-    # Check a few core modules installed by pip
-    for module in "requests" "pymetasploit3" "paramiko" "rich"; do
-        if ! python3 -c "import $module" 2>/dev/null; then
-            echo -e "${YELLOW}System Python missing module: $module${NC}"
-            MISSING_MODULES=$((MISSING_MODULES+1))
-        fi
-    done
-    
-    # Also check for samba, which should come from system site packages if venv uses them
-    if ! python3 -c "import samba" 2>/dev/null; then
-         echo -e "${YELLOW}System Python missing module: samba${NC}"
-         MISSING_MODULES=$((MISSING_MODULES+1))
-    fi
-    
-    if [ $MISSING_MODULES -eq 0 ]; then
-        echo -e "${GREEN}All required core modules found. Using system python3.${NC}"
-        PYTHON_EXECUTABLE="python3"
-    else
-        echo -e "${RED}Error: System Python is missing required modules and no valid virtual environment was found.${NC}"
-        echo -e "Please re-run the installation script: ${GREEN}sudo ./install.sh${NC}"
-        exit 1
-        # Fallback venv creation removed as install.sh should handle this reliably
-    fi
-fi
-
-# Final check for Python executable
-if [ -z "$PYTHON_EXECUTABLE" ]; then
-    echo -e "${RED}Error: Could not determine a suitable Python executable.${NC}"
-    exit 1
-fi
-
-# Check if running as root (required for many scans)
-if [ "$EUID" -ne 0 ]; then
-    echo ""
-    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║                     ${YELLOW}ROOT REQUIRED${RED}                         ║${NC}"
-    echo -e "${RED}╠════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${RED}║${NC} ${YELLOW}Most features of AI_MAL require root privileges.${NC}           ${RED}║${NC}"
-    echo -e "${RED}║${NC} For full functionality, please run with:                   ${RED}║${NC}"
-    echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
-    echo -e "${RED}║${NC}    ${GREEN}sudo AI_MAL [options] [target]${NC}                         ${RED}║${NC}"
-    echo -e "${RED}║${NC}                                                            ${RED}║${NC}"
-    echo -e "${RED}║${NC} Running without root will cause errors with:               ${RED}║${NC}"
-    echo -e "${RED}║${NC}  - Network scanning                                        ${RED}║${NC}"
-    echo -e "${RED}║${NC}  - Host discovery                                          ${RED}║${NC}"
-    echo -e "${RED}║${NC}  - Script execution                                        ${RED}║${NC}"
-    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-fi
-
-# Handle --version flag
-display_version=false
-
-for arg in "$@"; do
-    if [ "$arg" = "--version" ]; then
-        display_version=true
-        break
-    fi
-done
-
-# Help function
-display_help() {
-    echo -e "${GREEN}AI_MAL - Adaptive Nmap Scanner with Ollama and Metasploit Integration${NC}"
-    echo "Version: ${VERSION}"
-    echo ""
-    echo "Usage: AI_MAL [options] [target]"
-    echo ""
-    echo -e "${YELLOW}Target Selection:${NC}"
-    echo "  target                    Target IP address or hostname"
-    echo "  --auto-discover           Automatically discover network and hosts"
-    echo "  --interface INTERFACE     Network interface to use for discovery"
-    echo "  --scan-all                Scan all discovered hosts"
-    echo "  --network NETWORK         Specific network to scan (CIDR notation)"
-    echo "  --host-timeout SECONDS    Timeout for host discovery (default: 1)"
-    echo ""
-    echo -e "${YELLOW}Scan Options:${NC}"
-    echo "  -m, --model MODEL         Ollama model to use (default: qwen2.5-coder:7b)"
-    echo "  -i, --iterations NUM      Maximum number of scan iterations (default: 3)"
-    echo "  -c, --continuous          Run in continuous mode until manually stopped"
-    echo "  -d, --delay SECONDS       Delay between scans (default: 2)"
-    echo "  --stealth                 Enable stealth mode to avoid detection"
-    echo "  --ports [all|quick|RANGE] Specify ports to scan (default: quick)"
-    echo "  --services                Enable detailed service detection"
-    echo "  --version                 Enable version detection"
-    echo "  --os                      Enable OS detection"
-    echo "  --vuln                    Enable vulnerability scanning"
-    echo "  --timeout SECONDS         Set timeout for model responses (default: 30)"
-    echo "  --max-threads N           Limit concurrent scan operations (default: 4)"
-    echo "  --memory-limit SIZE       Set memory limit for operations"
-    echo ""
-    echo -e "${YELLOW}Metasploit Options:${NC}"
-    echo "  --msf                     Enable Metasploit integration"
-    echo "  --exploit                 Automatically attempt exploitation"
-    echo "  --workspace NAME          Metasploit workspace (default: adaptive_scan)"
-    echo "  --auto-script             Auto-generate Metasploit resource scripts"
-    echo "  --options STRING          Custom Metasploit options (format: 'OPT1=val1 OPT2=val2')"
-    echo "  --payload PAYLOAD         Specify Metasploit payload"
-    echo "  --module MODULE           Specify Metasploit module"
-    echo "  --post                    Enable post-exploitation"
-    echo ""
-    echo -e "${YELLOW}DoS Attack Options:${NC}"
-    echo "  --dos                     Enable DoS attack mode"
-    echo "  --dos-method METHOD       DoS attack method to use:"
-    echo "                            Resource Exhaustion:"
-    echo "                              - cpu (CPU exhaustion)"
-    echo "                              - memory (Memory exhaustion)"
-    echo "                              - disk (Disk space exhaustion)"
-    echo "                            Protocol-Specific:"
-    echo "                              - http2 (HTTP/2 multiple streams)"
-    echo "                              - dns (DNS amplification)"
-    echo "                              - tcp (TCP connection exhaustion)"
-    echo "                              - slowpost (Slow POST attack)"
-    echo "                            Application-Specific:"
-    echo "                              - dbpool (Database connection pool exhaustion)"
-    echo "                              - cache (Cache poisoning)"
-    echo "                            Network Infrastructure:"
-    echo "                              - bgp (BGP route poisoning)"
-    echo "                              - arp (ARP cache poisoning)"
-    echo "                              - vlan (VLAN hopping)"
-    echo "                            Traditional:"
-    echo "                              - udp (UDP flood)"
-    echo "                              - icmp (ICMP flood)"
-    echo "                              - slowloris (Slowloris attack)"
-    echo "                              - syn (SYN flood)"
-    echo "                              - http (HTTP flood)"
-    echo "  --dos-threads NUM         Number of attack threads (default: 10)"
-    echo "  --dos-duration SECONDS    Attack duration in seconds (default: 60)"
-    echo "  --dos-payload PAYLOAD     Custom payload for DoS attack"
-    echo ""
-    echo -e "${YELLOW}Red Team Options:${NC}"
-    echo "  --red-team                Enable red team mode"
-    echo "  --persistence             Establish persistence on target"
-    echo "  --exfil                   Enable data exfiltration"
-    echo "  --exfil-method METHOD     Data exfiltration method (dns, icmp, smb)"
-    echo "  --exfil-data TYPE         Type of data to exfiltrate (passwords, configs, all)"
-    echo "  --exfil-server SERVER     Exfiltration server address"
-    echo ""
-    echo -e "${YELLOW}Script Generation Options:${NC}"
-    echo "  --custom-scripts          Generate custom scripts based on scan results"
-    echo "  --script-type TYPE        Type of scripts to generate (bash, python, ruby)"
-    echo "  --execute-scripts         Execute generated scripts (WARNING: use with caution!)"
-    echo "  --generate-script NAME    Generate script with specified name"
-    echo "  --type TYPE               Type for generated script (service, exploit, post)"
-    echo ""
-    echo -e "${YELLOW}AI Display Options:${NC}"
-    echo "  --show-live-ai            Show the AI's thought process in real-time"
-    echo ""
-    echo -e "${YELLOW}General Options:${NC}"
-    echo "  --full-auto               Full autonomous mode (enables multiple features)"
-    echo "  --quiet                   Reduce output verbosity"
-    echo "  --debug                   Enable debug logging"
-    echo "  --log FILE                Save logs to specified file"
-    echo "  --verbose                 Enable verbose output"
-    echo "  --custom FILE             Specify custom vulnerability checks file"
-    echo "  -h, --help                Display this help message and exit"
-    echo "  --version                 Display version information and exit"
-    echo ""
-    echo -e "${YELLOW}Model Options:${NC}"
-    echo "  --model qwen2.5-coder:7b  Use the default qwen2.5-coder model (requires >8GB RAM)"
-    echo "  --model gemma3:1b         Use the smaller gemma3:1b model (for systems with <4GB RAM)"
-    echo "  --model MODEL             Use any custom Ollama model (will be downloaded if not available)"
-    echo ""
-    echo -e "${YELLOW}Examples:${NC}"
-    echo "  AI_MAL --auto-discover --stealth"
-    echo "  AI_MAL 192.168.1.1 --msf --exploit"
-    echo "  AI_MAL --full-auto --scan-all"
-    echo "  AI_MAL --auto-discover --model qwen2.5-coder:7b --msf"
-    echo "  AI_MAL 192.168.1.1 --dos --stealth"
-    echo "  AI_MAL --auto-discover --model gemma3:1b --stealth  # For systems with limited RAM"
-    echo "  AI_MAL 192.168.1.1 --custom-scripts --model phi3:14b  # Use a different model (will download if needed)"
-    echo ""
-    echo -e "${RED}SECURITY WARNING:${NC}"
-    echo "  This tool is designed for legitimate security testing and educational purposes only."
-    echo "  Unauthorized scanning/exploitation is illegal. Use responsibly and ethically."
-    echo ""
-    echo -e "${RED}WARNING:${NC}"
-    echo "  Execute generated scripts at your own risk. Always review scripts before execution."
-    echo ""
-    echo -e "${RED}DoS WARNING:${NC}"
-    echo "  The --dos option attempts to deny service to target systems."
-    echo "  This can cause real damage and should ONLY be used in controlled test environments"
-    echo "  with explicit permission. Using against unauthorized targets is illegal."
-    echo ""
-}
-
-# Check if help is requested
-for arg in "$@"; do
-    if [ "$arg" = "-h" ] || [ "$arg" = "--help" ]; then
-        display_help
-        exit 0
-    fi
-done
-
-# Display version if requested
-if [ "$display_version" = true ]; then
-    echo "AI_MAL Adaptive Nmap Scanner version ${VERSION}"
-    echo "Copyright (c) 2024"
-    exit 0
-fi
-
-# Check if Python is installed
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Error: Python 3 is required but not installed.${NC}"
-    exit 1
-fi
-
-# Check if the Python script exists
-if [ ! -f "${PYTHON_SCRIPT}" ]; then
-    echo -e "${RED}ERROR: Cannot find the Python script at ${PYTHON_SCRIPT}${NC}"
-    echo "Make sure you're running this script from the correct directory."
-    exit 1
-fi
-
-# Check if nmap is installed
-if ! command -v nmap &> /dev/null; then
-    echo -e "${RED}Error: Nmap is required but not installed.${NC}"
-    echo "Please install nmap manually for your distribution and try again."
-    exit 1
-fi
-
-# Check Nmap version and capabilities
-NMAP_VERSION=$(nmap --version | head -n 1)
-echo -e "${GREEN}Using Nmap: ${NMAP_VERSION}${NC}"
-
-# Check if Nmap has required capabilities
-if ! nmap --version | grep -q "Compiled with: libpcap"; then
-    echo -e "${YELLOW}Warning: Nmap may not have full network scanning capabilities${NC}"
-    echo "Some features may be limited. Consider installing the full Nmap package."
-fi
-
-# Check if MSF options are requested
-if [[ "$*" == *"--msf"* ]]; then
-    MSF_REQUESTED=1
-fi
-
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" > /dev/null 2>&1
-}
-
-# Activate virtual environment if it exists
-if [ -n "$VENV_DIR" ]; then
-    echo "Using virtual environment: ${VENV_DIR}"
-    source "${VENV_DIR}/bin/activate"
-fi
-
-# Execute the Python script with all passed arguments
-if [ -n "$VENV_DIR" ]; then
-    echo -e "${BLUE}Using virtual environment: ${VENV_DIR}${NC}"
-fi
-
-# Process arguments to handle bash-specific options
+# Process command line arguments
 PYTHON_ARGS=()
 TARGET=""
 MODEL="qwen2.5-coder:7b"
-AUTO_DISCOVER=false
-FULL_AUTO=false
-DEBUG=false
-VERBOSE=false
-SHOW_LIVE_AI=false
-MSF_ENABLED=false
-EXPLOIT_ENABLED=false
-RED_TEAM=false
-DOS_ENABLED=false
-QUIET=false
-SCRIPT_GEN=false
-SAVE_LOG=""
-PORT_SCAN=""
-SERVICES=false
-OS_DETECTION=false
-DOS_METHOD=""
-DOS_THREADS=""
-DOS_DURATION=""
-DOS_PAYLOAD=""
-PERSISTENCE=false
-EXFIL=false
-EXFIL_METHOD=""
-EXFIL_DATA=""
-EXFIL_SERVER=""
 
-# Process command line arguments
-i=0
-while [ $i -lt $# ]; do
-    i=$((i+1))
-    arg="${!i}"
-    
+# Process arguments
+for arg in "$@"; do
     case "$arg" in
         # Handle target (IP or hostname) - non-flag arguments
         [^-]*)
@@ -454,339 +96,35 @@ while [ $i -lt $# ]; do
             PYTHON_ARGS+=("$arg")
             ;;
             
-        # Model selection arguments
+        # Model selection
         "-m"|"--model")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                MODEL="${!i}"
-                PYTHON_ARGS+=("--model" "${!i}")
-            fi
+            shift
+            MODEL="$1"
+            PYTHON_ARGS+=("--model" "$1")
             ;;
             
-        # Options that need special handling in bash
-        "--auto-discover")
-            AUTO_DISCOVER=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--full-auto")
-            FULL_AUTO=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--debug")
-            DEBUG=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--verbose")
-            VERBOSE=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--show-live-ai")
-            SHOW_LIVE_AI=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--msf")
-            MSF_ENABLED=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--exploit")
-            EXPLOIT_ENABLED=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--red-team")
-            RED_TEAM=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--dos")
-            DOS_ENABLED=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--quiet")
-            QUIET=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--custom-scripts")
-            SCRIPT_GEN=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--log")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                SAVE_LOG="${!i}"
-                PYTHON_ARGS+=("--log" "${!i}")
-            fi
-            ;;
-            
-        # Port scanning options
-        "--ports")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                PORT_SCAN="${!i}"
-                PYTHON_ARGS+=("--ports" "${!i}")
-                echo -e "${GREEN}[*] Port scan mode: $PORT_SCAN${NC}"
-            fi
-            ;;
-            
-        # Service, OS and version detection
-        "--services")
-            SERVICES=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--os")
-            OS_DETECTION=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        # DoS attack options
-        "--dos-method")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                DOS_METHOD="${!i}"
-                PYTHON_ARGS+=("--dos-method" "${!i}")
-                echo -e "${YELLOW}[*] DoS attack method: $DOS_METHOD${NC}"
-            fi
-            ;;
-            
-        "--dos-threads")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                DOS_THREADS="${!i}"
-                PYTHON_ARGS+=("--dos-threads" "${!i}")
-            fi
-            ;;
-            
-        "--dos-duration")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                DOS_DURATION="${!i}"
-                PYTHON_ARGS+=("--dos-duration" "${!i}")
-            fi
-            ;;
-            
-        "--dos-payload")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                DOS_PAYLOAD="${!i}"
-                PYTHON_ARGS+=("--dos-payload" "${!i}")
-            fi
-            ;;
-            
-        # Red Team options
-        "--persistence")
-            PERSISTENCE=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--exfil")
-            EXFIL=true
-            PYTHON_ARGS+=("$arg")
-            ;;
-            
-        "--exfil-method")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                EXFIL_METHOD="${!i}"
-                PYTHON_ARGS+=("--exfil-method" "${!i}")
-            fi
-            ;;
-            
-        "--exfil-data")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                EXFIL_DATA="${!i}"
-                PYTHON_ARGS+=("--exfil-data" "${!i}")
-            fi
-            ;;
-            
-        "--exfil-server")
-            i=$((i+1))
-            if [ $i -le $# ]; then
-                EXFIL_SERVER="${!i}"
-                PYTHON_ARGS+=("--exfil-server" "${!i}")
-            fi
-            ;;
-            
-        # All other arguments - pass directly to Python
+        # Pass through all other arguments
         *)
             PYTHON_ARGS+=("$arg")
             ;;
     esac
 done
 
-# Display info based on processed arguments
-if [ "$DEBUG" = true ] || [ "$VERBOSE" = true ]; then
-    echo -e "${BLUE}Arguments parsed:${NC}"
-    echo -e "  Target: ${TARGET:-None specified}"
-    echo -e "  Model: $MODEL"
-    [ "$AUTO_DISCOVER" = true ] && echo -e "  Auto Discovery: Enabled"
-    [ "$FULL_AUTO" = true ] && echo -e "  Full Auto Mode: Enabled"
-    [ "$MSF_ENABLED" = true ] && echo -e "  Metasploit Integration: Enabled"
-    [ "$EXPLOIT_ENABLED" = true ] && echo -e "  Exploitation: Enabled"
-    [ "$RED_TEAM" = true ] && echo -e "  Red Team Mode: Enabled"
-    [ "$DOS_ENABLED" = true ] && echo -e "  DoS Attacks: Enabled"
-    [ "$SCRIPT_GEN" = true ] && echo -e "  Custom Script Generation: Enabled"
-    [ -n "$SAVE_LOG" ] && echo -e "  Log File: $SAVE_LOG"
-    [ -n "$PORT_SCAN" ] && echo -e "  Port Scan Mode: $PORT_SCAN"
-    [ "$SERVICES" = true ] && echo -e "  Service Detection: Enabled"
-    [ "$OS_DETECTION" = true ] && echo -e "  OS Detection: Enabled"
-    [ -n "$DOS_METHOD" ] && echo -e "  DoS Attack Method: $DOS_METHOD"
-    [ -n "$DOS_THREADS" ] && echo -e "  DoS Attack Threads: $DOS_THREADS"
-    [ -n "$DOS_DURATION" ] && echo -e "  DoS Attack Duration: $DOS_DURATION"
-    [ -n "$DOS_PAYLOAD" ] && echo -e "  DoS Attack Payload: $DOS_PAYLOAD"
-    [ "$PERSISTENCE" = true ] && echo -e "  Persistence: Enabled"
-    [ "$EXFIL" = true ] && echo -e "  Data Exfiltration: Enabled"
-    [ -n "$EXFIL_METHOD" ] && echo -e "  Data Exfiltration Method: $EXFIL_METHOD"
-    [ -n "$EXFIL_DATA" ] && echo -e "  Data Exfiltration Type: $EXFIL_DATA"
-    [ -n "$EXFIL_SERVER" ] && echo -e "  Data Exfiltration Server: $EXFIL_SERVER"
+# Check if model is installed
+check_model "$MODEL"
+
+# Activate virtual environment if it exists
+if [ -n "$VENV_DIR" ] && [ -d "$VENV_DIR" ]; then
+    source "${VENV_DIR}/bin/activate"
 fi
 
-# Handle special cases based on options
-if [ "$FULL_AUTO" = true ] && [ -z "$TARGET" ] && [ "$AUTO_DISCOVER" != true ]; then
-    echo -e "${YELLOW}[*] Full auto mode enabled without target or auto-discovery.${NC}"
-    echo -e "${YELLOW}[*] Adding --auto-discover flag automatically.${NC}"
-    PYTHON_ARGS+=("--auto-discover")
-    AUTO_DISCOVER=true
-fi
-
-# If Red Team mode is enabled, ensure MSF is enabled
-if [ "$RED_TEAM" = true ] && [ "$MSF_ENABLED" != true ]; then
-    echo -e "${YELLOW}[*] Red Team mode requires Metasploit.${NC}"
-    echo -e "${YELLOW}[*] Adding --msf flag automatically.${NC}"
-    PYTHON_ARGS+=("--msf")
-    MSF_ENABLED=true
-fi
-
-# If exploitation is enabled, ensure MSF is enabled
-if [ "$EXPLOIT_ENABLED" = true ] && [ "$MSF_ENABLED" != true ]; then
-    echo -e "${YELLOW}[*] Exploitation requires Metasploit.${NC}"
-    echo -e "${YELLOW}[*] Adding --msf flag automatically.${NC}"
-    PYTHON_ARGS+=("--msf")
-    MSF_ENABLED=true
-fi
-
-# If persistence is enabled, ensure Red Team and MSF are enabled
-if [ "$PERSISTENCE" = true ]; then
-    if [ "$MSF_ENABLED" != true ]; then
-        echo -e "${YELLOW}[*] Persistence requires Metasploit.${NC}"
-        echo -e "${YELLOW}[*] Adding --msf flag automatically.${NC}"
-        PYTHON_ARGS+=("--msf")
-        MSF_ENABLED=true
-    fi
-    if [ "$RED_TEAM" != true ]; then
-        echo -e "${YELLOW}[*] Persistence requires Red Team mode.${NC}"
-        echo -e "${YELLOW}[*] Adding --red-team flag automatically.${NC}"
-        PYTHON_ARGS+=("--red-team")
-        RED_TEAM=true
-    fi
-fi
-
-# If exfiltration is enabled, check dependencies
-if [ "$EXFIL" = true ]; then
-    if [ "$RED_TEAM" != true ]; then
-        echo -e "${YELLOW}[*] Data exfiltration requires Red Team mode.${NC}"
-        echo -e "${YELLOW}[*] Adding --red-team flag automatically.${NC}"
-        PYTHON_ARGS+=("--red-team")
-        RED_TEAM=true
-    fi
-    
-    # If exfil enabled but no method specified, use a default
-    if [ -z "$EXFIL_METHOD" ]; then
-        echo -e "${YELLOW}[*] No exfiltration method specified, using default (dns).${NC}"
-        PYTHON_ARGS+=("--exfil-method" "dns")
-        EXFIL_METHOD="dns"
-    fi
-    
-    # If exfil enabled but no data type specified, use a default
-    if [ -z "$EXFIL_DATA" ]; then
-        echo -e "${YELLOW}[*] No exfiltration data type specified, using default (passwords).${NC}"
-        PYTHON_ARGS+=("--exfil-data" "passwords")
-        EXFIL_DATA="passwords"
-    fi
-fi
-
-# If DoS is enabled, check for required parameters
-if [ "$DOS_ENABLED" = true ]; then
-    # If no DoS method specified, use a default
-    if [ -z "$DOS_METHOD" ]; then
-        echo -e "${YELLOW}[*] No DoS method specified, using default (syn).${NC}"
-        PYTHON_ARGS+=("--dos-method" "syn")
-        DOS_METHOD="syn"
-    fi
-    
-    # If no target specified and no auto-discover, warn user
-    if [ -z "$TARGET" ] && [ "$AUTO_DISCOVER" != true ]; then
-        echo -e "${RED}[!] Warning: DoS attack enabled but no target specified.${NC}"
-        echo -e "${RED}[!] You must specify a target or use --auto-discover.${NC}"
-        exit 1
-    fi
-fi
-
-# Validate port scan options if specified
-if [ -n "$PORT_SCAN" ]; then
-    case "$PORT_SCAN" in
-        "all"|"quick")
-            # Valid options, no action needed
-            ;;
-        *)
-            # Check if it's a valid port range format (basic check)
-            if ! echo "$PORT_SCAN" | grep -qE '^[0-9,-]+$'; then
-                echo -e "${RED}[!] Warning: Invalid port specification: $PORT_SCAN${NC}"
-                echo -e "${RED}[!] Use 'all', 'quick', or a comma-separated list of ports/ranges (e.g., '80,443,8080-8090')${NC}"
-                exit 1
-            fi
-            ;;
-    esac
-fi
-
-# Handle special model needs
-if [ "$MODEL" = "gemma3:1b" ]; then
-    echo -e "${GREEN}[*] Using lightweight model (gemma3:1b)${NC}"
-    check_model "gemma3:1b"
-elif [ "$MODEL" = "qwen2.5-coder:7b" ]; then
-    echo -e "${GREEN}[*] Using default model (qwen2.5-coder:7b)${NC}"
-    check_model "qwen2.5-coder:7b"
-else
-    echo -e "${YELLOW}[*] Using custom model: $MODEL${NC}"
-    check_model "$MODEL"
-fi
-
-# Setup logging if requested
-if [ -n "$SAVE_LOG" ]; then
-    echo -e "${GREEN}[*] Logging to: $SAVE_LOG${NC}"
-    # We're already passing this to Python, so no need for additional handling
-fi
-
-# Check if Python is installed
-if ! command -v python3 &> /dev/null; then
-    echo -e "${RED}Error: Python 3 is required but not installed.${NC}"
-    exit 1
-fi
-
-# Check if the Python script exists
-if [ ! -f "${PYTHON_SCRIPT}" ]; then
-    echo -e "${RED}ERROR: Cannot find the Python script at ${PYTHON_SCRIPT}${NC}"
-    echo "Make sure you're running this script from the correct directory."
-    exit 1
-fi
-
-# Execute the Python script with all processed arguments
-echo -e "${BLUE}Executing: ${PYTHON_EXECUTABLE} ${PYTHON_SCRIPT} ${PYTHON_ARGS[@]}${NC}"
+# Execute the Python script with all arguments
 "$PYTHON_EXECUTABLE" "$PYTHON_SCRIPT" "${PYTHON_ARGS[@]}"
-
-exit $?
+EXIT_CODE=$?
 
 # Deactivate virtual environment if it was activated
-if [ -n "$VENV_DIR" ]; then
+if [ -n "$VENV_DIR" ] && [ -d "$VENV_DIR" ]; then
     deactivate
-fi 
+fi
+
+exit $EXIT_CODE 

@@ -103,17 +103,13 @@ pip install --no-cache-dir \
     requests==2.31.0 \
     netifaces==0.11.0 \
     pymetasploit3==1.0.3 \
-    smbclient==0.18.0 \
     paramiko==3.4.0 \
-    wmi==1.5.1 \
     cryptography==42.0.2 \
     python-dateutil==2.8.2 \
     ipaddress==1.0.23 \
     ollama==0.1.6 \
     rich==13.7.0 \
-    click==8.1.7 \
-    ntlm-auth==1.5.0 \
-    pywinrm==0.4.3
+    click==8.1.7
 
 # Install Ollama
 echo -e "${YELLOW}[+] Installing Ollama...${NC}"
