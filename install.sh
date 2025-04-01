@@ -56,11 +56,6 @@ apt-get install -y \
     postgresql \
     postgresql-contrib \
     libpcap-dev \
-    libsmbclient0 \
-    libsmbclient-dev \
-    samba \
-    samba-dev \
-    python3-samba \
     ca-certificates \
     dos2unix \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
@@ -99,7 +94,7 @@ rm -rf venv
 
 # Create virtual environment
 echo -e "${YELLOW}[+] Creating virtual environment...${NC}"
-python3 -m venv --system-site-packages venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
+python3 -m venv venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
 
 # Activate virtual environment
 echo -e "${YELLOW}[+] Activating virtual environment...${NC}"
@@ -121,6 +116,9 @@ python3 -m pip install --upgrade --ignore-installed \
     rich \
     click \
     || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
+
+# Note about Samba functionality
+echo -e "${YELLOW}[*] Note: SMB scanning functionality has been disabled to reduce dependencies${NC}"
 
 # Install optional dependencies
 echo -e "${YELLOW}[+] Installing optional dependencies...${NC}"
@@ -155,9 +153,11 @@ for i in {1..30}; do
 done
 
 # Pull required models
-echo -e "${YELLOW}[+] Pulling required models...${NC}"
+echo -e "${YELLOW}[+] Pulling codellama...${NC}"
 ollama pull codellama || echo -e "${RED}Failed to pull codellama model${NC}"
+echo -e "${YELLOW}[+] Pulling gemma3:1b...${NC}"
 ollama pull gemma3:1b || echo -e "${RED}Failed to pull gemma3:1b model${NC}"
+echo -e "${YELLOW}[+] Pulling qwen2.5-coder:7b...${NC}"
 ollama pull qwen2.5-coder:7b || echo -e "${RED}Failed to pull qwen2.5-coder:7b model${NC}"
 
 # Fix line endings in the wrapper script

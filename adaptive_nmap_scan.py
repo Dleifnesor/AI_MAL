@@ -31,7 +31,30 @@ import requests
 import netifaces
 import pymetasploit3
 from pymetasploit3.msfrpc import MsfRpcClient
-import smbclient
+# Replace direct import with try-except
+try:
+    import smbclient
+    HAS_SMBCLIENT = True
+except ImportError:
+    # Define a placeholder and flag when smbclient is not available
+    HAS_SMBCLIENT = False
+    class DummySmbClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        class SambaClient:
+            def __init__(self, server=None, share=None, username=None, password=None, *args, **kwargs):
+                self.server = server
+                self.share = share
+                
+            def connect(self):
+                # Always fail with a meaningful error
+                raise Exception("SMB functionality disabled - smbclient module not available")
+                
+            def disconnect(self):
+                pass
+                
+    smbclient = DummySmbClient()
 import paramiko
 try:
     import wmi
