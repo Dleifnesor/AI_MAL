@@ -736,27 +736,48 @@ class DirectNmapScanner:
         
         try:
             # Build command
-            cmd = ['nmap', '-oX', xml_output]
+            cmd = ['nmap']
             
-            # Add all arguments
+            # Add XML output first
+            cmd.extend(['-oX', xml_output])
+            
+            # Add all arguments except target
             if arguments:
-                cmd.extend(arguments.split())
-                
-            # Add target
-            if hosts not in arguments:
-                cmd.append(hosts)
+                args_list = arguments.split()
+                for arg in args_list:
+                    if arg != hosts:  # Avoid adding target twice
+                        cmd.append(arg)
+            
+            # Add target last
+            cmd.append(hosts)
             
             # Log the command
             logger.debug(f"Running nmap command: {' '.join(cmd)}")
             
-            # Run scan
+            # Run scan with timeout
             start_time = time.time()
+            timeout = 300  # 5 minutes timeout
+            
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True
             )
+            
+            # Wait for process with timeout
+            while True:
+                if time.time() - start_time > timeout:
+                    process.terminate()
+                    logger.error("Nmap scan timed out after 5 minutes")
+                    return None
+                    
+                if process.poll() is not None:
+                    break
+                    
+                time.sleep(0.1)
+            
+            # Get output
             stdout, stderr = process.communicate()
             elapsed = time.time() - start_time
             
@@ -2532,13 +2553,17 @@ if __name__ == "__main__":
             # Build the nmap command
             nmap_cmd = ['nmap']
             
+            # Add XML output first
+            nmap_cmd.extend(['-oX', xml_output])
+            
             # Add all parameters except target
             for param in scan_params:
                 if param != target:  # Avoid adding target twice
                     nmap_cmd.append(param)
             
-            # Add XML output and target
-            nmap_cmd.extend(['-oX', xml_output, target])
+            # Add target last
+            nmap_cmd.append(target)
+            
             self.logger.debug(f"Full nmap command: {' '.join(nmap_cmd)}")
             
             # Start animation
@@ -2556,26 +2581,50 @@ if __name__ == "__main__":
                 bufsize=1
             )
             
-            # Read output in real-time
+            # Read output in real-time with timeout
             output_lines = []
             error_lines = []
+            start_time = time.time()
+            timeout = 300  # 5 minutes timeout
             
             while True:
-                # Read output line by line
-                output_line = process.stdout.readline()
-                if output_line:
-                    output_lines.append(output_line.strip())
-                    if not self.quiet:
-                        print(output_line.strip())
-                    self.logger.debug(f"Nmap output: {output_line.strip()}")
+                # Check for timeout
+                if time.time() - start_time > timeout:
+                    process.terminate()
+                    self.logger.error("Nmap scan timed out after 5 minutes")
+                    break
                 
-                # Read error line by line
-                error_line = process.stderr.readline()
-                if error_line:
-                    error_lines.append(error_line.strip())
-                    if not self.quiet:
-                        print(f"Error: {error_line.strip()}", file=sys.stderr)
-                    self.logger.debug(f"Nmap error: {error_line.strip()}")
+                # Read output line by line with timeout
+                try:
+                    output_line = process.stdout.readline()
+                    if output_line:
+                        output_lines.append(output_line.strip())
+                        if not self.quiet:
+                            print(output_line.strip())
+                        self.logger.debug(f"Nmap output: {output_line.strip()}")
+                except Exception as e:
+                    self.logger.error(f"Error reading stdout: {e}")
+                    break
+                
+                # Read error line by line with timeout
+                try:
+                    error_line = process.stderr.readline()
+                    if error_line:
+                        error_text = error_line.strip()
+                        # Filter out common NSOCK info messages
+                        if not any(msg in error_text for msg in [
+                            "NSOCK INFO",
+                            "NSOCK ERROR",
+                            "NSOCK WARNING",
+                            "NSOCK DEBUG"
+                        ]):
+                            error_lines.append(error_text)
+                            if not self.quiet:
+                                print(f"Error: {error_text}", file=sys.stderr)
+                            self.logger.debug(f"Nmap error: {error_text}")
+                except Exception as e:
+                    self.logger.error(f"Error reading stderr: {e}")
+                    break
                 
                 # Check if process has finished
                 if process.poll() is not None:
@@ -2587,7 +2636,7 @@ if __name__ == "__main__":
             
             # Stop animation
             if 'animation' in locals():
-                animation.set()  # Changed from animation.stop() to animation.set()
+                animation.set()
             
             # Check if the scan was successful
             if return_code != 0:
