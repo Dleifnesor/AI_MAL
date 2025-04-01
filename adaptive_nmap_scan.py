@@ -3754,5 +3754,39 @@ def parse_arguments():
     
     return scanner
 
+def main():
+    """Main entry point."""
+    try:
+        # Parse arguments and get scanner
+        scanner = parse_arguments()
+        
+        # Configure logging
+        if scanner.log_file:
+            # Set up file logging
+            file_handler = logging.FileHandler(scanner.log_file)
+            file_handler.setLevel(logging.DEBUG if scanner.debug else logging.INFO)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logging.getLogger().addHandler(file_handler)
+            logging.info(f"Logging to file: {scanner.log_file}")
+                
+        # Set verbosity level based on debug/verbose flags
+        if scanner.debug:
+            logging.getLogger().setLevel(logging.DEBUG)
+        elif scanner.verbose:
+            logging.getLogger().setLevel(logging.INFO)
+        elif scanner.quiet:
+            logging.getLogger().setLevel(logging.WARNING)
+        
+        # Run the scanner
+        scanner.run()
+    except KeyboardInterrupt:
+        logging.info("Operation canceled by user")
+        sys.exit(0)
+    except Exception as e:
+        logging.error(f"Error in main execution: {e}")
+        if logging.getLogger().level == logging.DEBUG:
+            traceback.print_exc()
+        sys.exit(1)
+
 if __name__ == "__main__":
     main() 
