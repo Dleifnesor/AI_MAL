@@ -1,4 +1,6 @@
-See [use_cases.md](use_cases.md) for full details on each arg
+# AI_MAL: Advanced Intelligent Metasploit AI Learner
+
+AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
 
 ## Features
 

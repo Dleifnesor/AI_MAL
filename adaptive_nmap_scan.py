@@ -516,25 +516,104 @@ class NetworkDiscovery:
             
             logger.info(f"Scanning {len(hosts)} hosts in network {self.get_network_cidr()}")
             
-            # Use multiprocessing for faster scanning
-            with multiprocessing.Pool(min(50, os.cpu_count() * 2)) as pool:
-                results = pool.map(self.ping_host, hosts)
+            # First try ARP scan which is faster and more reliable
+            logger.info("Attempting ARP scan first...")
+            try:
+                nm = nmap.PortScanner()
+                arp_result = nm.scan(hosts=' '.join(hosts), arguments="-sn -PR")
+                
+                if 'scan' in arp_result:
+                    for host in arp_result['scan']:
+                        if arp_result['scan'][host]['status']['state'] == 'up':
+                            discovered_hosts.append(host)
+                            logger.info(f"Found host: {host}")
+                
+                if discovered_hosts:
+                    logger.info(f"Found {len(discovered_hosts)} hosts with ARP scan")
+                    return discovered_hosts
+                    
+            except Exception as e:
+                logger.error(f"ARP scan failed: {e}")
             
-            # Collect alive hosts
-            discovered_hosts = [host for host, alive in zip(hosts, results) if alive]
+            # If ARP scan didn't find hosts, try ping scan
+            logger.info("Attempting ping scan...")
+            try:
+                ping_result = nm.scan(hosts=' '.join(hosts), arguments="-sn -PE")
+                
+                if 'scan' in ping_result:
+                    for host in ping_result['scan']:
+                        if ping_result['scan'][host]['status']['state'] == 'up':
+                            if host not in discovered_hosts:
+                                discovered_hosts.append(host)
+                                logger.info(f"Found host: {host}")
+                
+                if discovered_hosts:
+                    logger.info(f"Found {len(discovered_hosts)} hosts with ping scan")
+                    return discovered_hosts
+                    
+            except Exception as e:
+                logger.error(f"Ping scan failed: {e}")
             
-            # If no hosts found with ping, try alternative methods
+            # If still no hosts found, try TCP SYN scan on common ports
+            logger.info("Attempting TCP SYN scan on common ports...")
+            try:
+                syn_result = nm.scan(hosts=' '.join(hosts), arguments="-sS -T4 -F")
+                
+                if 'scan' in syn_result:
+                    for host in syn_result['scan']:
+                        if host not in discovered_hosts:
+                            discovered_hosts.append(host)
+                            logger.info(f"Found host: {host}")
+                
+                if discovered_hosts:
+                    logger.info(f"Found {len(discovered_hosts)} hosts with SYN scan")
+                    return discovered_hosts
+                    
+            except Exception as e:
+                logger.error(f"SYN scan failed: {e}")
+            
+            # If still no hosts found, try UDP scan
+            logger.info("Attempting UDP scan...")
+            try:
+                udp_result = nm.scan(hosts=' '.join(hosts), arguments="-sU -T4 -F")
+                
+                if 'scan' in udp_result:
+                    for host in udp_result['scan']:
+                        if host not in discovered_hosts:
+                            discovered_hosts.append(host)
+                            logger.info(f"Found host: {host}")
+                
+                if discovered_hosts:
+                    logger.info(f"Found {len(discovered_hosts)} hosts with UDP scan")
+                    return discovered_hosts
+                    
+            except Exception as e:
+                logger.error(f"UDP scan failed: {e}")
+            
+            # If we still haven't found any hosts, try a more aggressive approach
             if not discovered_hosts:
-                logger.info("No hosts responded to ping, trying alternative discovery methods")
-                discovered_hosts = self.alternative_host_discovery()
+                logger.info("No hosts found with standard methods, trying aggressive scan...")
+                try:
+                    aggressive_result = nm.scan(
+                        hosts=' '.join(hosts),
+                        arguments="-sS -sU -T4 -p- --max-retries 2 --max-scan-delay 20s"
+                    )
+                    
+                    if 'scan' in aggressive_result:
+                        for host in aggressive_result['scan']:
+                            if host not in discovered_hosts:
+                                discovered_hosts.append(host)
+                                logger.info(f"Found host: {host}")
+                                
+                except Exception as e:
+                    logger.error(f"Aggressive scan failed: {e}")
             
-            logger.info(f"Discovered {len(discovered_hosts)} live hosts")
-            
+            logger.info(f"Total hosts discovered: {len(discovered_hosts)}")
             return discovered_hosts
             
         except Exception as e:
             logger.error(f"Error in host discovery: {e}")
-            return self.alternative_host_discovery()
+            return []
     
     def discover_networks(self):
         """Discover additional networks connected to the host."""
@@ -2289,6 +2368,9 @@ if __name__ == "__main__":
                     "--version-intensity", "2",  # Version detection intensity
                     "-O",   # OS detection
                     "--osscan-limit",  # Limit OS detection to promising targets
+                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                    "--script-trace",  # Show script execution details
                     self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
             else:
@@ -2301,6 +2383,9 @@ if __name__ == "__main__":
                     "--version-intensity", "2",  # Version detection intensity
                     "-O",   # OS detection
                     "--osscan-limit",  # Limit OS detection to promising targets
+                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                    "--script-trace",  # Show script execution details
                     self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         elif iteration == 2:
@@ -2316,6 +2401,9 @@ if __name__ == "__main__":
                     "-p", port_list,  # Specific ports
                     "-sV",  # Version detection
                     "-O",   # OS detection
+                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                    "--script-trace",  # Show script execution details
                     self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
             else:
@@ -2326,6 +2414,9 @@ if __name__ == "__main__":
                     "-p", "1-1000",  # Top 1000 ports
                     "-sV",  # Version detection
                     "-O",   # OS detection
+                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                    "--script-trace",  # Show script execution details
                     self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         else:
@@ -2368,6 +2459,13 @@ if __name__ == "__main__":
                             parameters.append(suggested_params[i])
                             i += 1
                         
+                    # Add script error handling parameters
+                    if "--script" in parameters:
+                        parameters.extend([
+                            "--script-args", "http-security-headers.output=all",
+                            "--script-trace"
+                        ])
+                        
                     self.logger.info(f"AI-suggested scan parameters: {' '.join(parameters)}")
                 else:
                     # Fallback to comprehensive scan
@@ -2380,7 +2478,9 @@ if __name__ == "__main__":
                         "--version-intensity", "4",  # Maximum version detection intensity
                         "-O",   # OS detection
                         "--osscan-guess",  # Guess OS even if not 100% sure
-                        "--script", "default,safe",  # Run default and safe scripts
+                        "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                        "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                        "--script-trace",  # Show script execution details
                         self.target if self.target else self.discovered_hosts[self.current_target_index]
                     ]
             else:
@@ -2394,7 +2494,9 @@ if __name__ == "__main__":
                     "--version-intensity", "4",  # Maximum version detection intensity
                     "-O",   # OS detection
                     "--osscan-guess",  # Guess OS even if not 100% sure
-                    "--script", "default,safe",  # Run default and safe scripts
+                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
+                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
+                    "--script-trace",  # Show script execution details
                     self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         
