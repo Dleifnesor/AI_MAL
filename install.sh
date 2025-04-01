@@ -57,13 +57,58 @@ fi
 
 # Fix any syntax errors in Python files
 echo "[+] Checking for and fixing syntax errors in Python files..."
-# Fix indentation in the adaptive_nmap_scan.py file
-sed -i '1417s/^                else:/            else:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
 
-# Fix the try-except block structure by adding the missing try statement
-sed -i '2590,2600s/            return result/            try:\n                return result/' "$INSTALL_DIR/adaptive_nmap_scan.py"
-sed -i '2594s/^                return None/            return None/' "$INSTALL_DIR/adaptive_nmap_scan.py"
-sed -i '2596s/^        except Exception as e:/    except Exception as e:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+# Create a temporary file with proper structure for fixing the syntax error
+cat > /tmp/adaptive_nmap_syntax_fix.py << 'EOF'
+                # Cleanup XML file
+                try:
+                    os.unlink(xml_output)
+                except:
+                    pass
+                
+                return result
+            
+            except Exception as e:
+                self.logger.error(f"Error parsing Nmap output: {e}")
+                self.viewer.error(f"Error parsing Nmap output: {str(e)}")
+                return None
+        
+        except Exception as e:
+            if 'animation' in locals():
+                animation.set()
+            self.logger.error(f"Error during scan: {e}")
+            self.viewer.error(f"Scan error: {str(e)}")
+            return None
+EOF
+
+# Fix syntax error in the parse_xml method (around line 2590)
+echo "[+] Fixing syntax error in adaptive_nmap_scan.py..."
+line_number=$(grep -n "os.unlink(xml_output)" "$INSTALL_DIR/adaptive_nmap_scan.py" | tail -1 | cut -d':' -f1)
+if [ -n "$line_number" ]; then
+    # Get the line number where the fix should end
+    end_line_number=$(grep -n "self.viewer.error(f\"Scan error: {str(e)}\")" "$INSTALL_DIR/adaptive_nmap_scan.py" | tail -1 | cut -d':' -f1)
+    end_line_number=$(($end_line_number + 2))
+    
+    # Extract everything before the problematic code
+    head -n $line_number "$INSTALL_DIR/adaptive_nmap_scan.py" > /tmp/adaptive_nmap_fixed.py
+    
+    # Add the fixed code
+    cat /tmp/adaptive_nmap_syntax_fix.py >> /tmp/adaptive_nmap_fixed.py
+    
+    # Extract everything after the problematic code
+    tail -n +$end_line_number "$INSTALL_DIR/adaptive_nmap_scan.py" >> /tmp/adaptive_nmap_fixed.py
+    
+    # Replace the original file with the fixed version
+    cp /tmp/adaptive_nmap_fixed.py "$INSTALL_DIR/adaptive_nmap_scan.py"
+    rm /tmp/adaptive_nmap_fixed.py /tmp/adaptive_nmap_syntax_fix.py
+    
+    echo "[+] Syntax error fixed successfully"
+else
+    echo "[!] Could not locate the syntax error position, skipping fix"
+    
+    # Fix indentation in the adaptive_nmap_scan.py file as fallback
+    sed -i '1417s/^                else:/            else:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+fi
 
 # Create a virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then

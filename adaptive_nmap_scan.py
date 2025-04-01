@@ -2587,7 +2587,7 @@ if __name__ == "__main__":
                     pass
                 
                 return result
-                
+            
             except Exception as e:
                 self.logger.error(f"Error parsing Nmap output: {e}")
                 self.viewer.error(f"Error parsing Nmap output: {str(e)}")
