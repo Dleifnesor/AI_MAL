@@ -63,7 +63,6 @@ apt-get install -y \
     libsmbclient-dev \
     samba \
     samba-dev \
-    python3-smbclient \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
@@ -125,6 +124,7 @@ python3 -m pip install --upgrade \
     dnspython \
     python-whois \
     smbclient \
+    wmi \
     || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
 
 # Install optional dependencies
