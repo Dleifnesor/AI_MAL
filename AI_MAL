@@ -249,146 +249,20 @@ if [[ "$*" == *"--msf"* ]]; then
     MSF_REQUESTED=1
 fi
 
-# Function to check and start required services if needed
-ensure_services_running() {
-    echo -e "${YELLOW}Checking required services...${NC}"
-    
-    # Check if Metasploit RPC is requested and running
-    if [ "$MSF_REQUESTED" = "1" ]; then
-        if ! netstat -tuln 2>/dev/null | grep -q ":55553"; then
-            echo -e "${YELLOW}Metasploit RPC service not detected. Attempting to start...${NC}"
-            
-            # Check if running as root
-            if [ "$EUID" -ne 0 ]; then
-                echo -e "${RED}Error: Root privileges required to start Metasploit RPC service.${NC}"
-                echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start msfrpcd${NC}"
-            else
-                # Try systemd first
-                if systemctl list-unit-files | grep -q msfrpcd.service; then
-                    echo -e "Starting Metasploit RPC service via systemd..."
-                    systemctl start msfrpcd.service
-                    sleep 2
-                    if netstat -tuln 2>/dev/null | grep -q ":55553"; then
-                        echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
-                    else
-                        echo -e "${YELLOW}Starting Metasploit RPC manually...${NC}"
-                        nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
-                        sleep 2
-                        if netstat -tuln 2>/dev/null | grep -q ":55553"; then
-                            echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
-                        else
-                            echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
-                        fi
-                    fi
-                else
-                    # Try direct command
-                    echo -e "Starting Metasploit RPC manually..."
-                    nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 >/dev/null 2>&1 &
-                    sleep 2
-                    if netstat -tuln 2>/dev/null | grep -q ":55553"; then
-                        echo -e "${GREEN}Successfully started Metasploit RPC service!${NC}"
-                    else
-                        echo -e "${RED}Failed to start Metasploit RPC service.${NC}"
-                    fi
-                fi
-            fi
-        else
-            echo -e "${GREEN}Metasploit RPC service is running.${NC}"
-        fi
-    fi
-    
-    # Now check Ollama
-    if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
-        echo -e "${YELLOW}Ollama service not detected. Attempting to start...${NC}"
-        
-        # Check if systemd service exists
-        if systemctl list-unit-files | grep -q ollama.service; then
-            echo -e "Starting Ollama via systemd..."
-            if [ "$EUID" -ne 0 ]; then
-                echo -e "${RED}Error: Root privileges required to start Ollama service.${NC}"
-                echo -e "Try running: ${GREEN}sudo AI_MAL${NC} or manually start with: ${GREEN}sudo systemctl start ollama${NC}"
-            else
-                systemctl start ollama.service
-                # Wait for service to initialize
-                echo -e "Waiting for Ollama API to become available..."
-                
-                MAX_RETRIES=10
-                RETRY_DELAY=2
-                retry_count=0
-                
-                while [ $retry_count -lt $MAX_RETRIES ]; do
-                    if curl -s -o /dev/null -m 2 http://localhost:11434/; then
-                        echo -e "${GREEN}Successfully started Ollama service!${NC}"
-                        break
-                    fi
-                    
-                    echo -n "."
-                    sleep $RETRY_DELAY
-                    retry_count=$((retry_count + 1))
-                done
-                
-                if [ $retry_count -eq $MAX_RETRIES ]; then
-                    echo -e "${RED}Failed to start Ollama service within timeout.${NC}"
-                    echo -e "Please start Ollama manually with: ${GREEN}ollama serve${NC}"
-                fi
-            fi
-        else
-            # No systemd service, try direct command
-            echo -e "${YELLOW}No Ollama systemd service found, trying direct command...${NC}"
-            if [ "$EUID" -ne 0 ]; then
-                echo -e "${RED}Please start Ollama manually with: ${GREEN}ollama serve${NC}"
-            else
-                nohup ollama serve >/dev/null 2>&1 &
-                
-                # Wait for service to initialize
-                echo -e "Waiting for Ollama API to become available..."
-                
-                MAX_RETRIES=10
-                RETRY_DELAY=2
-                retry_count=0
-                
-                while [ $retry_count -lt $MAX_RETRIES ]; do
-                    if curl -s -o /dev/null -m 2 http://localhost:11434/; then
-                        echo -e "${GREEN}Successfully started Ollama service!${NC}"
-                        break
-                    fi
-                    
-                    echo -n "."
-                    sleep $RETRY_DELAY
-                    retry_count=$((retry_count + 1))
-                done
-                
-                if [ $retry_count -eq $MAX_RETRIES ]; then
-                    echo -e "${RED}Failed to start Ollama service within timeout.${NC}"
-                    echo -e "Please start Ollama manually with: ${GREEN}ollama serve${NC}"
-                fi
-            fi
-        fi
-    else
-        echo -e "${GREEN}Ollama service is running.${NC}"
-    fi
-}
-
-# Check for full auto mode
-if [[ "$*" == *"--full-auto"* ]]; then
-    ensure_services_running
+# Activate virtual environment if it exists
+if [ -n "$VENV_DIR" ]; then
+    echo "Using virtual environment: ${VENV_DIR}"
+    source "${VENV_DIR}/bin/activate"
 fi
 
-# Execute the Python script with virtual environment or system Python
+# Execute the Python script with all arguments
 if [ -n "$SYSTEM_PYTHON" ]; then
-    # Using system Python
-    echo -e "${BLUE}Using system Python to run AI_MAL${NC}"
-    python3 "$PYTHON_SCRIPT" "$@"
+    python3 "${PYTHON_SCRIPT}" "$@"
 else
-    # Using virtual environment
-    echo -e "${BLUE}Using virtual environment: ${VENV_DIR}${NC}"
-    
-    # Check if the virtual environment has the required modules
-    if [ ! -f "${VENV_DIR}/bin/python" ]; then
-        echo -e "${RED}Invalid virtual environment. Python interpreter not found.${NC}"
-        exit 1
-    fi
-    
-    # Run with venv Python
-    "${VENV_DIR}/bin/python" "$PYTHON_SCRIPT" "$@"
+    "${VENV_DIR}/bin/python3" "${PYTHON_SCRIPT}" "$@"
+fi
+
+# Deactivate virtual environment if it was activated
+if [ -n "$VENV_DIR" ]; then
+    deactivate
 fi 
