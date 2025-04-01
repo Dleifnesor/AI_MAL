@@ -3,8 +3,8 @@ AI_MAL - AI-Powered Penetration Testing Tool
 """
 
 __version__ = "0.1.0"
-__author__ = "AI_MAL Developer"
-__email__ = "ai_mal@example.com"
+__author__ = "Dleifnesor"
+__email__ = "phlegmenthusiast@gmail.com"
 
 from ai_mal.core.adaptive import AdaptiveScanner
 from ai_mal.core.ai_manager import AIManager

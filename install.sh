@@ -68,13 +68,14 @@ if ! command -v ollama &> /dev/null; then
     echo -e "${GREEN}Pulling AI models...${NC}"
     ollama pull qwen2.5-coder:7b
     ollama pull mistral:7b
+    ollama pull gemma3:1b
 fi
 
 # Create full directory structure
 echo -e "${GREEN}Creating directory structure...${NC}"
 mkdir -p "${INSTALL_DIR}/ai_mal/core"
-mkdir -p "${INSTALL_DIR}/examples"
-mkdir -p "${INSTALL_DIR}/tests"
+mkdir -p "${INSTALL_DIR}/ai_mal/tests"
+mkdir -p "${INSTALL_DIR}/ai_mal/examples"
 mkdir -p "${INSTALL_DIR}/msf_resources"
 mkdir -p "${INSTALL_DIR}/scan_results"
 mkdir -p "${INSTALL_DIR}/generated_scripts"
@@ -108,29 +109,29 @@ EOL
 
 # Create symbolic link for command-line access
 echo -e "${GREEN}Creating command-line shortcut...${NC}"
-ln -sf "${INSTALL_DIR}/venv/bin/ai_mal" /usr/local/bin/ai_mal
+ln -sf "${INSTALL_DIR}/venv/bin/ai_mal" /usr/local/bin/AI_MAL
 
 # Set up completion script
 echo -e "${GREEN}Setting up command completion...${NC}"
-cat > /etc/bash_completion.d/ai_mal << EOL
-_ai_mal_completions()
+cat > /etc/bash_completion.d/AI_MAL << EOL
+_AI_MAL_completions()
 {
     local cur=\${COMP_WORDS[COMP_CWORD]}
     COMPREPLY=( \$(compgen -W "--msf --exploit --model --fallback-model --full-auto --custom-scripts --script-type --execute-scripts --stealth --continuous --delay --services --version --os --vuln --dos --output-dir --output-format --quiet --iterations --custom-vuln --ai-analysis" -- \$cur) )
 }
-complete -F _ai_mal_completions ai_mal
+complete -F _AI_MAL_completions AI_MAL
 EOL
 
 # Set permissions
 echo -e "${GREEN}Setting permissions...${NC}"
-chmod +x /usr/local/bin/ai_mal
+chmod +x /usr/local/bin/AI_MAL
 chmod -R 755 "${INSTALL_DIR}/scan_results" "${INSTALL_DIR}/msf_resources" "${INSTALL_DIR}/generated_scripts" "${INSTALL_DIR}/logs"
 
 # Print success message
 echo -e "${GREEN}Installation completed successfully!${NC}"
 echo -e "${YELLOW}Please restart your shell to enable command completion${NC}"
-echo -e "${YELLOW}You can now use the 'ai_mal' command from anywhere${NC}"
+echo -e "${YELLOW}You can now use the 'AI_MAL' command from anywhere${NC}"
 echo
 echo -e "${GREEN}Example usage:${NC}"
-echo "ai_mal 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto"
-echo "ai_mal 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 
+echo "AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto"
+echo "AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 
