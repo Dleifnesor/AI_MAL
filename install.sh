@@ -33,14 +33,10 @@ if (( $(echo "$PYTHON_VERSION < 3.8" | bc -l) )); then
     exit 1
 fi
 
-# Check and install dos2unix
-if ! command_exists dos2unix; then
-    echo "[!] dos2unix is not installed. Attempting to install..."
-    
-    # Check the package manager and install dos2unix
+# Function to install dos2unix based on the package manager
+install_dos2unix() {
     if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y dos2unix
+        sudo apt-get update && sudo apt-get install -y dos2unix
     elif command_exists yum; then
         sudo yum install -y dos2unix
     elif command_exists dnf; then
@@ -51,21 +47,57 @@ if ! command_exists dos2unix; then
         brew install dos2unix
     else
         echo "[-] Could not determine package manager. Please install dos2unix manually."
+        return 1
+    fi
+    return 0
+}
+
+# Check and install dos2unix
+echo "[+] Checking for dos2unix..."
+if ! command_exists dos2unix; then
+    echo "[!] dos2unix is not installed. Attempting to install..."
+    if ! install_dos2unix; then
+        echo "[-] Failed to install dos2unix. Will try to fix line endings manually."
     fi
 fi
 
 # Fix line endings in all script files
 echo "[+] Fixing line endings in script files..."
-if command_exists dos2unix; then
-    find "$INSTALL_DIR" -type f -name "*.py" -o -name "*.sh" -o -name "AI_MAL" | while read -r file; do
+fix_line_endings() {
+    local file="$1"
+    if command_exists dos2unix; then
         dos2unix "$file"
-    done
-else
-    echo "[!] dos2unix not found, attempting to fix line endings manually..."
-    find "$INSTALL_DIR" -type f -name "*.py" -o -name "*.sh" -o -name "AI_MAL" | while read -r file; do
-        sed -i 's/\r$//' "$file"
-    done
-fi
+    else
+        # Manual line ending fix using sed
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS version of sed requires different syntax
+            sed -i '' 's/\r$//' "$file"
+        else
+            sed -i 's/\r$//' "$file"
+        fi
+    fi
+}
+
+# Find and fix all Python and shell scripts
+echo "[+] Processing script files..."
+while IFS= read -r -d '' file; do
+    echo "    Fixing line endings in: $file"
+    fix_line_endings "$file"
+done < <(find "$INSTALL_DIR" -type f \( -name "*.py" -o -name "*.sh" -o -name "AI_MAL" \) -print0)
+
+# Verify the files are executable and have correct line endings
+echo "[+] Verifying file permissions and line endings..."
+for file in "$INSTALL_DIR/AI_MAL" "$INSTALL_DIR/adaptive_nmap_scan.py"; do
+    if [ -f "$file" ]; then
+        # Make executable
+        chmod +x "$file"
+        # Double-check line endings
+        fix_line_endings "$file"
+        echo "    Verified: $file"
+    else
+        echo "[!] Warning: Could not find $file"
+    fi
+done
 
 # Create a virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then

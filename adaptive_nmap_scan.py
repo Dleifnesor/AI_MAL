@@ -2777,11 +2777,8 @@ if __name__ == "__main__":
             
         except Exception as e:
             self.logger.error(f"Error handling streaming response: {e}")
-            
-            # Stop the animation if it was started
             if animation:
                 animation.set()
-                
             return self.generate_fallback_response("Error processing streaming response")
     
     def generate_fallback_response(self, prompt):
