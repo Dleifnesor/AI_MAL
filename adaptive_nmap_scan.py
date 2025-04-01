@@ -2419,11 +2419,13 @@ if __name__ == "__main__":
         self.logger.info(f"Scan parameters: {' '.join(scan_params)}")
         
         target = self.target if self.target else self.discovered_hosts[self.current_target_index]
+        self.logger.info(f"Target: {target}")
         
         # Create a temporary file for XML output
         try:
             fd, xml_output = tempfile.mkstemp(suffix='.xml', prefix='nmap_')
             os.close(fd)
+            self.logger.debug(f"Created temporary XML file: {xml_output}")
             
             # Build the nmap command
             nmap_cmd = ['nmap']
@@ -2435,12 +2437,13 @@ if __name__ == "__main__":
             
             # Add XML output and target
             nmap_cmd.extend(['-oX', xml_output, target])
+            self.logger.debug(f"Full nmap command: {' '.join(nmap_cmd)}")
             
             # Start animation
             animation = self.viewer.scanning_animation(f"Scanning {target}")
             
             # Run nmap as a subprocess with proper timeout
-            self.logger.debug(f"Executing: {' '.join(nmap_cmd)}")
+            self.logger.info(f"Starting Nmap scan with command: {' '.join(nmap_cmd)}")
             
             # Run the command and capture output in real-time
             process = subprocess.Popen(
@@ -2462,6 +2465,7 @@ if __name__ == "__main__":
                     output_lines.append(output_line.strip())
                     if not self.quiet:
                         print(output_line.strip())
+                    self.logger.debug(f"Nmap output: {output_line.strip()}")
                 
                 # Read error line by line
                 error_line = process.stderr.readline()
@@ -2469,6 +2473,7 @@ if __name__ == "__main__":
                     error_lines.append(error_line.strip())
                     if not self.quiet:
                         print(f"Error: {error_line.strip()}", file=sys.stderr)
+                    self.logger.debug(f"Nmap error: {error_line.strip()}")
                 
                 # Check if process has finished
                 if process.poll() is not None:
@@ -2476,6 +2481,7 @@ if __name__ == "__main__":
             
             # Get the return code
             return_code = process.poll()
+            self.logger.info(f"Nmap process finished with return code: {return_code}")
             
             # Stop animation
             if 'animation' in locals():
@@ -2489,11 +2495,23 @@ if __name__ == "__main__":
                     self.logger.error(line)
                 return None
             
-            # Parse the XML output
+            # Check if XML file exists and has content
+            if not os.path.exists(xml_output):
+                self.logger.error("XML output file was not created")
+                return None
+                
+            if os.path.getsize(xml_output) == 0:
+                self.logger.error("XML output file is empty")
+                return None
+            
+            # Parse the XML output using DirectNmapScanner
             try:
-                result = self.parse_xml(xml_output, nmap_cmd, 0, '\n'.join(output_lines), '\n'.join(error_lines))
+                self.logger.debug("Parsing Nmap XML output...")
+                result = DirectNmapScanner.parse_xml(xml_output, nmap_cmd, 0, '\n'.join(output_lines), '\n'.join(error_lines))
                 
                 if result:
+                    self.logger.info("Successfully parsed Nmap output")
+                    
                     # Add to scan history
                     self.scan_history.append({
                         'timestamp': datetime.datetime.now(),
@@ -2522,6 +2540,8 @@ if __name__ == "__main__":
             except Exception as e:
                 self.logger.error(f"Error parsing Nmap output: {e}")
                 self.viewer.error(f"Error parsing Nmap output: {str(e)}")
+                if self.debug:
+                    traceback.print_exc()
                 return None
                 
             finally:
@@ -2529,6 +2549,7 @@ if __name__ == "__main__":
                 if os.path.exists(xml_output):
                     try:
                         os.unlink(xml_output)
+                        self.logger.debug("Cleaned up temporary XML file")
                     except OSError as e:
                         self.logger.warning(f"Failed to remove temporary XML file: {e}")
         

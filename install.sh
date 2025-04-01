@@ -5,6 +5,18 @@
 # Exit on any error
 set -e
 
+# Function to check if running with sudo
+check_sudo() {
+    if [ "$EUID" -ne 0 ]; then 
+        echo "[-] This script needs to be run with sudo privileges"
+        echo "    Please run: sudo ./install.sh"
+        exit 1
+    fi
+}
+
+# Check for sudo privileges
+check_sudo
+
 # Determine the installation directory (where the script is located)
 INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$INSTALL_DIR" || { echo "Could not change to install directory"; exit 1; }
@@ -20,23 +32,77 @@ command_exists() {
     command -v "$1" > /dev/null 2>&1
 }
 
+# Function to check system type
+get_system_type() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "linux"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+        echo "windows"
+    else
+        echo "unknown"
+    fi
+}
+
+# Function to check Linux distribution
+get_linux_distro() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$ID"
+    elif [ -f /etc/redhat-release ]; then
+        echo "redhat"
+    elif [ -f /etc/debian_version ]; then
+        echo "debian"
+    else
+        echo "unknown"
+    fi
+}
+
 # Check for essential system dependencies
 echo "[+] Checking essential system dependencies..."
 MISSING_DEPS=()
 ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev" "bc")
 
+# Determine package manager based on system
+if command_exists apt-get; then
+    PKG_MANAGER="apt-get"
+    UPDATE_CMD="apt-get update"
+    INSTALL_CMD="apt-get install -y"
+elif command_exists yum; then
+    PKG_MANAGER="yum"
+    UPDATE_CMD="yum update -y"
+    INSTALL_CMD="yum install -y"
+elif command_exists dnf; then
+    PKG_MANAGER="dnf"
+    UPDATE_CMD="dnf update -y"
+    INSTALL_CMD="dnf install -y"
+elif command_exists pacman; then
+    PKG_MANAGER="pacman"
+    UPDATE_CMD="pacman -Syu --noconfirm"
+    INSTALL_CMD="pacman -S --noconfirm"
+elif command_exists brew; then
+    PKG_MANAGER="brew"
+    UPDATE_CMD="brew update"
+    INSTALL_CMD="brew install"
+else
+    echo "[-] Could not determine package manager. Please install dependencies manually."
+    exit 1
+fi
+
+# Install dependencies based on package manager
 for dep in "${ESSENTIAL_DEPS[@]}"; do
-    if ! dpkg -l | grep -q "^ii  $dep"; then
+    if ! command_exists "$dep"; then
         MISSING_DEPS+=("$dep")
     fi
 done
 
 if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
     echo "[!] Installing missing dependencies: ${MISSING_DEPS[*]}"
-    sudo apt-get update
-    sudo apt-get install -y "${MISSING_DEPS[@]}" || {
+    eval "$UPDATE_CMD"
+    eval "$INSTALL_CMD ${MISSING_DEPS[*]}" || {
         echo "[-] Failed to install dependencies. Please install them manually:"
-        echo "    sudo apt-get install ${MISSING_DEPS[*]}"
+        echo "    sudo $INSTALL_CMD ${MISSING_DEPS[*]}"
         exit 1
     }
 fi
@@ -221,45 +287,66 @@ if ! command_exists msfconsole; then
     fi
 fi
 
-# Set up PostgreSQL for Metasploit
+# Set up PostgreSQL for Metasploit with improved error handling
 echo "[+] Setting up PostgreSQL for Metasploit..."
-if command_exists psql; then
-    # Ensure PostgreSQL is installed and running
-    if ! command_exists systemctl || ! systemctl is-active --quiet postgresql; then
-        echo "[!] Starting PostgreSQL service..."
-        if command_exists systemctl; then
-            sudo systemctl start postgresql || {
-                echo "[!] Failed to start PostgreSQL with systemctl, trying service command..."
+setup_postgresql() {
+    local max_retries=30
+    local retry_count=1
+    
+    if command_exists psql; then
+        # Ensure PostgreSQL is installed and running
+        if ! command_exists systemctl || ! systemctl is-active --quiet postgresql; then
+            echo "[!] Starting PostgreSQL service..."
+            if command_exists systemctl; then
+                sudo systemctl start postgresql || {
+                    echo "[!] Failed to start PostgreSQL with systemctl, trying service command..."
+                    sudo service postgresql start
+                }
+            else
                 sudo service postgresql start
-            }
-        else
-            sudo service postgresql start
+            fi
+            
+            # Wait for PostgreSQL to start with timeout
+            echo "[+] Waiting for PostgreSQL to start..."
+            while [ $retry_count -le $max_retries ]; do
+                if pg_isready -q; then
+                    echo "[+] PostgreSQL is ready"
+                    break
+                fi
+                echo -n "."
+                sleep 1
+                retry_count=$((retry_count + 1))
+            done
+            
+            if [ $retry_count -gt $max_retries ]; then
+                echo "[-] PostgreSQL failed to start within $max_retries seconds"
+                return 1
+            fi
         fi
         
-        # Wait for PostgreSQL to start
-        echo "[+] Waiting for PostgreSQL to start..."
-        for i in {1..30}; do
-            if pg_isready -q; then
-                break
-            fi
-            sleep 1
-        done
-    fi
-    
-    # Initialize Metasploit database
-    echo "[+] Initializing Metasploit database..."
-    if command_exists msfdb; then
-        sudo msfdb init || {
-            echo "[!] msfdb init failed, trying alternative setup..."
-            # Create msf user and database if they don't exist
-            sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null || true
-            sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
-            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
-            
-            # Create database.yml if it doesn't exist
-            MSF_CONFIG_DIR="$HOME/.msf4"
-            mkdir -p "$MSF_CONFIG_DIR"
-            cat << 'EOF' > "$MSF_CONFIG_DIR/database.yml"
+        # Initialize Metasploit database with proper error handling
+        echo "[+] Initializing Metasploit database..."
+        if command_exists msfdb; then
+            if ! sudo msfdb init; then
+                echo "[!] msfdb init failed, trying alternative setup..."
+                
+                # Create msf user and database with proper error handling
+                if ! sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null; then
+                    echo "[!] User msf might already exist, continuing..."
+                fi
+                
+                if ! sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null; then
+                    echo "[!] Database msf might already exist, continuing..."
+                fi
+                
+                if ! sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null; then
+                    echo "[!] Failed to grant privileges, continuing..."
+                fi
+                
+                # Create database.yml with proper permissions
+                MSF_CONFIG_DIR="$HOME/.msf4"
+                mkdir -p "$MSF_CONFIG_DIR"
+                cat << 'EOF' > "$MSF_CONFIG_DIR/database.yml"
 production:
   adapter: postgresql
   database: msf
@@ -270,183 +357,187 @@ production:
   pool: 5
   timeout: 5
 EOF
-        }
-    fi
-else
-    echo "[!] PostgreSQL not found. Installing..."
-    if command_exists apt-get; then
-        sudo apt-get update
-        sudo apt-get install -y postgresql postgresql-contrib
-        
-        # Try to start PostgreSQL after installation
-        if command_exists systemctl; then
-            sudo systemctl start postgresql
-        else
-            sudo service postgresql start
-        fi
-        
-        # Retry database initialization
-        echo "[+] Retrying Metasploit database initialization..."
-        if command_exists msfdb; then
-            sudo msfdb init
+                
+                chmod 600 "$MSF_CONFIG_DIR/database.yml"
+            fi
         fi
     else
-        echo "[!] PostgreSQL installation failed. Metasploit will run without database support."
+        echo "[!] PostgreSQL not found. Installing..."
+        if command_exists apt-get; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql postgresql-contrib
+            
+            # Try to start PostgreSQL after installation
+            if command_exists systemctl; then
+                sudo systemctl start postgresql
+            else
+                sudo service postgresql start
+            fi
+            
+            # Retry database initialization with timeout
+            echo "[+] Retrying Metasploit database initialization..."
+            if command_exists msfdb; then
+                if ! sudo msfdb init; then
+                    echo "[-] Failed to initialize Metasploit database"
+                    return 1
+                fi
+            fi
+        else
+            echo "[-] PostgreSQL installation failed. Metasploit will run without database support."
+            return 1
+        fi
     fi
+    return 0
+}
+
+# Run PostgreSQL setup
+if ! setup_postgresql; then
+    echo "[!] Warning: Metasploit database setup completed with errors"
+    echo "    Some features may be limited"
 fi
 
-# Check Ollama installation and setup
-echo "[+] Setting up Ollama..."
-if ! command_exists ollama; then
-    echo "[!] Ollama not found. Installing..."
+# Function to verify Ollama installation
+verify_ollama() {
+    local max_retries=30
+    local retry_count=1
     
-    # Check system type and install Ollama
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        # Linux installation
-        curl -fsSL https://ollama.com/install.sh | sh
-        
-        # Wait for Ollama installation to complete
-        echo "[+] Waiting for Ollama installation to complete..."
-        sleep 5
-        
-        # Start Ollama service
-        if command_exists systemctl; then
-            sudo systemctl enable ollama
-            sudo systemctl start ollama
-        else
-            # Start Ollama in the background
-            nohup ollama serve > /dev/null 2>&1 &
-        fi
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS installation
-        if command_exists brew; then
-            brew install ollama
-        else
-            echo "[!] Homebrew not found. Installing Ollama manually..."
-            curl -fsSL https://ollama.com/install.sh | sh
-        fi
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-        # Windows installation instructions
-        echo "[!] Windows detected. Please install Ollama manually:"
-        echo "   1. Visit https://ollama.com/download"
-        echo "   2. Download and run the Windows installer"
-        echo "   3. After installation, run 'ollama serve' in a new terminal"
-        echo "   4. Wait for the service to start, then continue this installation"
-        read -p "Press Enter once Ollama is installed and running..."
-    else
-        echo "[-] Unsupported operating system. Please install Ollama manually from https://ollama.com/download"
-        exit 1
-    fi
-fi
-
-# Configure Ollama to listen on all interfaces
-echo "[+] Configuring Ollama to accept external connections..."
-if command_exists systemctl && systemctl list-unit-files | grep -q "ollama.service"; then
-    # Create systemd override directory if it doesn't exist
-    sudo mkdir -p /etc/systemd/system/ollama.service.d/
-    
-    # Create or update the override.conf file
-    cat << 'EOF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-Environment="OLLAMA_ORIGINS=*"
-EOF
-    
-    # Reload systemd and restart Ollama
-    echo "[+] Reloading systemd configuration and restarting Ollama..."
-    sudo systemctl daemon-reload
-    sudo systemctl restart ollama
-    
-    # Wait for Ollama to start up
-    echo "[+] Waiting for Ollama to start..."
-    for i in {1..30}; do
-        if curl -s "http://localhost:11434/api/tags" > /dev/null; then
-            echo "[+] Ollama API is now accessible"
-            break
+    echo "[+] Verifying Ollama installation..."
+    while [ $retry_count -le $max_retries ]; do
+        if curl -s http://localhost:11434/api/version > /dev/null; then
+            echo "[+] Ollama is running and accessible"
+            return 0
         fi
         echo -n "."
         sleep 1
+        retry_count=$((retry_count + 1))
     done
-    echo
-else
-    echo "[!] Ollama service not found, configuring environment variables..."
-    # Try system-wide profile first, fall back to user profile
-    if [ -w "/etc/profile.d" ]; then
-        PROFILE_FILE="/etc/profile.d/ollama.sh"
-        echo '# Ollama configuration' | sudo tee "$PROFILE_FILE" > /dev/null
-        echo 'export OLLAMA_HOST=0.0.0.0:11434' | sudo tee -a "$PROFILE_FILE" > /dev/null
-        echo 'export OLLAMA_ORIGINS=*' | sudo tee -a "$PROFILE_FILE" > /dev/null
-    else
-        PROFILE_FILE="$HOME/.profile"
-        echo '# Ollama configuration' >> "$PROFILE_FILE"
-        echo 'export OLLAMA_HOST=0.0.0.0:11434' >> "$PROFILE_FILE"
-        echo 'export OLLAMA_ORIGINS=*' >> "$PROFILE_FILE"
-    fi
     
-    # Export variables for current session
-    export OLLAMA_HOST=0.0.0.0:11434
-    export OLLAMA_ORIGINS=*
-    
-    # Restart Ollama if it's running
-    if pgrep ollama > /dev/null; then
-        echo "[+] Restarting Ollama with new configuration..."
-        pkill ollama
-        sleep 2
-        nohup ollama serve > /dev/null 2>&1 &
-        
-        # Wait for Ollama to start
-        echo "[+] Waiting for Ollama to start..."
-        for i in {1..30}; do
-            if curl -s "http://localhost:11434/api/tags" > /dev/null; then
-                echo "[+] Ollama API is now accessible"
-                break
-            fi
-            echo -n "."
-            sleep 1
-        done
-        echo
-    fi
-fi
+    echo "[-] Ollama failed to start or is not accessible"
+    return 1
+}
 
-# Check if Ollama API is accessible and pull models
-echo "[+] Checking Ollama API and pulling models..."
-if curl -s "http://localhost:11434/api/tags" > /dev/null; then
-    echo "[+] Ollama API is accessible. Pulling required models..."
+# Function to pull Ollama model with retries
+pull_ollama_model() {
+    local model=$1
+    local max_retries=3
+    local retry_count=1
     
-    # Function to pull model with progress indicator
-    pull_model() {
-        local model=$1
-        local desc=$2
-        echo "[+] Pulling $model model ($desc)..."
-        echo "    This may take some time depending on your internet connection..."
-        if ollama pull "$model" > /dev/null 2>&1; then
-            echo "[+] Successfully pulled $model"
+    echo "[+] Pulling Ollama model: $model"
+    while [ $retry_count -le $max_retries ]; do
+        if curl -s -X POST http://localhost:11434/api/pull -d "{\"name\": \"$model\"}" > /dev/null; then
+            echo "[+] Successfully pulled model: $model"
             return 0
-        else
-            echo "[!] Failed to pull $model. Will try again with progress output..."
-            if ollama pull "$model"; then
-                echo "[+] Successfully pulled $model on second attempt"
-                return 0
+        fi
+        echo "[!] Failed to pull model (attempt $retry_count/$max_retries)"
+        retry_count=$((retry_count + 1))
+        sleep 5
+    done
+    
+    echo "[-] Failed to pull model after $max_retries attempts"
+    return 1
+}
+
+# Install and configure Ollama
+echo "[+] Installing Ollama..."
+install_ollama() {
+    local system_type=$(get_system_type)
+    local linux_distro=$(get_linux_distro)
+    
+    case $system_type in
+        "linux")
+            case $linux_distro in
+                "ubuntu"|"debian")
+                    curl -fsSL https://ollama.com/install.sh | sudo sh || {
+                        echo "[-] Failed to install Ollama using install script"
+                        return 1
+                    }
+                    ;;
+                "fedora"|"centos"|"rhel")
+                    curl -fsSL https://ollama.com/install.sh | sudo sh || {
+                        echo "[-] Failed to install Ollama using install script"
+                        return 1
+                    }
+                    ;;
+                *)
+                    echo "[-] Unsupported Linux distribution: $linux_distro"
+                    return 1
+                    ;;
+            esac
+            
+            # Start Ollama service
+            if command_exists systemctl; then
+                sudo systemctl start ollama || {
+                    echo "[-] Failed to start Ollama service"
+                    return 1
+                }
             else
-                echo "[!] Failed to pull $model. You'll need to pull it manually with: ollama pull $model"
+                sudo service ollama start || {
+                    echo "[-] Failed to start Ollama service"
+                    return 1
+                }
+            fi
+            ;;
+            
+        "macos")
+            if command_exists brew; then
+                brew install ollama || {
+                    echo "[-] Failed to install Ollama using Homebrew"
+                    return 1
+                }
+                brew services start ollama || {
+                    echo "[-] Failed to start Ollama service"
+                    return 1
+                }
+            else
+                echo "[-] Homebrew not found. Please install Homebrew first"
                 return 1
             fi
+            ;;
+            
+        "windows")
+            echo "[-] Windows installation not supported in this script"
+            echo "    Please install Ollama manually from https://ollama.com/download"
+            return 1
+            ;;
+            
+        *)
+            echo "[-] Unsupported operating system: $system_type"
+            return 1
+            ;;
+    esac
+    
+    # Wait for Ollama to start and verify installation
+    if ! verify_ollama; then
+        return 1
+    fi
+    
+    # Configure Ollama to accept external connections
+    echo "[+] Configuring Ollama to accept external connections..."
+    if [ -f /etc/ollama/config.json ]; then
+        sudo sed -i 's/"listen": "127.0.0.1"/"listen": "0.0.0.0"/' /etc/ollama/config.json
+        if command_exists systemctl; then
+            sudo systemctl restart ollama
+        else
+            sudo service ollama restart
         fi
-    }
+    fi
     
-    # Pull models with retries
-    pull_model "qwen2.5-coder:7b" "primary model, recommended for better results"
-    pull_model "gemma3:1b" "backup model for systems with limited resources"
+    # Pull required models
+    local models=("llama2" "mistral" "codellama")
+    for model in "${models[@]}"; do
+        if ! pull_ollama_model "$model"; then
+            echo "[!] Warning: Failed to pull model: $model"
+            echo "    Some features may be limited"
+        fi
+    done
     
-    # Verify models were installed
-    echo "[+] Verifying installed models..."
-    ollama list
-else
-    echo "[!] Could not connect to Ollama API at http://localhost:11434"
-    echo "    Please check if Ollama is running with: ollama serve"
-    echo "    After starting Ollama, pull the required models manually:"
-    echo "      ollama pull qwen2.5-coder:7b"
-    echo "      ollama pull gemma3:1b"
+    return 0
+}
+
+# Run Ollama installation
+if ! install_ollama; then
+    echo "[!] Warning: Ollama installation completed with errors"
+    echo "    Some features may be limited"
 fi
 
 # Make the main files executable
@@ -485,3 +576,116 @@ echo
 echo "Read the documentation for more information."
 echo "For help, run: AI_MAL --help"
 echo
+
+# Function to handle errors and cleanup
+handle_error() {
+    local exit_code=$1
+    local error_message=$2
+    
+    echo "[-] Error: $error_message"
+    echo "    Exit code: $exit_code"
+    
+    # Cleanup temporary files
+    if [ -f "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+    
+    # Stop services if they were started
+    if command_exists systemctl; then
+        sudo systemctl stop ollama 2>/dev/null || true
+        sudo systemctl stop postgresql 2>/dev/null || true
+    else
+        sudo service ollama stop 2>/dev/null || true
+        sudo service postgresql stop 2>/dev/null || true
+    fi
+    
+    # Exit with error code
+    exit "$exit_code"
+}
+
+# Function to cleanup on script exit
+cleanup() {
+    local exit_code=$?
+    
+    # Cleanup temporary files
+    if [ -f "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+    
+    # Stop services if they were started
+    if command_exists systemctl; then
+        sudo systemctl stop ollama 2>/dev/null || true
+        sudo systemctl stop postgresql 2>/dev/null || true
+    else
+        sudo service ollama stop 2>/dev/null || true
+        sudo service postgresql stop 2>/dev/null || true
+    fi
+    
+    # Exit with original exit code
+    exit "$exit_code"
+}
+
+# Set up trap for cleanup on script exit
+trap cleanup EXIT
+
+# Create temporary directory for installation
+TEMP_DIR=$(mktemp -d)
+if [ ! -d "$TEMP_DIR" ]; then
+    handle_error 1 "Failed to create temporary directory"
+fi
+
+# Function to check network connectivity
+check_network() {
+    local max_retries=3
+    local retry_count=1
+    
+    echo "[+] Checking network connectivity..."
+    while [ $retry_count -le $max_retries ]; do
+        if curl -s https://www.google.com > /dev/null; then
+            echo "[+] Network connection verified"
+            return 0
+        fi
+        echo "[!] Network connection failed (attempt $retry_count/$max_retries)"
+        retry_count=$((retry_count + 1))
+        sleep 2
+    done
+    
+    handle_error 1 "Network connection failed after $max_retries attempts"
+}
+
+# Check network connectivity before proceeding
+check_network
+
+# Function to verify disk space
+check_disk_space() {
+    local required_space=5000000  # 5GB in KB
+    local available_space=$(df -k / | awk 'NR==2 {print $4}')
+    
+    if [ "$available_space" -lt "$required_space" ]; then
+        handle_error 1 "Insufficient disk space. Required: 5GB, Available: $((available_space/1024/1024))GB"
+    fi
+}
+
+# Check disk space before proceeding
+check_disk_space
+
+# Function to verify system requirements
+check_system_requirements() {
+    local min_memory=4096  # 4GB in MB
+    local available_memory=$(free -m | awk '/Mem:/ {print $7}')
+    
+    if [ "$available_memory" -lt "$min_memory" ]; then
+        handle_error 1 "Insufficient memory. Required: 4GB, Available: $((available_memory/1024))GB"
+    fi
+    
+    # Check CPU cores
+    local min_cores=2
+    local cpu_cores=$(nproc)
+    
+    if [ "$cpu_cores" -lt "$min_cores" ]; then
+        handle_error 1 "Insufficient CPU cores. Required: 2, Available: $cpu_cores"
+    fi
+}
+
+# Check system requirements before proceeding
+check_system_requirements
