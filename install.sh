@@ -245,7 +245,7 @@ if command_exists systemctl && systemctl list-unit-files | grep -q "ollama.servi
     sudo mkdir -p /etc/systemd/system/ollama.service.d/
     
     # Create or update the override.conf file
-    cat << EOF | sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null
+    cat << 'EOF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0:11434"
 Environment="OLLAMA_ORIGINS=*"
@@ -263,10 +263,10 @@ else
     echo "[!] Ollama service not found, adding environment variables to system profile..."
     # Add environment variables to system-wide profile
     PROFILE_FILE="/etc/profile.d/ollama.sh"
-    cat << EOF | sudo tee "$PROFILE_FILE" > /dev/null 2>&1 || {
+    cat << 'EOF' | sudo tee "$PROFILE_FILE" > /dev/null 2>&1 || {
         # If system-wide profile fails, try user profile
         PROFILE_FILE="$HOME/.profile"
-        cat << INNER_EOF >> "$PROFILE_FILE"
+        cat << 'INNER_EOF' >> "$PROFILE_FILE"
 # Ollama configuration
 export OLLAMA_HOST=0.0.0.0:11434
 export OLLAMA_ORIGINS=*
