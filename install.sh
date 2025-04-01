@@ -110,7 +110,7 @@ python3 -m pip install --upgrade pip
 
 # Install core dependencies
 echo -e "${YELLOW}[+] Installing core dependencies...${NC}"
-python3 -m pip install --upgrade \
+python3 -m pip install --upgrade --ignore-installed \
     requests \
     pymetasploit3 \
     psutil \
@@ -123,7 +123,7 @@ python3 -m pip install --upgrade \
 
 # Install optional dependencies
 echo -e "${YELLOW}[+] Installing optional dependencies...${NC}"
-python3 -m pip install --upgrade \
+python3 -m pip install --upgrade --ignore-installed \
     impacket \
     pyasn1 \
     pycryptodomex \
