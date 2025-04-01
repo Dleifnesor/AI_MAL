@@ -2856,7 +2856,11 @@ if __name__ == "__main__":
             elif self.ports == "quick":
                 cmd.append("-F")
             elif self.ports:
-                cmd.extend(["-p", str(self.ports)])
+                if isinstance(self.ports, (list, tuple)):
+                    ports_str = ','.join(str(p) for p in self.ports)
+                else:
+                    ports_str = str(self.ports)
+                cmd.extend(["-p", ports_str])
             
             # Add scan type options
             if scan_type == "basic":
@@ -2879,7 +2883,7 @@ if __name__ == "__main__":
                 cmd.append("--script=vuln")
             
             # Add target and output format
-            cmd.extend(["-oX", "-", target])
+            cmd.extend(["-oX", "-", str(target)])
             
             # Execute Nmap command
             logging.debug(f"Executing Nmap command: {' '.join(cmd)}")

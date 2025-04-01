@@ -37,9 +37,13 @@ echo "       Installing AI_MAL - AI-Powered Penetration Testing Tool"
 echo "====================================================="
 echo
 
-# Update system and install essential packages
-echo -e "${YELLOW}[+] Updating system and installing essential packages...${NC}"
+# Update system packages
+echo -e "${YELLOW}[+] Updating system packages...${NC}"
 apt-get update
+apt-get upgrade -y
+
+# Install core system dependencies
+echo -e "${YELLOW}[+] Installing core system dependencies...${NC}"
 apt-get install -y \
     python3 \
     python3-pip \
@@ -56,88 +60,53 @@ apt-get install -y \
     ndiff \
     ncat \
     libpcap-dev \
-    ca-certificates \
-    dos2unix \
-    metasploit-framework \
     postgresql \
     postgresql-contrib \
-    || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
+    libpq-dev \
+    python3-psycopg2 \
+    python3-samba \
+    python3-ldap \
+    python3-kerberos \
+    python3-gssapi \
+    python3-ntlm \
+    python3-cryptography \
+    python3-paramiko \
+    python3-wmi \
+    python3-netifaces \
+    python3-requests \
+    python3-ipaddress \
+    python3-dateutil \
+    python3-pymetasploit3 \
+    python3-ollama \
+    metasploit-framework
 
-# Start and enable PostgreSQL
-echo -e "${YELLOW}[+] Setting up PostgreSQL...${NC}"
-systemctl enable postgresql
-systemctl start postgresql
+# Create and activate virtual environment
+echo -e "${YELLOW}[+] Setting up Python virtual environment...${NC}"
+rm -rf venv  # Remove existing venv if any
+python3 -m venv venv
+source venv/bin/activate
 
-# Wait for PostgreSQL to start
-echo -e "${GREEN}[+] Waiting for PostgreSQL to start...${NC}"
-for i in {1..30}; do
-    if pg_isready -q; then
-        echo -e "${GREEN}[+] PostgreSQL is ready${NC}"
-        break
-    fi
-    echo -n "."
-    sleep 1
-done
-
-# Initialize Metasploit database
-echo -e "${YELLOW}[+] Initializing Metasploit database...${NC}"
-msfdb init || {
-    echo -e "${RED}Failed to initialize Metasploit database${NC}"
-    echo -e "${YELLOW}Trying alternative setup...${NC}"
-    
-    # Create msf user and database
-    sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null || true
-    sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
-}
-
-# Clean up previous virtual environment if it exists
-echo -e "${YELLOW}[+] Cleaning up previous virtual environment (if any)...${NC}"
-rm -rf venv
-
-# Create virtual environment
-echo -e "${YELLOW}[+] Creating virtual environment...${NC}"
-python3 -m venv venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
-
-# Activate virtual environment
-echo -e "${YELLOW}[+] Activating virtual environment...${NC}"
-source venv/bin/activate || { echo -e "${RED}Failed to activate virtual environment${NC}"; exit 1; }
-
-# Install Python packages
+# Install Python dependencies
 echo -e "${YELLOW}[+] Installing Python dependencies...${NC}"
-python3 -m pip install --upgrade pip
-
-# Install core dependencies
-echo -e "${YELLOW}[+] Installing core dependencies...${NC}"
-python3 -m pip install --upgrade --ignore-installed \
-    requests \
-    pymetasploit3 \
-    psutil \
-    netifaces \
-    paramiko \
-    scapy \
-    rich \
-    click \
-    || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
-
-# Note about Samba functionality
-echo -e "${YELLOW}[*] Note: SMB scanning functionality has been disabled to reduce dependencies${NC}"
-
-# Install optional dependencies
-echo -e "${YELLOW}[+] Installing optional dependencies...${NC}"
-python3 -m pip install --upgrade --ignore-installed \
-    impacket \
-    pyasn1 \
-    pycryptodomex \
-    prompt-toolkit \
-    || { echo -e "${RED}Failed to install optional dependencies${NC}"; exit 1; }
+pip install --upgrade pip
+pip install \
+    python-nmap==0.7.1 \
+    requests==2.31.0 \
+    netifaces==0.11.0 \
+    pymetasploit3==1.0.3 \
+    smbclient==0.18.0 \
+    paramiko==3.4.0 \
+    wmi==1.5.1 \
+    cryptography==42.0.2 \
+    python-dateutil==2.8.2 \
+    ipaddress==1.0.23 \
+    ollama==0.1.6 \
+    rich==13.7.0 \
+    click==8.1.7
 
 # Install Ollama
 echo -e "${YELLOW}[+] Installing Ollama...${NC}"
-curl -fsSL https://ollama.com/install.sh | sh || {
-    echo -e "${RED}Failed to install Ollama${NC}"
-    echo -e "${YELLOW}Continuing without Ollama support...${NC}"
-}
+curl -fsSL https://ollama.com/install.sh | sh
 
 # Start Ollama service
 echo -e "${YELLOW}[+] Starting Ollama service...${NC}"
@@ -155,24 +124,52 @@ for i in {1..30}; do
     sleep 1
 done
 
-# Pull required models
-echo -e "${YELLOW}[+] Pulling codellama...${NC}"
-ollama pull codellama || echo -e "${RED}Failed to pull codellama model${NC}"
-echo -e "${YELLOW}[+] Pulling gemma3:1b...${NC}"
-ollama pull gemma3:1b || echo -e "${RED}Failed to pull gemma3:1b model${NC}"
-echo -e "${YELLOW}[+] Pulling qwen2.5-coder:7b...${NC}"
-ollama pull qwen2.5-coder:7b || echo -e "${RED}Failed to pull qwen2.5-coder:7b model${NC}"
+# Pull required Ollama models
+echo -e "${YELLOW}[+] Pulling required Ollama models...${NC}"
+ollama pull qwen2.5-coder:7b
+ollama pull gemma3:1b
 
-# Fix line endings in the wrapper script
-echo -e "${GREEN}[+] Ensuring correct line endings for AI_MAL script...${NC}"
-dos2unix "$INSTALL_DIR/AI_MAL"
+# Set up PostgreSQL
+echo -e "${YELLOW}[+] Setting up PostgreSQL...${NC}"
+systemctl start postgresql
+systemctl enable postgresql
 
-# Make the main files executable
-echo -e "${GREEN}[+] Setting executable permissions...${NC}"
-chmod +x "$INSTALL_DIR/AI_MAL"
+# Wait for PostgreSQL to start
+echo -e "${GREEN}[+] Waiting for PostgreSQL to start...${NC}"
+for i in {1..30}; do
+    if pg_isready -q; then
+        echo -e "${GREEN}[+] PostgreSQL is ready${NC}"
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+
+# Create database and user
+echo -e "${YELLOW}[+] Creating database and user...${NC}"
+sudo -u postgres psql -c "CREATE DATABASE ai_mal;" 2>/dev/null || true
+sudo -u postgres psql -c "CREATE USER ai_mal WITH PASSWORD 'ai_mal';" 2>/dev/null || true
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ai_mal TO ai_mal;" 2>/dev/null || true
+
+# Set up Metasploit
+echo -e "${YELLOW}[+] Setting up Metasploit...${NC}"
+msfdb init
+
+# Set permissions
+echo -e "${GREEN}[+] Setting permissions...${NC}"
+chmod +x adaptive_nmap_scan.py
+
+# Create wrapper script
+echo -e "${YELLOW}[+] Creating wrapper script...${NC}"
+cat > AI_MAL << 'EOL'
+#!/bin/bash
+source "$(dirname "$0")/venv/bin/activate"
+python "$(dirname "$0")/adaptive_nmap_scan.py" "$@"
+EOL
+chmod +x AI_MAL
 
 # Create symlink in /usr/local/bin
-echo -e "${GREEN}[+] Creating symlink in /usr/local/bin...${NC}"
+echo -e "${YELLOW}[+] Creating symlink in /usr/local/bin...${NC}"
 ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
 
 # Final success message
