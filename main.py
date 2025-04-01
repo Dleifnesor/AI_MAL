@@ -15,25 +15,35 @@ import platform
 from dotenv import load_dotenv
 import aiohttp
 
-# Suppress asyncio warnings about event loop being closed during garbage collection
-# This is a common issue in Python 3.13 with asyncio subprocesses
+# Suppress asyncio warnings about event loop being closed - compatible with Python 3.11+ and 3.12+
 import warnings
 warnings.filterwarnings("ignore", 
                        message="Exception ignored in.*asyncio.*",
                        category=RuntimeWarning)
-# Also suppress the RuntimeError directly
-original_check_closed = asyncio.events.BaseEventLoop._check_closed
-def _patched_check_closed(self):
-    if self._closed:
-        # Instead of raising an exception, just return
-        return
-    return original_check_closed(self)
 
-# Apply the patch only if we're experiencing the issue
+# More compatible approach to handle different Python versions
 try:
-    asyncio.events.BaseEventLoop._check_closed = _patched_check_closed
+    # For older Python versions
+    if hasattr(asyncio, 'events') and hasattr(asyncio.events, 'BaseEventLoop'):
+        original_check_closed = asyncio.events.BaseEventLoop._check_closed
+        def _patched_check_closed(self):
+            if self._closed:
+                # Instead of raising an exception, just return
+                return
+            return original_check_closed(self)
+        asyncio.events.BaseEventLoop._check_closed = _patched_check_closed
+    # For Python 3.12+
+    elif hasattr(asyncio, 'base_events') and hasattr(asyncio.base_events, 'BaseEventLoop'):
+        original_check_closed = asyncio.base_events.BaseEventLoop._check_closed
+        def _patched_check_closed(self):
+            if self._closed:
+                # Instead of raising an exception, just return
+                return
+            return original_check_closed(self)
+        asyncio.base_events.BaseEventLoop._check_closed = _patched_check_closed
 except (AttributeError, TypeError):
-    pass  # In case the internal structure changes in future Python versions
+    # If we can't patch directly, we'll handle the warnings with the filter only
+    pass
 
 try:
     from rich.console import Console
