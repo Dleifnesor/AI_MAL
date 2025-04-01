@@ -249,17 +249,138 @@ if [[ "$*" == *"--msf"* ]]; then
     MSF_REQUESTED=1
 fi
 
+# Check and start dependencies
+check_dependencies() {
+    echo -e "${BLUE}[+] Checking and starting dependencies...${NC}"
+    
+    # Check and start PostgreSQL if needed
+    if command_exists systemctl; then
+        if ! systemctl is-active --quiet postgresql; then
+            echo -e "${YELLOW}[!] PostgreSQL service not running. Starting...${NC}"
+            sudo systemctl start postgresql || {
+                echo -e "${RED}[-] Failed to start PostgreSQL service${NC}"
+                return 1
+            }
+            # Wait for PostgreSQL to be ready
+            echo -e "${BLUE}[+] Waiting for PostgreSQL to start...${NC}"
+            for i in {1..30}; do
+                if pg_isready -q; then
+                    echo -e "${GREEN}[+] PostgreSQL is ready${NC}"
+                    break
+                fi
+                echo -n "."
+                sleep 1
+                if [ $i -eq 30 ]; then
+                    echo -e "\n${RED}[-] PostgreSQL failed to start within 30 seconds${NC}"
+                    return 1
+                fi
+            done
+        else
+            echo -e "${GREEN}[+] PostgreSQL service is running${NC}"
+        fi
+    fi
+    
+    # Check if Ollama is installed
+    if ! command_exists ollama; then
+        echo -e "${RED}[-] Ollama is not installed${NC}"
+        echo -e "${YELLOW}[!] Installing Ollama...${NC}"
+        
+        # Download and install Ollama
+        curl -fsSL https://ollama.com/install.sh | sudo sh || {
+            echo -e "${RED}[-] Failed to install Ollama${NC}"
+            echo -e "Please install Ollama manually:"
+            echo -e "1. Visit https://ollama.com/download"
+            echo -e "2. Download the appropriate package for your system"
+            echo -e "3. Install using your package manager"
+            return 1
+        }
+        
+        # Verify installation
+        if ! command_exists ollama; then
+            echo -e "${RED}[-] Ollama installation failed${NC}"
+            return 1
+        fi
+        
+        echo -e "${GREEN}[+] Ollama installed successfully${NC}"
+    fi
+    
+    # Check and start Ollama if needed
+    if ! curl -s http://localhost:11434/api/version > /dev/null; then
+        echo -e "${YELLOW}[!] Ollama service not running. Starting...${NC}"
+        if command_exists systemctl; then
+            sudo systemctl start ollama || {
+                echo -e "${RED}[-] Failed to start Ollama service${NC}"
+                return 1
+            }
+        else
+            nohup ollama serve > /var/log/ollama.log 2>&1 &
+        fi
+        
+        # Wait for Ollama to be ready
+        echo -e "${BLUE}[+] Waiting for Ollama to start...${NC}"
+        for i in {1..30}; do
+            if curl -s http://localhost:11434/api/version > /dev/null; then
+                echo -e "${GREEN}[+] Ollama is ready${NC}"
+                break
+            fi
+            echo -n "."
+            sleep 1
+            if [ $i -eq 30 ]; then
+                echo -e "\n${RED}[-] Ollama failed to start within 30 seconds${NC}"
+                return 1
+            fi
+        done
+    else
+        echo -e "${GREEN}[+] Ollama service is running${NC}"
+    fi
+    
+    # Check and start Metasploit RPC if needed (when MSF integration is requested)
+    if [[ "$*" == *"--msf"* ]]; then
+        if ! command_exists msfrpcd; then
+            echo -e "${RED}[-] Metasploit RPC daemon not found${NC}"
+            return 1
+        fi
+        
+        if ! pgrep -f "msfrpcd" > /dev/null; then
+            echo -e "${YELLOW}[!] Metasploit RPC daemon not running. Starting...${NC}"
+            nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 > /var/log/msfrpcd.log 2>&1 &
+            
+            # Wait for MSF RPC to be ready
+            echo -e "${BLUE}[+] Waiting for Metasploit RPC to start...${NC}"
+            for i in {1..30}; do
+                if curl -s http://localhost:55553/api/1.0/ > /dev/null; then
+                    echo -e "${GREEN}[+] Metasploit RPC is ready${NC}"
+                    break
+                fi
+                echo -n "."
+                sleep 1
+                if [ $i -eq 30 ]; then
+                    echo -e "\n${RED}[-] Metasploit RPC failed to start within 30 seconds${NC}"
+                    return 1
+                fi
+            done
+        else
+            echo -e "${GREEN}[+] Metasploit RPC daemon is running${NC}"
+        fi
+    fi
+    
+    return 0
+}
+
+# Check and start dependencies
+if ! check_dependencies "$@"; then
+    echo -e "${RED}[-] Failed to start required dependencies${NC}"
+    echo -e "Please check the logs and try again:"
+    echo -e "  ${GREEN}journalctl -u postgresql${NC}"
+    echo -e "  ${GREEN}journalctl -u ollama${NC}"
+    echo -e "  ${GREEN}tail -f /var/log/msfrpcd.log${NC}"
+    exit 1
+fi
+
 # Activate virtual environment if it exists
 if [ -n "$VENV_DIR" ]; then
     echo "Using virtual environment: ${VENV_DIR}"
     source "${VENV_DIR}/bin/activate"
-fi
-
-# Check if Ollama is running
-if ! curl -s -o /dev/null -m 2 http://localhost:11434/; then
-    echo -e "${RED}Error: Ollama service is not running.${NC}"
-    echo -e "Please start Ollama with: ${GREEN}ollama serve${NC}"
-    exit 1
 fi
 
 # Execute the Python script with all arguments
