@@ -2420,6 +2420,13 @@ if __name__ == "__main__":
             # Wait for the process to complete with a timeout
             try:
                 stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+                
+                # Print the actual Nmap output for debugging
+                if stdout:
+                    self.logger.debug(f"Nmap stdout: {stdout}")
+                if stderr:
+                    self.logger.debug(f"Nmap stderr: {stderr}")
+                    
             except subprocess.TimeoutExpired:
                 process.kill()
                 self.logger.error("Nmap scan timed out after 5 minutes")
