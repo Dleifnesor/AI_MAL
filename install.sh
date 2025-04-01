@@ -5,11 +5,21 @@
 # Exit on any error
 set -e
 
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Version
+VERSION="1.0.0"
+
 # Function to check if running with sudo
 check_sudo() {
     if [ "$EUID" -ne 0 ]; then 
-        echo "[-] This script needs to be run with sudo privileges"
-        echo "    Please run: sudo ./install.sh"
+        echo -e "${RED}This script needs to be run with sudo privileges${NC}"
+        echo -e "    Please run: ${GREEN}sudo ./install.sh${NC}"
         exit 1
     fi
 }
@@ -60,7 +70,7 @@ get_linux_distro() {
 }
 
 # Check for essential system dependencies
-echo "[+] Checking essential system dependencies..."
+echo -e "${YELLOW}[+] Checking essential system dependencies...${NC}"
 MISSING_DEPS=()
 ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev" "bc")
 
@@ -86,7 +96,7 @@ elif command_exists brew; then
     UPDATE_CMD="brew update"
     INSTALL_CMD="brew install"
 else
-    echo "[-] Could not determine package manager. Please install dependencies manually."
+    echo -e "${RED}Could not determine package manager. Please install dependencies manually.${NC}"
     exit 1
 fi
 
@@ -98,34 +108,34 @@ for dep in "${ESSENTIAL_DEPS[@]}"; do
 done
 
 if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
-    echo "[!] Installing missing dependencies: ${MISSING_DEPS[*]}"
+    echo -e "${RED}[!] Installing missing dependencies: ${MISSING_DEPS[*]}${NC}"
     eval "$UPDATE_CMD"
     eval "$INSTALL_CMD ${MISSING_DEPS[*]}" || {
-        echo "[-] Failed to install dependencies. Please install them manually:"
-        echo "    sudo $INSTALL_CMD ${MISSING_DEPS[*]}"
+        echo -e "${RED}[-] Failed to install dependencies. Please install them manually:${NC}"
+        echo -e "    ${GREEN}sudo $INSTALL_CMD ${MISSING_DEPS[*]}${NC}"
         exit 1
     }
 fi
 
 # Check for Python 3
 if ! command_exists python3; then
-    echo "Python 3 is not installed. Please install Python 3 and try again."
+    echo -e "${RED}Python 3 is not installed. Please install Python 3 and try again.${NC}"
     exit 1
 fi
 
 # Check Python version (using python3 -c instead of bc)
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 if python3 -c "import sys; exit(0 if sys.version_info >= (3, 8) else 1)"; then
-    echo "[+] Python version $PYTHON_VERSION is compatible"
+    echo -e "${GREEN}[+] Python version $PYTHON_VERSION is compatible${NC}"
 else
-    echo "Python 3.8 or higher is required. Current version: $PYTHON_VERSION"
+    echo -e "${RED}Python 3.8 or higher is required. Current version: $PYTHON_VERSION${NC}"
     exit 1
 fi
 
 # Ensure pip is available and up to date
-echo "[+] Ensuring pip is available and up to date..."
+echo -e "${YELLOW}[+] Ensuring pip is available and up to date...${NC}"
 if ! command_exists pip3; then
-    echo "[!] pip3 not found. Installing python3-pip..."
+    echo -e "${RED}[!] pip3 not found. Installing python3-pip...${NC}"
     sudo apt-get update
     sudo apt-get install -y python3-pip
 fi
@@ -143,23 +153,23 @@ install_dos2unix() {
     elif command_exists brew; then
         brew install dos2unix
     else
-        echo "[-] Could not determine package manager. Please install dos2unix manually."
+        echo -e "${RED}[-] Could not determine package manager. Please install dos2unix manually.${NC}"
         return 1
     fi
     return 0
 }
 
 # Check and install dos2unix
-echo "[+] Checking for dos2unix..."
+echo -e "${YELLOW}[+] Checking for dos2unix...${NC}"
 if ! command_exists dos2unix; then
-    echo "[!] dos2unix is not installed. Attempting to install..."
+    echo -e "${RED}[!] dos2unix is not installed. Attempting to install...${NC}"
     if ! install_dos2unix; then
-        echo "[-] Failed to install dos2unix. Will try to fix line endings manually."
+        echo -e "${RED}[-] Failed to install dos2unix. Will try to fix line endings manually.${NC}"
     fi
 fi
 
 # Fix line endings in all script files
-echo "[+] Fixing line endings in script files..."
+echo -e "${YELLOW}[+] Fixing line endings in script files...${NC}"
 fix_line_endings() {
     local file="$1"
     if command_exists dos2unix; then
@@ -176,34 +186,34 @@ fix_line_endings() {
 }
 
 # Find and fix all Python and shell scripts
-echo "[+] Processing script files..."
+echo -e "${YELLOW}[+] Processing script files...${NC}"
 while IFS= read -r -d '' file; do
-    echo "    Fixing line endings in: $file"
+    echo -e "    Fixing line endings in: $file${NC}"
     fix_line_endings "$file"
 done < <(find "$INSTALL_DIR" -type f \( -name "*.py" -o -name "*.sh" -o -name "AI_MAL" \) -print0)
 
 # Verify the files are executable and have correct line endings
-echo "[+] Verifying file permissions and line endings..."
+echo -e "${YELLOW}[+] Verifying file permissions and line endings...${NC}"
 for file in "$INSTALL_DIR/AI_MAL" "$INSTALL_DIR/adaptive_nmap_scan.py"; do
     if [ -f "$file" ]; then
         # Make executable
         chmod +x "$file"
         # Double-check line endings
         fix_line_endings "$file"
-        echo "    Verified: $file"
+        echo -e "    Verified: $file${NC}"
     else
-        echo "[!] Warning: Could not find $file"
+        echo -e "${RED}[!] Warning: Could not find $file${NC}"
     fi
 done
 
 # Create a virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
-    echo "[+] Creating virtual environment..."
-    python3 -m venv venv || { echo "Failed to create virtual environment"; exit 1; }
+    echo -e "${YELLOW}[+] Creating virtual environment...${NC}"
+    python3 -m venv venv || { echo -e "${RED}Failed to create virtual environment${NC}"; exit 1; }
 fi
 
 # Create the virtual environment activation wrapper script
-echo "[+] Creating virtual environment wrapper script..."
+echo -e "${YELLOW}[+] Creating virtual environment wrapper script...${NC}"
 cat > "$INSTALL_DIR/ai-mal-env" << 'EOF'
 #!/bin/bash
 # Activate the virtual environment and run any specified command
@@ -227,11 +237,11 @@ fi
 chmod +x "$INSTALL_DIR/ai-mal-env"
 
 # Activate the virtual environment
-echo "[+] Activating virtual environment..."
-source venv/bin/activate || { echo "Failed to activate virtual environment"; exit 1; }
+echo -e "${YELLOW}[+] Activating virtual environment...${NC}"
+source venv/bin/activate || { echo -e "${RED}Failed to activate virtual environment${NC}"; exit 1; }
 
 # Upgrade pip and install required packages in the virtual environment
-echo "[+] Installing Python dependencies..."
+echo -e "${YELLOW}[+] Installing Python dependencies...${NC}"
 python3 -m pip install --upgrade pip
 
 # Install all required packages
@@ -271,45 +281,45 @@ python3 -m pip install --upgrade \
     prompt-toolkit \
     click \
     tabulate \
-    || { echo "Failed to install Python dependencies"; exit 1; }
+    || { echo -e "${RED}Failed to install Python dependencies${NC}"; exit 1; }
 
 # Check if nmap is installed
-echo "[+] Checking for system dependencies..."
+echo -e "${YELLOW}[+] Checking for system dependencies...${NC}"
 if ! command_exists nmap; then
-    echo "[!] nmap is not installed. Attempting to install..."
+    echo -e "${RED}[!] nmap is not installed. Attempting to install...${NC}"
     
     # Check the package manager and install nmap
     if command_exists apt-get; then
         sudo apt-get update
-        sudo apt-get install -y nmap || { echo "Failed to install nmap"; exit 1; }
+        sudo apt-get install -y nmap || { echo -e "${RED}Failed to install nmap${NC}"; exit 1; }
     elif command_exists yum; then
-        sudo yum install -y nmap || { echo "Failed to install nmap"; exit 1; }
+        sudo yum install -y nmap || { echo -e "${RED}Failed to install nmap${NC}"; exit 1; }
     elif command_exists dnf; then
-        sudo dnf install -y nmap || { echo "Failed to install nmap"; exit 1; }
+        sudo dnf install -y nmap || { echo -e "${RED}Failed to install nmap${NC}"; exit 1; }
     elif command_exists pacman; then
-        sudo pacman -S --noconfirm nmap || { echo "Failed to install nmap"; exit 1; }
+        sudo pacman -S --noconfirm nmap || { echo -e "${RED}Failed to install nmap${NC}"; exit 1; }
     elif command_exists brew; then
-        brew install nmap || { echo "Failed to install nmap"; exit 1; }
+        brew install nmap || { echo -e "${RED}Failed to install nmap${NC}"; exit 1; }
     else
-        echo "[-] Could not determine package manager. Please install nmap manually."
+        echo -e "${RED}[-] Could not determine package manager. Please install nmap manually.${NC}"
         exit 1
     fi
 fi
 
 # Install additional system dependencies for Nmap
-echo "[+] Installing additional Nmap dependencies..."
+echo -e "${YELLOW}[+] Installing additional Nmap dependencies...${NC}"
 if command_exists apt-get; then
-    sudo apt-get install -y libpcap-dev libssl-dev libffi-dev || { echo "Failed to install Nmap dependencies"; exit 1; }
+    sudo apt-get install -y libpcap-dev libssl-dev libffi-dev || { echo -e "${RED}Failed to install Nmap dependencies${NC}"; exit 1; }
 elif command_exists yum; then
-    sudo yum install -y libpcap-devel openssl-devel libffi-devel || { echo "Failed to install Nmap dependencies"; exit 1; }
+    sudo yum install -y libpcap-devel openssl-devel libffi-devel || { echo -e "${RED}Failed to install Nmap dependencies${NC}"; exit 1; }
 elif command_exists dnf; then
-    sudo dnf install -y libpcap-devel openssl-devel libffi-devel || { echo "Failed to install Nmap dependencies"; exit 1; }
+    sudo dnf install -y libpcap-devel openssl-devel libffi-devel || { echo -e "${RED}Failed to install Nmap dependencies${NC}"; exit 1; }
 elif command_exists pacman; then
-    sudo pacman -S --noconfirm libpcap openssl libffi || { echo "Failed to install Nmap dependencies"; exit 1; }
+    sudo pacman -S --noconfirm libpcap openssl libffi || { echo -e "${RED}Failed to install Nmap dependencies${NC}"; exit 1; }
 fi
 
 # Create Nmap output filter script
-echo "[+] Creating Nmap output filter script..."
+echo -e "${YELLOW}[+] Creating Nmap output filter script...${NC}"
 cat > "$INSTALL_DIR/nmap_filter.py" << 'EOF'
 #!/usr/bin/env python3
 import sys
@@ -368,7 +378,7 @@ EOF
 chmod +x "$INSTALL_DIR/nmap_filter.py"
 
 # Update the Python script to use the filter
-echo "[+] Updating Python script to use Nmap filter..."
+echo -e "${YELLOW}[+] Updating Python script to use Nmap filter...${NC}"
 sed -i 's/subprocess.run(/subprocess.Popen([/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
 sed -i 's/], capture_output=True, text=True, errors="replace")/], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
 sed -i 's/result.stdout/result.stdout.decode("utf-8", errors="replace")/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
@@ -380,29 +390,29 @@ sed -i 's/command = \[/command = ["python3", "'"$INSTALL_DIR"'/nmap_filter.py", 
 # Verify nmap installation
 if command_exists nmap; then
     NMAP_VERSION=$(nmap --version | head -n 1)
-    echo "[+] Found $NMAP_VERSION"
-    echo "[+] AI_MAL will use system nmap via subprocess"
+    echo -e "${GREEN}[+] Found $NMAP_VERSION${NC}"
+    echo -e "${GREEN}[+] AI_MAL will use system nmap via subprocess${NC}"
 else
-    echo "[-] nmap is not installed. Please install it manually."
+    echo -e "${RED}[-] nmap is not installed. Please install it manually.${NC}"
     exit 1
 fi
 
 # Check for Metasploit Framework
-echo "[+] Checking for Metasploit Framework..."
+echo -e "${YELLOW}[+] Checking for Metasploit Framework...${NC}"
 if ! command_exists msfconsole; then
-    echo "[!] Metasploit Framework not found. Attempting to install..."
+    echo -e "${RED}[!] Metasploit Framework not found. Attempting to install...${NC}"
     if command_exists apt-get; then
         sudo apt-get update
         sudo apt-get install -y metasploit-framework postgresql
     else
-        echo "[!] Metasploit Framework not found. MSF integration will not be available."
-        echo "    To install Metasploit Framework, follow instructions at:"
-        echo "    https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
+        echo -e "${RED}[!] Metasploit Framework not found. MSF integration will not be available.${NC}"
+        echo -e "    To install Metasploit Framework, follow instructions at:${NC}"
+        echo -e "    ${GREEN}https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html${NC}"
     fi
 fi
 
 # Set up PostgreSQL for Metasploit with improved error handling
-echo "[+] Setting up PostgreSQL for Metasploit..."
+echo -e "${YELLOW}[+] Setting up PostgreSQL for Metasploit...${NC}"
 setup_postgresql() {
     local max_retries=30
     local retry_count=1
@@ -410,23 +420,23 @@ setup_postgresql() {
     if command_exists psql; then
         # Ensure PostgreSQL is installed and running
         if ! command_exists systemctl || ! systemctl is-active --quiet postgresql; then
-            echo "[!] Starting PostgreSQL service..."
+            echo -e "${RED}[!] Starting PostgreSQL service...${NC}"
             if command_exists systemctl; then
                 # First enable the service
                 sudo systemctl enable postgresql || {
-                    echo "[!] Failed to enable PostgreSQL service"
+                    echo -e "${RED}[!] Failed to enable PostgreSQL service${NC}"
                     return 1
                 }
                 
                 # Then start the service
                 sudo systemctl start postgresql || {
-                    echo "[!] Failed to start PostgreSQL with systemctl, trying service command..."
+                    echo -e "${RED}[!] Failed to start PostgreSQL with systemctl, trying service command...${NC}"
                     sudo service postgresql start
                 }
                 
                 # Verify the service is running
                 if ! systemctl is-active --quiet postgresql; then
-                    echo "[!] PostgreSQL service is not running after start attempt"
+                    echo -e "${RED}[!] PostgreSQL service is not running after start attempt${NC}"
                     return 1
                 fi
             else
@@ -434,10 +444,10 @@ setup_postgresql() {
             fi
             
             # Wait for PostgreSQL to start with timeout
-            echo "[+] Waiting for PostgreSQL to start..."
+            echo -e "${GREEN}[+] Waiting for PostgreSQL to start...${NC}"
             while [ $retry_count -le $max_retries ]; do
                 if pg_isready -q; then
-                    echo "[+] PostgreSQL is ready"
+                    echo -e "${GREEN}[+] PostgreSQL is ready${NC}"
                     break
                 fi
                 echo -n "."
@@ -446,14 +456,14 @@ setup_postgresql() {
             done
             
             if [ $retry_count -gt $max_retries ]; then
-                echo "[-] PostgreSQL failed to start within $max_retries seconds"
+                echo -e "${RED}[-] PostgreSQL failed to start within $max_retries seconds${NC}"
                 # Try to get more information about the failure
                 if command_exists systemctl; then
-                    echo "[!] PostgreSQL service status:"
+                    echo -e "${RED}[!] PostgreSQL service status:${NC}"
                     systemctl status postgresql | cat
                 fi
                 if [ -f /var/log/postgresql/postgresql-*.log ]; then
-                    echo "[!] Last few lines of PostgreSQL log:"
+                    echo -e "${RED}[!] Last few lines of PostgreSQL log:${NC}"
                     tail -n 20 /var/log/postgresql/postgresql-*.log
                 fi
                 return 1
@@ -461,22 +471,22 @@ setup_postgresql() {
         fi
         
         # Initialize Metasploit database with proper error handling
-        echo "[+] Initializing Metasploit database..."
+        echo -e "${GREEN}[+] Initializing Metasploit database...${NC}"
         if command_exists msfdb; then
             if ! sudo msfdb init; then
-                echo "[!] msfdb init failed, trying alternative setup..."
+                echo -e "${RED}[!] msfdb init failed, trying alternative setup...${NC}"
                 
                 # Create msf user and database with proper error handling
                 if ! sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null; then
-                    echo "[!] User msf might already exist, continuing..."
+                    echo -e "${RED}[!] User msf might already exist, continuing...${NC}"
                 fi
                 
                 if ! sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null; then
-                    echo "[!] Database msf might already exist, continuing..."
+                    echo -e "${RED}[!] Database msf might already exist, continuing...${NC}"
                 fi
                 
                 if ! sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null; then
-                    echo "[!] Failed to grant privileges, continuing..."
+                    echo -e "${RED}[!] Failed to grant privileges, continuing...${NC}"
                 fi
                 
                 # Create database.yml with proper permissions
@@ -498,7 +508,7 @@ EOF
             fi
         fi
     else
-        echo "[!] PostgreSQL not found. Installing..."
+        echo -e "${RED}[!] PostgreSQL not found. Installing...${NC}"
         if command_exists apt-get; then
             sudo apt-get update
             sudo apt-get install -y postgresql postgresql-contrib
@@ -510,7 +520,7 @@ EOF
                 
                 # Verify the service is running
                 if ! systemctl is-active --quiet postgresql; then
-                    echo "[!] PostgreSQL service is not running after installation"
+                    echo -e "${RED}[!] PostgreSQL service is not running after installation${NC}"
                     return 1
                 fi
             else
@@ -518,15 +528,15 @@ EOF
             fi
             
             # Retry database initialization with timeout
-            echo "[+] Retrying Metasploit database initialization..."
+            echo -e "${GREEN}[+] Retrying Metasploit database initialization...${NC}"
             if command_exists msfdb; then
                 if ! sudo msfdb init; then
-                    echo "[-] Failed to initialize Metasploit database"
+                    echo -e "${RED}[-] Failed to initialize Metasploit database${NC}"
                     return 1
                 fi
             fi
         else
-            echo "[-] PostgreSQL installation failed. Metasploit will run without database support."
+            echo -e "${RED}[-] PostgreSQL installation failed. Metasploit will run without database support.${NC}"
             return 1
         fi
     fi
@@ -535,35 +545,35 @@ EOF
 
 # Run PostgreSQL setup
 if ! setup_postgresql; then
-    echo "[!] Warning: Metasploit database setup completed with errors"
-    echo "    Some features may be limited"
+    echo -e "${RED}[!] Warning: Metasploit database setup completed with errors${NC}"
+    echo -e "    Some features may be limited${NC}"
 fi
 
 # Function to install Ollama
 install_ollama() {
-    echo "[+] Installing Ollama..."
+    echo -e "${YELLOW}[+] Installing Ollama...${NC}"
     
     # Check if Ollama is already installed
     if command_exists ollama; then
-        echo "[+] Ollama is already installed"
+        echo -e "${GREEN}[+] Ollama is already installed${NC}"
         return 0
     fi
     
     # Download and install Ollama
-    echo "[+] Downloading Ollama..."
+    echo -e "${YELLOW}[+] Downloading Ollama...${NC}"
     curl -fsSL https://ollama.com/install.sh | sudo sh || {
-        echo "[-] Failed to install Ollama"
+        echo -e "${RED}[-] Failed to install Ollama${NC}"
         return 1
     }
     
     # Verify installation
     if ! command_exists ollama; then
-        echo "[-] Ollama installation failed"
+        echo -e "${RED}[-] Ollama installation failed${NC}"
         return 1
     fi
     
     # Start Ollama service
-    echo "[+] Starting Ollama service..."
+    echo -e "${YELLOW}[+] Starting Ollama service...${NC}"
     if command_exists systemctl; then
         sudo systemctl enable ollama
         sudo systemctl start ollama
@@ -572,28 +582,28 @@ install_ollama() {
     fi
     
     # Wait for Ollama to be ready
-    echo "[+] Waiting for Ollama to start..."
+    echo -e "${GREEN}[+] Waiting for Ollama to start...${NC}"
     for i in {1..30}; do
         if curl -s http://localhost:11434/api/version > /dev/null; then
-            echo "[+] Ollama is ready"
+            echo -e "${GREEN}[+] Ollama is ready${NC}"
             break
         fi
         echo -n "."
         sleep 1
         if [ $i -eq 30 ]; then
-            echo -e "\n[-] Ollama failed to start within 30 seconds"
+            echo -e "${RED}[-] Ollama failed to start within 30 seconds${NC}"
             return 1
         fi
     done
     
     # Pull required models
-    echo "[+] Pulling required models..."
+    echo -e "${YELLOW}[+] Pulling required models...${NC}"
     local models=("codellama" "gemma3:1b" "qwen2.5-coder:7b")
     for model in "${models[@]}"; do
-        echo "[+] Pulling model: $model"
+        echo -e "${YELLOW}[+] Pulling model: $model${NC}"
         if ! ollama pull "$model"; then
-            echo "[!] Warning: Failed to pull model: $model"
-            echo "    Some features may be limited"
+            echo -e "${RED}[!] Warning: Failed to pull model: $model${NC}"
+            echo -e "    Some features may be limited${NC}"
         fi
     done
     
@@ -602,22 +612,22 @@ install_ollama() {
 
 # Install Ollama
 if ! install_ollama; then
-    echo "[!] Warning: Ollama installation completed with errors"
-    echo "    Some features may be limited"
+    echo -e "${RED}[!] Warning: Ollama installation completed with errors${NC}"
+    echo -e "    Some features may be limited${NC}"
 fi
 
 # Make the main files executable
-echo "[+] Setting executable permissions..."
+echo -e "${GREEN}[+] Setting executable permissions...${NC}"
 chmod +x "$INSTALL_DIR/AI_MAL"
 
 # Create a symbolic link to the AI_MAL script in /usr/local/bin if possible
 if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
-    echo "[+] Creating symlink in /usr/local/bin..."
+    echo -e "${GREEN}[+] Creating symlink in /usr/local/bin...${NC}"
     ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
-    echo "[+] AI_MAL installed system-wide. You can run it from any directory with 'AI_MAL'"
+    echo -e "${GREEN}[+] AI_MAL installed system-wide. You can run it from any directory with 'AI_MAL'${NC}"
 else
-    echo "[!] Could not create symlink in /usr/local/bin (permission denied)"
-    echo "    You can run AI_MAL from this directory with './AI_MAL'"
+    echo -e "${RED}[!] Could not create symlink in /usr/local/bin (permission denied)${NC}"
+    echo -e "    You can run AI_MAL from this directory with './AI_MAL'${NC}"
 fi
 
 # Final success message
@@ -648,8 +658,8 @@ handle_error() {
     local exit_code=$1
     local error_message=$2
     
-    echo "[-] Error: $error_message"
-    echo "    Exit code: $exit_code"
+    echo -e "${RED}[-] Error: $error_message${NC}"
+    echo -e "    Exit code: $exit_code${NC}"
     
     # Cleanup temporary files
     if [ -f "$TEMP_DIR" ]; then
@@ -705,13 +715,13 @@ check_network() {
     local max_retries=3
     local retry_count=1
     
-    echo "[+] Checking network connectivity..."
+    echo -e "${GREEN}[+] Checking network connectivity...${NC}"
     while [ $retry_count -le $max_retries ]; do
         if curl -s https://www.google.com > /dev/null; then
-            echo "[+] Network connection verified"
+            echo -e "${GREEN}[+] Network connection verified${NC}"
             return 0
         fi
-        echo "[!] Network connection failed (attempt $retry_count/$max_retries)"
+        echo -e "${RED}[!] Network connection failed (attempt $retry_count/$max_retries)${NC}"
         retry_count=$((retry_count + 1))
         sleep 2
     done
