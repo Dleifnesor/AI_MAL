@@ -298,10 +298,23 @@ setup_postgresql() {
         if ! command_exists systemctl || ! systemctl is-active --quiet postgresql; then
             echo "[!] Starting PostgreSQL service..."
             if command_exists systemctl; then
+                # First enable the service
+                sudo systemctl enable postgresql || {
+                    echo "[!] Failed to enable PostgreSQL service"
+                    return 1
+                }
+                
+                # Then start the service
                 sudo systemctl start postgresql || {
                     echo "[!] Failed to start PostgreSQL with systemctl, trying service command..."
                     sudo service postgresql start
                 }
+                
+                # Verify the service is running
+                if ! systemctl is-active --quiet postgresql; then
+                    echo "[!] PostgreSQL service is not running after start attempt"
+                    return 1
+                fi
             else
                 sudo service postgresql start
             fi
@@ -320,6 +333,15 @@ setup_postgresql() {
             
             if [ $retry_count -gt $max_retries ]; then
                 echo "[-] PostgreSQL failed to start within $max_retries seconds"
+                # Try to get more information about the failure
+                if command_exists systemctl; then
+                    echo "[!] PostgreSQL service status:"
+                    systemctl status postgresql | cat
+                fi
+                if [ -f /var/log/postgresql/postgresql-*.log ]; then
+                    echo "[!] Last few lines of PostgreSQL log:"
+                    tail -n 20 /var/log/postgresql/postgresql-*.log
+                fi
                 return 1
             fi
         fi
@@ -367,9 +389,16 @@ EOF
             sudo apt-get update
             sudo apt-get install -y postgresql postgresql-contrib
             
-            # Try to start PostgreSQL after installation
+            # Enable and start PostgreSQL after installation
             if command_exists systemctl; then
+                sudo systemctl enable postgresql
                 sudo systemctl start postgresql
+                
+                # Verify the service is running
+                if ! systemctl is-active --quiet postgresql; then
+                    echo "[!] PostgreSQL service is not running after installation"
+                    return 1
+                fi
             else
                 sudo service postgresql start
             fi
