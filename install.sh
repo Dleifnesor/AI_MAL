@@ -23,7 +23,7 @@ command_exists() {
 # Check for essential system dependencies
 echo "[+] Checking essential system dependencies..."
 MISSING_DEPS=()
-ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev")
+ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev" "bc")
 
 for dep in "${ESSENTIAL_DEPS[@]}"; do
     if ! dpkg -l | grep -q "^ii  $dep"; then
@@ -47,9 +47,11 @@ if ! command_exists python3; then
     exit 1
 fi
 
-# Check Python version
+# Check Python version (using python3 -c instead of bc)
 PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-if (( $(echo "$PYTHON_VERSION < 3.8" | bc -l) )); then
+if python3 -c "import sys; exit(0 if sys.version_info >= (3, 8) else 1)"; then
+    echo "[+] Python version $PYTHON_VERSION is compatible"
+else
     echo "Python 3.8 or higher is required. Current version: $PYTHON_VERSION"
     exit 1
 fi
@@ -61,9 +63,6 @@ if ! command_exists pip3; then
     sudo apt-get update
     sudo apt-get install -y python3-pip
 fi
-
-# Update pip to latest version
-python3 -m pip install --upgrade pip
 
 # Function to install dos2unix based on the package manager
 install_dos2unix() {
@@ -165,11 +164,11 @@ chmod +x "$INSTALL_DIR/ai-mal-env"
 echo "[+] Activating virtual environment..."
 source venv/bin/activate || { echo "Failed to activate virtual environment"; exit 1; }
 
-# Upgrade pip and install required packages
+# Upgrade pip and install required packages in the virtual environment
 echo "[+] Installing Python dependencies..."
 python3 -m pip install --upgrade pip
 
-# Install required packages directly
+# Install required packages in the virtual environment
 python3 -m pip install --upgrade requests pymetasploit3 psutil netifaces || { 
     echo "Failed to install Python dependencies"
     exit 1
