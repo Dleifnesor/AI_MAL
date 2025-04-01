@@ -55,7 +55,6 @@ apt-get install -y \
     nmap-common \
     ndiff \
     ncat \
-    nping \
     libpcap-dev \
     ca-certificates \
     dos2unix \
