@@ -59,7 +59,7 @@ apt-get install -y \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \
-    libsmbclient \
+    libsmbclient0 \
     libsmbclient-dev \
     samba \
     samba-dev \
@@ -67,7 +67,6 @@ apt-get install -y \
     python3-ldap \
     python3-kerberos \
     python3-gssapi \
-    python3-ntlm \
     python3-cryptography \
     python3-openssl \
     python3-dns \
@@ -76,7 +75,6 @@ apt-get install -y \
     python3-scapy \
     python3-requests \
     python3-psutil \
-    python3-wmi \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
@@ -138,6 +136,7 @@ python3 -m pip install --upgrade \
     dnspython \
     python-whois \
     wmi \
+    ntlm-auth \
     || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
 
 # Install smbclient separately with error handling
