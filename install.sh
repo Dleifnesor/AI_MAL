@@ -24,8 +24,17 @@ check_sudo() {
     fi
 }
 
-# Check for sudo privileges
+# Function to check if running on Kali Linux
+check_kali() {
+    if ! grep -qi "kali" /etc/os-release; then
+        echo -e "${RED}This script is designed for Kali Linux only${NC}"
+        exit 1
+    fi
+}
+
+# Check for sudo privileges and Kali Linux
 check_sudo
+check_kali
 
 # Determine the installation directory
 INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -68,17 +77,17 @@ apt-get install -y \
     python3-ldap \
     python3-kerberos \
     python3-gssapi \
-    python3-ntlm \
     python3-cryptography \
     python3-paramiko \
-    python3-wmi \
     python3-netifaces \
     python3-requests \
-    python3-ipaddress \
     python3-dateutil \
     python3-pymetasploit3 \
     python3-ollama \
-    metasploit-framework
+    metasploit-framework \
+    ca-certificates \
+    gnupg \
+    software-properties-common
 
 # Create and activate virtual environment
 echo -e "${YELLOW}[+] Setting up Python virtual environment...${NC}"
@@ -89,7 +98,7 @@ source venv/bin/activate
 # Install Python dependencies
 echo -e "${YELLOW}[+] Installing Python dependencies...${NC}"
 pip install --upgrade pip
-pip install \
+pip install --no-cache-dir \
     python-nmap==0.7.1 \
     requests==2.31.0 \
     netifaces==0.11.0 \
@@ -102,7 +111,9 @@ pip install \
     ipaddress==1.0.23 \
     ollama==0.1.6 \
     rich==13.7.0 \
-    click==8.1.7
+    click==8.1.7 \
+    ntlm-auth==1.5.0 \
+    pywinrm==0.4.3
 
 # Install Ollama
 echo -e "${YELLOW}[+] Installing Ollama...${NC}"
@@ -171,6 +182,20 @@ chmod +x AI_MAL
 # Create symlink in /usr/local/bin
 echo -e "${YELLOW}[+] Creating symlink in /usr/local/bin...${NC}"
 ln -sf "$INSTALL_DIR/AI_MAL" /usr/local/bin/AI_MAL
+
+# Verify Nmap installation
+echo -e "${YELLOW}[+] Verifying Nmap installation...${NC}"
+if ! command -v nmap &> /dev/null; then
+    echo -e "${RED}Nmap installation failed${NC}"
+    exit 1
+fi
+
+# Test Nmap with a basic scan
+echo -e "${YELLOW}[+] Testing Nmap with a basic scan...${NC}"
+nmap -sn localhost || {
+    echo -e "${RED}Nmap test failed${NC}"
+    exit 1
+}
 
 # Final success message
 echo
