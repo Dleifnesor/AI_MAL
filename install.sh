@@ -105,6 +105,17 @@ ESSENTIAL_DEPS=(
     "libgmp-dev"
     "libmpfr-dev"
     "libmpc-dev"
+    "libldap2-dev"
+    "libsasl2-dev"
+    "libkrb5-dev"
+    "libssl-dev"
+    "libtls-dev"
+    "libgnutls28-dev"
+    "libsasl2-modules"
+    "libsasl2-modules-gssapi-mit"
+    "libsasl2-modules-ldap"
+    "libsasl2-modules-otp"
+    "libsasl2-modules-sql"
 )
 
 # Determine package manager based on system
@@ -273,11 +284,12 @@ chmod +x "$INSTALL_DIR/ai-mal-env"
 echo -e "${YELLOW}[+] Activating virtual environment...${NC}"
 source venv/bin/activate || { echo -e "${RED}Failed to activate virtual environment${NC}"; exit 1; }
 
-# Upgrade pip and install required packages in the virtual environment
+# Install Python packages in the virtual environment
 echo -e "${YELLOW}[+] Installing Python dependencies...${NC}"
 python3 -m pip install --upgrade pip
 
-# Install all required packages
+# Install packages in specific order to handle dependencies
+echo -e "${YELLOW}[+] Installing core dependencies...${NC}"
 python3 -m pip install --upgrade \
     requests \
     pymetasploit3 \
@@ -294,7 +306,24 @@ python3 -m pip install --upgrade \
     pyOpenSSL \
     dnspython \
     python-whois \
-    python-ldap \
+    || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
+
+# Install python-ldap separately with proper error handling
+echo -e "${YELLOW}[+] Installing python-ldap...${NC}"
+python3 -m pip install --upgrade python-ldap || {
+    echo -e "${RED}Failed to install python-ldap from PyPI, trying alternative method...${NC}"
+    # Try installing from system package
+    if command_exists apt-get; then
+        sudo apt-get install -y python3-ldap || {
+            echo -e "${RED}Failed to install python-ldap system package${NC}"
+            echo -e "${YELLOW}Continuing without LDAP support...${NC}"
+        }
+    fi
+}
+
+# Install remaining packages
+echo -e "${YELLOW}[+] Installing remaining dependencies...${NC}"
+python3 -m pip install --upgrade \
     impacket \
     pyasn1 \
     pycryptodomex \
@@ -313,7 +342,7 @@ python3 -m pip install --upgrade \
     prompt-toolkit \
     click \
     tabulate \
-    || { echo -e "${RED}Failed to install Python dependencies${NC}"; exit 1; }
+    || { echo -e "${RED}Failed to install remaining dependencies${NC}"; exit 1; }
 
 # Install smbclient Python package after system dependencies
 echo -e "${YELLOW}[+] Installing smbclient Python package...${NC}"
