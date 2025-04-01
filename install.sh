@@ -20,6 +20,27 @@ command_exists() {
     command -v "$1" > /dev/null 2>&1
 }
 
+# Check for essential system dependencies
+echo "[+] Checking essential system dependencies..."
+MISSING_DEPS=()
+ESSENTIAL_DEPS=("curl" "git" "python3" "python3-pip" "python3-venv" "gcc" "python3-dev" "libpq-dev" "libffi-dev")
+
+for dep in "${ESSENTIAL_DEPS[@]}"; do
+    if ! dpkg -l | grep -q "^ii  $dep"; then
+        MISSING_DEPS+=("$dep")
+    fi
+done
+
+if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
+    echo "[!] Installing missing dependencies: ${MISSING_DEPS[*]}"
+    sudo apt-get update
+    sudo apt-get install -y "${MISSING_DEPS[@]}" || {
+        echo "[-] Failed to install dependencies. Please install them manually:"
+        echo "    sudo apt-get install ${MISSING_DEPS[*]}"
+        exit 1
+    }
+fi
+
 # Check for Python 3
 if ! command_exists python3; then
     echo "Python 3 is not installed. Please install Python 3 and try again."
@@ -32,6 +53,17 @@ if (( $(echo "$PYTHON_VERSION < 3.8" | bc -l) )); then
     echo "Python 3.8 or higher is required. Current version: $PYTHON_VERSION"
     exit 1
 fi
+
+# Ensure pip is available and up to date
+echo "[+] Ensuring pip is available and up to date..."
+if ! command_exists pip3; then
+    echo "[!] pip3 not found. Installing python3-pip..."
+    sudo apt-get update
+    sudo apt-get install -y python3-pip
+fi
+
+# Update pip to latest version
+python3 -m pip install --upgrade pip
 
 # Function to install dos2unix based on the package manager
 install_dos2unix() {
@@ -178,39 +210,94 @@ fi
 
 # Check for Metasploit Framework
 echo "[+] Checking for Metasploit Framework..."
-if command_exists msfconsole; then
-    echo "[+] Metasploit Framework found"
-    
-    # Check if PostgreSQL is installed for Metasploit
-    if command_exists psql; then
-        echo "[+] PostgreSQL found for Metasploit database"
-        
-        # Check if PostgreSQL is running
-        if command_exists systemctl && systemctl is-active --quiet postgresql; then
-            echo "[+] PostgreSQL service is running"
-        else
-            echo "[!] Starting PostgreSQL service..."
-            if command_exists systemctl; then
-                sudo systemctl start postgresql || echo "[!] Failed to start PostgreSQL. You may need to start it manually."
-            fi
-        fi
-        
-        # Initialize Metasploit database if needed
-        echo "[+] Initializing Metasploit database..."
-        if command_exists msfdb; then
-            sudo msfdb init || echo "[!] Failed to initialize Metasploit database. You may need to initialize it manually."
-        fi
+if ! command_exists msfconsole; then
+    echo "[!] Metasploit Framework not found. Attempting to install..."
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y metasploit-framework postgresql
     else
-        echo "[!] PostgreSQL not found. Metasploit will run without database support."
+        echo "[!] Metasploit Framework not found. MSF integration will not be available."
+        echo "    To install Metasploit Framework, follow instructions at:"
+        echo "    https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
     fi
-else
-    echo "[!] Metasploit Framework not found. MSF integration will not be available."
-    echo "    To install Metasploit Framework, follow instructions at:"
-    echo "    https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
 fi
 
-# Check Ollama installation
-echo "[+] Checking for Ollama..."
+# Set up PostgreSQL for Metasploit
+echo "[+] Setting up PostgreSQL for Metasploit..."
+if command_exists psql; then
+    # Ensure PostgreSQL is installed and running
+    if ! command_exists systemctl || ! systemctl is-active --quiet postgresql; then
+        echo "[!] Starting PostgreSQL service..."
+        if command_exists systemctl; then
+            sudo systemctl start postgresql || {
+                echo "[!] Failed to start PostgreSQL with systemctl, trying service command..."
+                sudo service postgresql start
+            }
+        else
+            sudo service postgresql start
+        fi
+        
+        # Wait for PostgreSQL to start
+        echo "[+] Waiting for PostgreSQL to start..."
+        for i in {1..30}; do
+            if pg_isready -q; then
+                break
+            fi
+            sleep 1
+        done
+    fi
+    
+    # Initialize Metasploit database
+    echo "[+] Initializing Metasploit database..."
+    if command_exists msfdb; then
+        sudo msfdb init || {
+            echo "[!] msfdb init failed, trying alternative setup..."
+            # Create msf user and database if they don't exist
+            sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null || true
+            sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
+            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
+            
+            # Create database.yml if it doesn't exist
+            MSF_CONFIG_DIR="$HOME/.msf4"
+            mkdir -p "$MSF_CONFIG_DIR"
+            cat << 'EOF' > "$MSF_CONFIG_DIR/database.yml"
+production:
+  adapter: postgresql
+  database: msf
+  username: msf
+  password: msf
+  host: localhost
+  port: 5432
+  pool: 5
+  timeout: 5
+EOF
+        }
+    fi
+else
+    echo "[!] PostgreSQL not found. Installing..."
+    if command_exists apt-get; then
+        sudo apt-get update
+        sudo apt-get install -y postgresql postgresql-contrib
+        
+        # Try to start PostgreSQL after installation
+        if command_exists systemctl; then
+            sudo systemctl start postgresql
+        else
+            sudo service postgresql start
+        fi
+        
+        # Retry database initialization
+        echo "[+] Retrying Metasploit database initialization..."
+        if command_exists msfdb; then
+            sudo msfdb init
+        fi
+    else
+        echo "[!] PostgreSQL installation failed. Metasploit will run without database support."
+    fi
+fi
+
+# Check Ollama installation and setup
+echo "[+] Setting up Ollama..."
 if ! command_exists ollama; then
     echo "[!] Ollama not found. Installing..."
     
@@ -218,6 +305,19 @@ if ! command_exists ollama; then
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         # Linux installation
         curl -fsSL https://ollama.com/install.sh | sh
+        
+        # Wait for Ollama installation to complete
+        echo "[+] Waiting for Ollama installation to complete..."
+        sleep 5
+        
+        # Start Ollama service
+        if command_exists systemctl; then
+            sudo systemctl enable ollama
+            sudo systemctl start ollama
+        else
+            # Start Ollama in the background
+            nohup ollama serve > /dev/null 2>&1 &
+        fi
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS installation
         if command_exists brew; then
@@ -229,13 +329,15 @@ if ! command_exists ollama; then
     elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
         # Windows installation instructions
         echo "[!] Windows detected. Please install Ollama manually:"
-        echo "   Visit https://ollama.com/download and download the Windows installer"
-        echo "   Ollama must be running before using AI_MAL"
+        echo "   1. Visit https://ollama.com/download"
+        echo "   2. Download and run the Windows installer"
+        echo "   3. After installation, run 'ollama serve' in a new terminal"
+        echo "   4. Wait for the service to start, then continue this installation"
+        read -p "Press Enter once Ollama is installed and running..."
     else
         echo "[-] Unsupported operating system. Please install Ollama manually from https://ollama.com/download"
+        exit 1
     fi
-else
-    echo "[+] Ollama already installed"
 fi
 
 # Configure Ollama to listen on all interfaces
@@ -258,33 +360,52 @@ EOF
     
     # Wait for Ollama to start up
     echo "[+] Waiting for Ollama to start..."
-    sleep 5
+    for i in {1..30}; do
+        if curl -s "http://localhost:11434/api/tags" > /dev/null; then
+            echo "[+] Ollama API is now accessible"
+            break
+        fi
+        echo -n "."
+        sleep 1
+    done
+    echo
 else
-    echo "[!] Ollama service not found, adding environment variables to system profile..."
-    # Add environment variables to system-wide profile
-    PROFILE_FILE="/etc/profile.d/ollama.sh"
-    cat << 'EOF' | sudo tee "$PROFILE_FILE" > /dev/null 2>&1 || {
-        # If system-wide profile fails, try user profile
+    echo "[!] Ollama service not found, configuring environment variables..."
+    # Try system-wide profile first, fall back to user profile
+    if [ -w "/etc/profile.d" ]; then
+        PROFILE_FILE="/etc/profile.d/ollama.sh"
+        echo '# Ollama configuration' | sudo tee "$PROFILE_FILE" > /dev/null
+        echo 'export OLLAMA_HOST=0.0.0.0:11434' | sudo tee -a "$PROFILE_FILE" > /dev/null
+        echo 'export OLLAMA_ORIGINS=*' | sudo tee -a "$PROFILE_FILE" > /dev/null
+    else
         PROFILE_FILE="$HOME/.profile"
-        cat << 'INNER_EOF' >> "$PROFILE_FILE"
-# Ollama configuration
-export OLLAMA_HOST=0.0.0.0:11434
-export OLLAMA_ORIGINS=*
-INNER_EOF
-    }
+        echo '# Ollama configuration' >> "$PROFILE_FILE"
+        echo 'export OLLAMA_HOST=0.0.0.0:11434' >> "$PROFILE_FILE"
+        echo 'export OLLAMA_ORIGINS=*' >> "$PROFILE_FILE"
+    fi
     
-    # Source the profile
-    echo "[+] Added Ollama environment variables to profile"
-    echo "[!] You may need to restart your shell or run: source $PROFILE_FILE"
+    # Export variables for current session
+    export OLLAMA_HOST=0.0.0.0:11434
+    export OLLAMA_ORIGINS=*
     
-    # Try to restart Ollama if it's running
+    # Restart Ollama if it's running
     if pgrep ollama > /dev/null; then
-        echo "[+] Stopping and restarting Ollama..."
+        echo "[+] Restarting Ollama with new configuration..."
         pkill ollama
         sleep 2
         nohup ollama serve > /dev/null 2>&1 &
+        
+        # Wait for Ollama to start
         echo "[+] Waiting for Ollama to start..."
-        sleep 5
+        for i in {1..30}; do
+            if curl -s "http://localhost:11434/api/tags" > /dev/null; then
+                echo "[+] Ollama API is now accessible"
+                break
+            fi
+            echo -n "."
+            sleep 1
+        done
+        echo
     fi
 fi
 
@@ -293,32 +414,38 @@ echo "[+] Checking Ollama API and pulling models..."
 if curl -s "http://localhost:11434/api/tags" > /dev/null; then
     echo "[+] Ollama API is accessible. Pulling required models..."
     
-    # Pull primary model: qwen2.5-coder:7b (recommended for better results)
-    echo "[+] Pulling qwen2.5-coder:7b model (primary model)..."
-    echo "    This may take some time depending on your internet connection..."
-    ollama pull qwen2.5-coder:7b || echo "[!] Failed to pull qwen2.5-coder:7b model. You'll need to pull it manually."
+    # Function to pull model with progress indicator
+    pull_model() {
+        local model=$1
+        local desc=$2
+        echo "[+] Pulling $model model ($desc)..."
+        echo "    This may take some time depending on your internet connection..."
+        if ollama pull "$model" > /dev/null 2>&1; then
+            echo "[+] Successfully pulled $model"
+            return 0
+        else
+            echo "[!] Failed to pull $model. Will try again with progress output..."
+            if ollama pull "$model"; then
+                echo "[+] Successfully pulled $model on second attempt"
+                return 0
+            else
+                echo "[!] Failed to pull $model. You'll need to pull it manually with: ollama pull $model"
+                return 1
+            fi
+        fi
+    }
     
-    # Pull backup model: gemma3:1b (for low-resource compatibility)
-    echo "[+] Pulling gemma3:1b model (for systems with limited resources)..."
-    echo "    This is a smaller model for systems with limited RAM..."
-    ollama pull gemma3:1b || echo "[!] Failed to pull gemma3:1b model. You'll need to pull it manually."
+    # Pull models with retries
+    pull_model "qwen2.5-coder:7b" "primary model, recommended for better results"
+    pull_model "gemma3:1b" "backup model for systems with limited resources"
     
     # Verify models were installed
-    if ollama list | grep -q "qwen2.5-coder:7b"; then
-        echo "[+] Successfully installed qwen2.5-coder:7b model"
-    else
-        echo "[!] Warning: qwen2.5-coder:7b model may not have installed correctly"
-    fi
-    
-    if ollama list | grep -q "gemma3:1b"; then
-        echo "[+] Successfully installed gemma3:1b model"
-    else
-        echo "[!] Warning: gemma3:1b model may not have installed correctly"
-    fi
+    echo "[+] Verifying installed models..."
+    ollama list
 else
     echo "[!] Could not connect to Ollama API at http://localhost:11434"
-    echo "    Make sure Ollama is running before using AI_MAL"
-    echo "    You'll need to pull the models manually with:"
+    echo "    Please check if Ollama is running with: ollama serve"
+    echo "    After starting Ollama, pull the required models manually:"
     echo "      ollama pull qwen2.5-coder:7b"
     echo "      ollama pull gemma3:1b"
 fi
