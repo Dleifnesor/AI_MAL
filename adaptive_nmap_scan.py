@@ -2747,216 +2747,75 @@ if __name__ == "__main__":
             
         return parameters
     
-    def run_nmap_scan(self, scan_params):
-        """Run an Nmap scan with the given parameters."""
-        if not scan_params:
-            self.logger.error("No scan parameters provided")
-            return None
-            
-        self.logger.info(f"Scan parameters: {' '.join(scan_params)}")
-        
-        target = self.target if self.target else self.discovered_hosts[self.current_target_index]
-        self.logger.info(f"Target: {target}")
-        
-        # Create a temporary file for XML output
+    def run_nmap_scan(self, target):
+        """Run Nmap scan with optimized parameters."""
         try:
-            fd, xml_output = tempfile.mkstemp(suffix='.xml', prefix='nmap_')
-            os.close(fd)
-            self.logger.debug(f"Created temporary XML file: {xml_output}")
+            self.logger.info(f"Starting Nmap scan against {target}")
             
-            # Build the nmap command with optimized parameters
-            nmap_cmd = ['nmap']
+            # Construct Nmap command with optimized parameters
+            command = [
+                "nmap",
+                "-sS",  # SYN scan
+                "-sV",  # Version detection
+                "-O",   # OS detection
+                "--version-intensity", "5",  # Maximum version detection intensity
+                "--max-retries", "2",  # Reduce retries for faster scanning
+                "--max-scan-delay", "5s",  # Maximum delay between probes
+                "--min-parallelism", "10",  # Minimum parallel probes
+                "--max-parallelism", "100",  # Maximum parallel probes
+                "--min-hostgroup", "10",  # Minimum hosts to scan in parallel
+                "--max-hostgroup", "100",  # Maximum hosts to scan in parallel
+                "--min-rtt-timeout", "100ms",  # Minimum RTT timeout
+                "--max-rtt-timeout", "1000ms",  # Maximum RTT timeout
+                "--initial-rtt-timeout", "500ms",  # Initial RTT timeout
+                "--max-retries", "2",  # Maximum number of retries
+                "--host-timeout", "30s",  # Maximum time to wait for a host
+                "--scan-delay", "1ms",  # Minimum time between probes
+                "--max-scan-delay", "10s",  # Maximum time between probes
+                "--min-rate", "100",  # Minimum packets per second
+                "--max-rate", "1000",  # Maximum packets per second
+                "-p-",  # Scan all ports
+                "--open",  # Only show open ports
+                "-T4",  # Aggressive timing template
+                "-n",   # No DNS resolution
+                "--append-output",  # Append to output file
+                "-oX", f"{self.output_file}",  # XML output
+                target
+            ]
             
-            # Add XML output first
-            nmap_cmd.extend(['-oX', xml_output])
-            
-            # Add optimized parameters
-            nmap_cmd.extend([
-                '--min-parallelism', '10',  # Increase parallel probes
-                '--max-retries', '2',       # Limit retries
-                '--max-scan-delay', '5s',   # Limit scan delay
-                '--min-rate', '100',        # Minimum packets per second
-                '--max-rate', '1000',       # Maximum packets per second
-                '--nsock-engine', 'epoll',  # Use epoll for better performance
-                '--no-stylesheet',          # Don't include stylesheet in XML
-                '--no-system-dns',          # Don't use system DNS
-                '--dns-servers', '8.8.8.8,8.8.4.4'  # Use Google DNS
-            ])
-            
-            # Add all parameters except target
-            for param in scan_params:
-                if param != target:  # Avoid adding target twice
-                    nmap_cmd.append(param)
-            
-            # Add target last
-            nmap_cmd.append(target)
-            
-            self.logger.debug(f"Full nmap command: {' '.join(nmap_cmd)}")
-            
-            # Start animation
-            animation = self.viewer.scanning_animation(f"Scanning {target}")
-            
-            # Run nmap as a subprocess with proper timeout
-            self.logger.info(f"Starting Nmap scan with command: {' '.join(nmap_cmd)}")
-            
-            # Run the command and capture output in real-time
+            # Run Nmap with output filtering
             process = subprocess.Popen(
-                nmap_cmd,
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=1,
-                encoding='utf-8',
-                errors='replace'  # Handle invalid UTF-8 gracefully
+                text=True,
+                errors='replace'
             )
             
-            # Read output in real-time with timeout
-            output_lines = []
-            error_lines = []
-            start_time = time.time()
-            timeout = 300  # 5 minutes timeout
-            
+            # Read output in real-time
             while True:
-                # Check for timeout
-                if time.time() - start_time > timeout:
-                    process.terminate()
-                    self.logger.error("Nmap scan timed out after 5 minutes")
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
                     break
-                
-                # Read output line by line with timeout
-                try:
-                    output_line = process.stdout.readline()
-                    if output_line:
-                        # Filter out NSOCK debug messages
-                        if not any(msg in output_line for msg in [
-                            "NSOCK INFO",
-                            "NSOCK ERROR",
-                            "NSOCK WARNING",
-                            "NSOCK DEBUG",
-                            "Ethernet",
-                            "UDP",
-                            "TCP",
-                            "CONNECT",
-                            "SEND",
-                            "CLOSE"
-                        ]):
-                            output_lines.append(output_line.strip())
-                            if not self.quiet:
-                                print(output_line.strip())
-                            self.logger.debug(f"Nmap output: {output_line.strip()}")
-                except Exception as e:
-                    self.logger.error(f"Error reading stdout: {e}")
-                    break
-                
-                # Read error line by line with timeout
-                try:
-                    error_line = process.stderr.readline()
-                    if error_line:
-                        error_text = error_line.strip()
-                        # Filter out common debug messages
-                        if not any(msg in error_text for msg in [
-                            "NSOCK INFO",
-                            "NSOCK ERROR",
-                            "NSOCK WARNING",
-                            "NSOCK DEBUG",
-                            "Ethernet",
-                            "UDP",
-                            "TCP",
-                            "CONNECT",
-                            "SEND",
-                            "CLOSE"
-                        ]):
-                            error_lines.append(error_text)
-                            if not self.quiet:
-                                print(f"Error: {error_text}", file=sys.stderr)
-                            self.logger.debug(f"Nmap error: {error_text}")
-                except Exception as e:
-                    self.logger.error(f"Error reading stderr: {e}")
-                    break
-                
-                # Check if process has finished
-                if process.poll() is not None:
-                    break
+                if output:
+                    # Filter and process output
+                    if not any(debug in output.lower() for debug in ['debug:', 'debugging:', 'debugger:']):
+                        self.logger.debug(output.strip())
             
-            # Get the return code
+            # Get return code
             return_code = process.poll()
-            self.logger.info(f"Nmap process finished with return code: {return_code}")
             
-            # Stop animation
-            if 'animation' in locals():
-                animation.set()
-            
-            # Check if the scan was successful
-            if return_code != 0:
-                self.logger.error(f"Nmap scan failed with return code {return_code}")
-                self.logger.error("Error output:")
-                for line in error_lines:
-                    self.logger.error(line)
-                return None
-            
-            # Check if XML file exists and has content
-            if not os.path.exists(xml_output):
-                self.logger.error("XML output file was not created")
-                return None
+            if return_code == 0:
+                self.logger.info(f"Nmap scan completed successfully for {target}")
+                return True
+            else:
+                error_output = process.stderr.read()
+                self.logger.error(f"Nmap scan failed for {target}: {error_output}")
+                return False
                 
-            if os.path.getsize(xml_output) == 0:
-                self.logger.error("XML output file is empty")
-                return None
-            
-            # Parse the XML output using DirectNmapScanner
-            try:
-                self.logger.debug("Parsing Nmap XML output...")
-                result = DirectNmapScanner.parse_xml(xml_output, nmap_cmd, 0, '\n'.join(output_lines), '\n'.join(error_lines))
-                
-                if result:
-                    self.logger.info("Successfully parsed Nmap output")
-                    
-                    # Add to scan history
-                    self.scan_history.append({
-                        'timestamp': datetime.datetime.now(),
-                        'target': target,
-                        'parameters': scan_params,
-                        'result': result
-                    })
-                    
-                    # Calculate scan duration
-                    elapsed = float(result['nmap']['scanstats'].get('elapsed', '0'))
-                    
-                    # Get open port stats
-                    if target in result['scan']:
-                        tcp_count = len(result['scan'][target].get('tcp', {}))
-                        udp_count = len(result['scan'][target].get('udp', {}))
-                        self.logger.info(f"Scan completed in {int(elapsed)}s: {tcp_count} TCP ports and {udp_count} UDP ports found")
-                    
-                    # Display scan summary
-                    self.viewer.scan_summary(target, result)
-                    
-                    return result
-                else:
-                    self.logger.error("Failed to parse Nmap output")
-                    return None
-                    
-            except Exception as e:
-                self.logger.error(f"Error parsing Nmap output: {e}")
-                self.viewer.error(f"Error parsing Nmap output: {str(e)}")
-                if self.debug:
-                    traceback.print_exc()
-                return None
-                
-            finally:
-                # Clean up XML file
-                if os.path.exists(xml_output):
-                    try:
-                        os.unlink(xml_output)
-                        self.logger.debug("Cleaned up temporary XML file")
-                    except OSError as e:
-                        self.logger.warning(f"Failed to remove temporary XML file: {e}")
-        
         except Exception as e:
-            self.logger.error(f"Error running Nmap scan: {e}")
-            if self.debug:
-                traceback.print_exc()
-            return None
+            self.logger.error(f"Error during Nmap scan: {e}")
+            return False
     
     def summarize_results(self, result):
         """Summarize scan results in a readable format."""
@@ -3030,108 +2889,53 @@ if __name__ == "__main__":
         return context
     
     def call_ollama(self, prompt, stream=False):
-        """Call the Ollama API to generate text."""
+        """Call Ollama API with the given prompt."""
         try:
-            self.logger.info("Calling Ollama API...")
+            # Always stream for script generation
+            if "generate" in prompt.lower() and "script" in prompt.lower():
+                stream = True
             
-            # Prepare request
-            request_data = {
+            url = "http://localhost:11434/api/generate"
+            headers = {"Content-Type": "application/json"}
+            data = {
                 "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": stream
             }
             
-            # Make the API call
-            animation = None
-            if not self.show_live_ai:
-                animation = self.viewer.scanning_animation("Generating AI response")
+            response = requests.post(url, json=data, headers=headers)
+            response.raise_for_status()
+            
+            if stream:
+                # Create animation for streaming response
+                animation = self.viewer.scanning_animation("Generating script...")
                 
-            try:
-                response = requests.post(
-                    self.ollama_url,
-                    json=request_data,
-                    stream=stream,
-                    timeout=60
-                )
+                # Process streaming response
+                full_response = ""
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            json_response = json.loads(line)
+                            if 'response' in json_response:
+                                chunk = json_response['response']
+                                full_response += chunk
+                                # Always print the chunk for script generation
+                                if "generate" in prompt.lower() and "script" in prompt.lower():
+                                    print(chunk, end='', flush=True)
+                                else:
+                                    self.viewer.status(chunk)
+                        except json.JSONDecodeError:
+                            continue
                 
-                # Check for successful response
-                if response.status_code != 200:
-                    self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
-                    if animation:
-                        animation.set()
-                    return self.generate_fallback_response(prompt)
+                # Stop animation
+                animation.set()
+                return full_response
+            else:
+                return response.json()['response']
                 
-                # Handle streaming response
-                if stream:
-                    return self._handle_streaming_response(response, animation)
-                    
-                # Handle regular response
-                result = response.json()
-                
-                if 'response' in result:
-                    if animation:
-                        animation.set()
-                    return result['response']
-                else:
-                    self.logger.error(f"Unexpected response format from Ollama API: {result}")
-                    if animation:
-                        animation.set()
-                    return self.generate_fallback_response(prompt)
-                    
-            except requests.exceptions.Timeout:
-                self.logger.error("Timeout calling Ollama API")
-                if animation:
-                    animation.set()
-                self.viewer.warning("AI response timed out, using fallback")
-                return self.generate_fallback_response(prompt)
-                
-            except Exception as e:
-                self.logger.error(f"Error calling Ollama API: {e}")
-                if animation:
-                    animation.set()
-                return self.generate_fallback_response(prompt)
-                
-        except Exception as e:
-            self.logger.error(f"Unexpected error in call_ollama: {e}")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error calling Ollama API: {e}")
             return self.generate_fallback_response(prompt)
-    
-    def _handle_streaming_response(self, response, animation):
-        """Handle streaming response from Ollama."""
-        try:
-            full_response = ""
-            
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        # Parse JSON from the line
-                        json_data = json.loads(line.decode('utf-8'))
-                        
-                        # Extract response chunk
-                        if 'response' in json_data:
-                            chunk = json_data['response']
-                            full_response += chunk
-                            
-                            # Display chunk if live output is enabled
-                            if self.show_live_ai:
-                                print(chunk, end='', flush=True)
-                    except json.JSONDecodeError:
-                        self.logger.warning(f"Could not parse JSON from line: {line}")
-            
-            # Add a newline after streaming if we showed live output
-            if self.show_live_ai:
-                print()
-            
-            # Stop the animation if it was started
-            if animation:
-                animation.set()
-                
-            return full_response
-            
-        except Exception as e:
-            self.logger.error(f"Error handling streaming response: {e}")
-            if animation:
-                animation.set()
-            return self.generate_fallback_response("Error processing streaming response")
     
     def generate_fallback_response(self, prompt):
         """Generate a fallback response when Ollama fails."""
@@ -3337,7 +3141,7 @@ This is a basic response generated when the AI model is unavailable."""
         except Exception as e:
             self.logger.error(f"Error establishing persistence: {e}")
             return False
-            
+
     def exfiltrate_data(self, target):
         """Attempt to exfiltrate data from the target."""
         try:

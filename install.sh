@@ -234,11 +234,44 @@ source venv/bin/activate || { echo "Failed to activate virtual environment"; exi
 echo "[+] Installing Python dependencies..."
 python3 -m pip install --upgrade pip
 
-# Install required packages in the virtual environment
-python3 -m pip install --upgrade requests pymetasploit3 psutil netifaces || { 
-    echo "Failed to install Python dependencies"
-    exit 1
-}
+# Install all required packages
+python3 -m pip install --upgrade \
+    requests \
+    pymetasploit3 \
+    psutil \
+    netifaces \
+    smbclient \
+    paramiko \
+    scapy \
+    h2 \
+    mysql-connector-python \
+    python-nmap \
+    colorama \
+    tqdm \
+    cryptography \
+    pyOpenSSL \
+    dnspython \
+    python-whois \
+    python-ldap \
+    impacket \
+    pyasn1 \
+    pycryptodomex \
+    pymysql \
+    pymongo \
+    redis \
+    elasticsearch \
+    beautifulsoup4 \
+    lxml \
+    python-dateutil \
+    pytz \
+    pyyaml \
+    jinja2 \
+    markdown \
+    rich \
+    prompt-toolkit \
+    click \
+    tabulate \
+    || { echo "Failed to install Python dependencies"; exit 1; }
 
 # Check if nmap is installed
 echo "[+] Checking for system dependencies..."
@@ -248,20 +281,101 @@ if ! command_exists nmap; then
     # Check the package manager and install nmap
     if command_exists apt-get; then
         sudo apt-get update
-        sudo apt-get install -y nmap
+        sudo apt-get install -y nmap || { echo "Failed to install nmap"; exit 1; }
     elif command_exists yum; then
-        sudo yum install -y nmap
+        sudo yum install -y nmap || { echo "Failed to install nmap"; exit 1; }
     elif command_exists dnf; then
-        sudo dnf install -y nmap
+        sudo dnf install -y nmap || { echo "Failed to install nmap"; exit 1; }
     elif command_exists pacman; then
-        sudo pacman -S --noconfirm nmap
+        sudo pacman -S --noconfirm nmap || { echo "Failed to install nmap"; exit 1; }
     elif command_exists brew; then
-        brew install nmap
+        brew install nmap || { echo "Failed to install nmap"; exit 1; }
     else
         echo "[-] Could not determine package manager. Please install nmap manually."
         exit 1
     fi
 fi
+
+# Install additional system dependencies for Nmap
+echo "[+] Installing additional Nmap dependencies..."
+if command_exists apt-get; then
+    sudo apt-get install -y libpcap-dev libssl-dev libffi-dev || { echo "Failed to install Nmap dependencies"; exit 1; }
+elif command_exists yum; then
+    sudo yum install -y libpcap-devel openssl-devel libffi-devel || { echo "Failed to install Nmap dependencies"; exit 1; }
+elif command_exists dnf; then
+    sudo dnf install -y libpcap-devel openssl-devel libffi-devel || { echo "Failed to install Nmap dependencies"; exit 1; }
+elif command_exists pacman; then
+    sudo pacman -S --noconfirm libpcap openssl libffi || { echo "Failed to install Nmap dependencies"; exit 1; }
+fi
+
+# Create Nmap output filter script
+echo "[+] Creating Nmap output filter script..."
+cat > "$INSTALL_DIR/nmap_filter.py" << 'EOF'
+#!/usr/bin/env python3
+import sys
+import re
+
+def filter_nmap_output(line):
+    # Skip debug messages
+    if any(debug in line.lower() for debug in ['debug:', 'debugging:', 'debugger:']):
+        return False
+    
+    # Skip verbose output
+    if any(verbose in line.lower() for verbose in ['verbose:', 'verbosity:', 'verbose output:']):
+        return False
+    
+    # Skip timing messages
+    if any(timing in line.lower() for timing in ['timing:', 'timing report:', 'scan timing:']):
+        return False
+    
+    # Skip statistics
+    if any(stat in line.lower() for stat in ['statistics:', 'stats:', 'scan stats:']):
+        return False
+    
+    # Skip progress messages
+    if any(progress in line.lower() for progress in ['progress:', 'scanning:', 'scan progress:']):
+        return False
+    
+    # Skip system messages
+    if any(system in line.lower() for system in ['system:', 'system info:', 'system details:']):
+        return False
+    
+    # Skip version messages
+    if any(version in line.lower() for version in ['version:', 'version info:', 'version details:']):
+        return False
+    
+    # Skip warning messages unless they're critical
+    if 'warning:' in line.lower() and not any(critical in line.lower() for critical in ['critical', 'error', 'failed']):
+        return False
+    
+    # Skip info messages unless they're important
+    if 'info:' in line.lower() and not any(important in line.lower() for important in ['critical', 'error', 'failed', 'open', 'closed', 'filtered']):
+        return False
+    
+    return True
+
+def main():
+    for line in sys.stdin:
+        if filter_nmap_output(line):
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+if __name__ == '__main__':
+    main()
+EOF
+
+# Make the filter script executable
+chmod +x "$INSTALL_DIR/nmap_filter.py"
+
+# Update the Python script to use the filter
+echo "[+] Updating Python script to use Nmap filter..."
+sed -i 's/subprocess.run(/subprocess.Popen([/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
+sed -i 's/], capture_output=True, text=True, errors="replace")/], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
+sed -i 's/result.stdout/result.stdout.decode("utf-8", errors="replace")/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
+sed -i 's/result.stderr/result.stderr.decode("utf-8", errors="replace")/g' "$INSTALL_DIR/adaptive_nmap_scan.py"
+
+# Add filter to the command
+sed -i 's/command = \[/command = ["python3", "'"$INSTALL_DIR"'/nmap_filter.py", "|", /g' "$INSTALL_DIR/adaptive_nmap_scan.py"
 
 # Verify nmap installation
 if command_exists nmap; then
