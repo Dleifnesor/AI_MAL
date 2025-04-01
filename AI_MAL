@@ -249,9 +249,43 @@ if [[ "$*" == *"--msf"* ]]; then
     MSF_REQUESTED=1
 fi
 
-# Check and start dependencies
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" > /dev/null 2>&1
+}
+
+# Function to check and start dependencies
 check_dependencies() {
     echo -e "${BLUE}[+] Checking and starting dependencies...${NC}"
+    
+    # Check if install.sh exists in the same directory
+    if [ -f "${SCRIPT_DIR}/install.sh" ]; then
+        INSTALL_SCRIPT="${SCRIPT_DIR}/install.sh"
+    else
+        echo -e "${RED}[-] install.sh not found in ${SCRIPT_DIR}${NC}"
+        return 1
+    fi
+    
+    # Check if Ollama is installed
+    if ! command_exists ollama; then
+        echo -e "${RED}[-] Ollama is not installed${NC}"
+        echo -e "${YELLOW}[!] Running install.sh to set up dependencies...${NC}"
+        
+        # Make install.sh executable and run it
+        chmod +x "${INSTALL_SCRIPT}"
+        if ! "${INSTALL_SCRIPT}"; then
+            echo -e "${RED}[-] Failed to install dependencies${NC}"
+            return 1
+        fi
+        
+        # Verify Ollama installation
+        if ! command_exists ollama; then
+            echo -e "${RED}[-] Ollama installation failed${NC}"
+            return 1
+        fi
+        
+        echo -e "${GREEN}[+] Dependencies installed successfully${NC}"
+    fi
     
     # Check and start PostgreSQL if needed
     if command_exists systemctl; then
@@ -278,30 +312,6 @@ check_dependencies() {
         else
             echo -e "${GREEN}[+] PostgreSQL service is running${NC}"
         fi
-    fi
-    
-    # Check if Ollama is installed
-    if ! command_exists ollama; then
-        echo -e "${RED}[-] Ollama is not installed${NC}"
-        echo -e "${YELLOW}[!] Installing Ollama...${NC}"
-        
-        # Download and install Ollama
-        curl -fsSL https://ollama.com/install.sh | sudo sh || {
-            echo -e "${RED}[-] Failed to install Ollama${NC}"
-            echo -e "Please install Ollama manually:"
-            echo -e "1. Visit https://ollama.com/download"
-            echo -e "2. Download the appropriate package for your system"
-            echo -e "3. Install using your package manager"
-            return 1
-        }
-        
-        # Verify installation
-        if ! command_exists ollama; then
-            echo -e "${RED}[-] Ollama installation failed${NC}"
-            return 1
-        fi
-        
-        echo -e "${GREEN}[+] Ollama installed successfully${NC}"
     fi
     
     # Check and start Ollama if needed
