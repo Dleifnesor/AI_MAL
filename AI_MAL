@@ -256,134 +256,86 @@ command_exists() {
 
 # Function to check and start dependencies
 check_dependencies() {
-    echo -e "${BLUE}[+] Checking and starting dependencies...${NC}"
+    echo "[+] Checking and starting dependencies..."
     
-    # Check if install.sh exists in the same directory
-    if [ -f "${SCRIPT_DIR}/install.sh" ]; then
-        INSTALL_SCRIPT="${SCRIPT_DIR}/install.sh"
-    else
-        echo -e "${RED}[-] install.sh not found in ${SCRIPT_DIR}${NC}"
+    # Check if we're in the installation directory
+    if [ ! -f "$INSTALL_DIR/install.sh" ]; then
+        echo "[-] install.sh not found in $INSTALL_DIR"
+        echo "    Please run install.sh first to set up dependencies"
         return 1
     fi
     
-    # Check if Ollama is installed
-    if ! command_exists ollama; then
-        echo -e "${RED}[-] Ollama is not installed${NC}"
-        echo -e "${YELLOW}[!] Running install.sh to set up dependencies...${NC}"
-        
-        # Make install.sh executable and run it
-        chmod +x "${INSTALL_SCRIPT}"
-        if ! "${INSTALL_SCRIPT}"; then
-            echo -e "${RED}[-] Failed to install dependencies${NC}"
-            return 1
-        fi
-        
-        # Verify Ollama installation
-        if ! command_exists ollama; then
-            echo -e "${RED}[-] Ollama installation failed${NC}"
-            return 1
-        fi
-        
-        echo -e "${GREEN}[+] Dependencies installed successfully${NC}"
-    fi
-    
-    # Check and start PostgreSQL if needed
+    # Check and start PostgreSQL
     if command_exists systemctl; then
         if ! systemctl is-active --quiet postgresql; then
-            echo -e "${YELLOW}[!] PostgreSQL service not running. Starting...${NC}"
+            echo "[+] Starting PostgreSQL service..."
             sudo systemctl start postgresql || {
-                echo -e "${RED}[-] Failed to start PostgreSQL service${NC}"
+                echo "[-] Failed to start PostgreSQL"
                 return 1
             }
-            # Wait for PostgreSQL to be ready
-            echo -e "${BLUE}[+] Waiting for PostgreSQL to start...${NC}"
-            for i in {1..30}; do
-                if pg_isready -q; then
-                    echo -e "${GREEN}[+] PostgreSQL is ready${NC}"
-                    break
-                fi
-                echo -n "."
-                sleep 1
-                if [ $i -eq 30 ]; then
-                    echo -e "\n${RED}[-] PostgreSQL failed to start within 30 seconds${NC}"
-                    return 1
-                fi
-            done
-        else
-            echo -e "${GREEN}[+] PostgreSQL service is running${NC}"
+        fi
+    else
+        if ! pg_isready -q; then
+            echo "[+] Starting PostgreSQL service..."
+            sudo service postgresql start || {
+                echo "[-] Failed to start PostgreSQL"
+                return 1
+            }
         fi
     fi
     
-    # Check and start Ollama if needed
-    if ! curl -s http://localhost:11434/api/version > /dev/null; then
-        echo -e "${YELLOW}[!] Ollama service not running. Starting...${NC}"
-        if command_exists systemctl; then
+    # Check and start Ollama
+    if command_exists systemctl; then
+        if ! systemctl is-active --quiet ollama; then
+            echo "[+] Starting Ollama service..."
             sudo systemctl start ollama || {
-                echo -e "${RED}[-] Failed to start Ollama service${NC}"
+                echo "[-] Failed to start Ollama"
                 return 1
             }
-        else
+        fi
+    else
+        if ! curl -s http://localhost:11434/api/version > /dev/null; then
+            echo "[+] Starting Ollama service..."
             nohup ollama serve > /var/log/ollama.log 2>&1 &
         fi
-        
-        # Wait for Ollama to be ready
-        echo -e "${BLUE}[+] Waiting for Ollama to start...${NC}"
-        for i in {1..30}; do
-            if curl -s http://localhost:11434/api/version > /dev/null; then
-                echo -e "${GREEN}[+] Ollama is ready${NC}"
-                break
-            fi
-            echo -n "."
-            sleep 1
-            if [ $i -eq 30 ]; then
-                echo -e "\n${RED}[-] Ollama failed to start within 30 seconds${NC}"
-                return 1
-            fi
-        done
-    else
-        echo -e "${GREEN}[+] Ollama service is running${NC}"
     fi
     
-    # Check and start Metasploit RPC if needed (when MSF integration is requested)
-    if [[ "$*" == *"--msf"* ]]; then
-        if ! command_exists msfrpcd; then
-            echo -e "${RED}[-] Metasploit RPC daemon not found${NC}"
-            return 1
-        fi
-        
-        if ! pgrep -f "msfrpcd" > /dev/null; then
-            echo -e "${YELLOW}[!] Metasploit RPC daemon not running. Starting...${NC}"
-            nohup msfrpcd -P msf_password -S -a 127.0.0.1 -p 55553 > /var/log/msfrpcd.log 2>&1 &
-            
-            # Wait for MSF RPC to be ready
-            echo -e "${BLUE}[+] Waiting for Metasploit RPC to start...${NC}"
-            for i in {1..30}; do
-                if curl -s http://localhost:55553/api/1.0/ > /dev/null; then
-                    echo -e "${GREEN}[+] Metasploit RPC is ready${NC}"
-                    break
-                fi
-                echo -n "."
-                sleep 1
-                if [ $i -eq 30 ]; then
-                    echo -e "\n${RED}[-] Metasploit RPC failed to start within 30 seconds${NC}"
-                    return 1
-                fi
-            done
-        else
-            echo -e "${GREEN}[+] Metasploit RPC daemon is running${NC}"
+    # Check and start Metasploit RPC
+    if [ "$USE_MSF" = true ]; then
+        if ! curl -s http://localhost:55553/api/1.0/health > /dev/null; then
+            echo "[+] Starting Metasploit RPC service..."
+            nohup msfrpcd -P "$MSF_PASSWORD" -S -a 127.0.0.1 > /var/log/msfrpcd.log 2>&1 &
         fi
     fi
     
-    return 0
+    # Wait for services to be ready
+    echo "[+] Waiting for services to be ready..."
+    for i in {1..30}; do
+        if pg_isready -q && curl -s http://localhost:11434/api/version > /dev/null; then
+            if [ "$USE_MSF" = true ]; then
+                if curl -s http://localhost:55553/api/1.0/health > /dev/null; then
+                    echo "[+] All services are ready"
+                    return 0
+                fi
+            else
+                echo "[+] All services are ready"
+                return 0
+            fi
+        fi
+        echo -n "."
+        sleep 1
+    done
+    
+    echo -e "\n[-] Services failed to start within 30 seconds"
+    echo "Please check the logs and try again:"
+    echo "  journalctl -u postgresql"
+    echo "  journalctl -u ollama"
+    echo "  tail -f /var/log/msfrpcd.log"
+    return 1
 }
 
-# Check and start dependencies
-if ! check_dependencies "$@"; then
-    echo -e "${RED}[-] Failed to start required dependencies${NC}"
-    echo -e "Please check the logs and try again:"
-    echo -e "  ${GREEN}journalctl -u postgresql${NC}"
-    echo -e "  ${GREEN}journalctl -u ollama${NC}"
-    echo -e "  ${GREEN}tail -f /var/log/msfrpcd.log${NC}"
+# Check dependencies before proceeding
+if ! check_dependencies; then
     exit 1
 fi
 
