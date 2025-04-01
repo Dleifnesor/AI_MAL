@@ -2155,8 +2155,12 @@ if __name__ == "__main__":
     def run(self):
         """Main execution method."""
         try:
-            # Display start banner
-            self.display_start_banner(self.target, "DoS Attack" if self.dos_attack else "Standard Scan", self.ollama_model)
+            # Display start banner using the viewer
+            self.viewer.display_start_banner(
+                self.target, 
+                "DoS Attack" if self.dos_attack else "Standard Scan", 
+                self.ollama_model
+            )
             
             # Ensure Ollama model is available
             logger.info(f"Using existing model: {self.ollama_model}")
