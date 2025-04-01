@@ -59,6 +59,9 @@ fi
 echo "[+] Checking for and fixing syntax errors in Python files..."
 # Fix indentation in the adaptive_nmap_scan.py file
 sed -i '1417s/^                else:/            else:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+
+# Fix the try-except block structure by adding the missing try statement
+sed -i '2590,2600s/            return result/            try:\n                return result/' "$INSTALL_DIR/adaptive_nmap_scan.py"
 sed -i '2594s/^                return None/            return None/' "$INSTALL_DIR/adaptive_nmap_scan.py"
 sed -i '2596s/^        except Exception as e:/    except Exception as e:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
 
@@ -307,7 +310,7 @@ echo "====================================================="
 echo
 echo "Examples:"
 echo "  # Basic scan of a target"
-echo "  AI_MAL --target 192.168.1.1"
+echo "  AI_MAL 192.168.1.1"
 echo
 echo "  # Auto-discover hosts and scan with stealth mode"
 echo "  AI_MAL --auto-discover --stealth"
@@ -316,7 +319,7 @@ echo "  # Use gemma3:1b model for systems with less than 4GB RAM"
 echo "  AI_MAL --model gemma3:1b --stealth"
 echo
 echo "  # Full integration with Metasploit"
-echo "  AI_MAL --target 192.168.1.1 --msf --exploit"
+echo "  AI_MAL 192.168.1.1 --msf --exploit"
 echo
 echo "Read the documentation for more information."
 echo "For help, run: AI_MAL --help"
