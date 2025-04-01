@@ -2,6 +2,9 @@
 # Installation script for AI_MAL
 # This script installs dependencies and sets up the environment
 
+# Exit on any error
+set -e
+
 # Determine the installation directory (where the script is located)
 INSTALL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$INSTALL_DIR" || { echo "Could not change to install directory"; exit 1; }
@@ -20,6 +23,13 @@ command_exists() {
 # Check for Python 3
 if ! command_exists python3; then
     echo "Python 3 is not installed. Please install Python 3 and try again."
+    exit 1
+fi
+
+# Check Python version
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+if (( $(echo "$PYTHON_VERSION < 3.8" | bc -l) )); then
+    echo "Python 3.8 or higher is required. Current version: $PYTHON_VERSION"
     exit 1
 fi
 
@@ -47,67 +57,14 @@ fi
 # Fix line endings in all script files
 echo "[+] Fixing line endings in script files..."
 if command_exists dos2unix; then
-    dos2unix "$INSTALL_DIR/AI_MAL"
-    dos2unix "$INSTALL_DIR/adaptive_nmap_scan.py"
+    find "$INSTALL_DIR" -type f -name "*.py" -o -name "*.sh" -o -name "AI_MAL" | while read -r file; do
+        dos2unix "$file"
+    done
 else
     echo "[!] dos2unix not found, attempting to fix line endings manually..."
-    sed -i 's/\r$//' "$INSTALL_DIR/AI_MAL"
-    sed -i 's/\r$//' "$INSTALL_DIR/adaptive_nmap_scan.py"
-fi
-
-# Fix any syntax errors in Python files
-echo "[+] Checking for and fixing syntax errors in Python files..."
-
-# Create a temporary file with proper structure for fixing the syntax error
-cat > /tmp/adaptive_nmap_syntax_fix.py << 'EOF'
-                # Cleanup XML file
-                try:
-                    os.unlink(xml_output)
-                except:
-                    pass
-                
-                return result
-            
-            except Exception as e:
-                self.logger.error(f"Error parsing Nmap output: {e}")
-                self.viewer.error(f"Error parsing Nmap output: {str(e)}")
-                return None
-        
-        except Exception as e:
-            if 'animation' in locals():
-                animation.set()
-            self.logger.error(f"Error during scan: {e}")
-            self.viewer.error(f"Scan error: {str(e)}")
-            return None
-EOF
-
-# Fix syntax error in the parse_xml method (around line 2590)
-echo "[+] Fixing syntax error in adaptive_nmap_scan.py..."
-line_number=$(grep -n "os.unlink(xml_output)" "$INSTALL_DIR/adaptive_nmap_scan.py" | tail -1 | cut -d':' -f1)
-if [ -n "$line_number" ]; then
-    # Get the line number where the fix should end
-    end_line_number=$(grep -n "self.viewer.error(f\"Scan error: {str(e)}\")" "$INSTALL_DIR/adaptive_nmap_scan.py" | tail -1 | cut -d':' -f1)
-    end_line_number=$(($end_line_number + 2))
-    
-    # Extract everything before the problematic code
-    head -n $line_number "$INSTALL_DIR/adaptive_nmap_scan.py" > /tmp/adaptive_nmap_fixed.py
-    
-    # Add the fixed code
-    cat /tmp/adaptive_nmap_syntax_fix.py >> /tmp/adaptive_nmap_fixed.py
-    
-    # Extract everything after the problematic code
-    tail -n +$end_line_number "$INSTALL_DIR/adaptive_nmap_scan.py" >> /tmp/adaptive_nmap_fixed.py
-    
-    # Replace the original file with the fixed version
-    cp /tmp/adaptive_nmap_fixed.py "$INSTALL_DIR/adaptive_nmap_scan.py"
-    rm /tmp/adaptive_nmap_fixed.py /tmp/adaptive_nmap_syntax_fix.py
-    
-    echo "[+] Syntax error fixed successfully"
-else
-    echo "[!] Could not locate the syntax error position, skipping fix"
-    
-    # Fix indentation in the adaptive_nmap_scan.py file as fallback
-    sed -i '1417s/^                else:/            else:/' "$INSTALL_DIR/adaptive_nmap_scan.py"
+    find "$INSTALL_DIR" -type f -name "*.py" -o -name "*.sh" -o -name "AI_MAL" | while read -r file; do
+        sed -i 's/\r$//' "$file"
+    done
 fi
 
 # Create a virtual environment if it doesn't exist
@@ -132,14 +89,12 @@ source "$INSTALL_DIR/venv/bin/activate"
 exec "$@"
 EOF
 
-# Fix line endings in the wrapper script
+# Fix line endings in the wrapper script and make it executable
 if command_exists dos2unix; then
     dos2unix "$INSTALL_DIR/ai-mal-env"
 else
     sed -i 's/\r$//' "$INSTALL_DIR/ai-mal-env"
 fi
-
-# Make the wrapper script executable
 chmod +x "$INSTALL_DIR/ai-mal-env"
 
 # Activate the virtual environment
@@ -148,10 +103,10 @@ source venv/bin/activate || { echo "Failed to activate virtual environment"; exi
 
 # Upgrade pip and install required packages
 echo "[+] Installing Python dependencies..."
-pip install --upgrade pip
+python3 -m pip install --upgrade pip
 
 # Install required packages directly
-pip install requests pymetasploit3 psutil netifaces || { 
+python3 -m pip install --upgrade requests pymetasploit3 psutil netifaces || { 
     echo "Failed to install Python dependencies"
     exit 1
 }
@@ -204,14 +159,14 @@ if command_exists msfconsole; then
         else
             echo "[!] Starting PostgreSQL service..."
             if command_exists systemctl; then
-                sudo systemctl start postgresql
+                sudo systemctl start postgresql || echo "[!] Failed to start PostgreSQL. You may need to start it manually."
             fi
         fi
         
         # Initialize Metasploit database if needed
         echo "[+] Initializing Metasploit database..."
         if command_exists msfdb; then
-            sudo msfdb init
+            sudo msfdb init || echo "[!] Failed to initialize Metasploit database. You may need to initialize it manually."
         fi
     else
         echo "[!] PostgreSQL not found. Metasploit will run without database support."
@@ -276,16 +231,19 @@ else
     echo "[!] Ollama service not found, adding environment variables to system profile..."
     # Add environment variables to system-wide profile
     PROFILE_FILE="/etc/profile.d/ollama.sh"
-    cat << EOF | sudo tee "$PROFILE_FILE" > /dev/null
-#!/bin/bash
+    cat << EOF | sudo tee "$PROFILE_FILE" > /dev/null 2>&1 || {
+        # If system-wide profile fails, try user profile
+        PROFILE_FILE="$HOME/.profile"
+        cat << INNER_EOF >> "$PROFILE_FILE"
+# Ollama configuration
 export OLLAMA_HOST=0.0.0.0:11434
 export OLLAMA_ORIGINS=*
-EOF
-    sudo chmod +x "$PROFILE_FILE"
+INNER_EOF
+    }
     
     # Source the profile
-    echo "[+] Added Ollama environment variables to system profile"
-    echo "[!] You may need to restart Ollama manually with: ollama serve"
+    echo "[+] Added Ollama environment variables to profile"
+    echo "[!] You may need to restart your shell or run: source $PROFILE_FILE"
     
     # Try to restart Ollama if it's running
     if pgrep ollama > /dev/null; then
@@ -306,12 +264,12 @@ if curl -s "http://localhost:11434/api/tags" > /dev/null; then
     # Pull primary model: qwen2.5-coder:7b (recommended for better results)
     echo "[+] Pulling qwen2.5-coder:7b model (primary model)..."
     echo "    This may take some time depending on your internet connection..."
-    ollama pull qwen2.5-coder:7b
+    ollama pull qwen2.5-coder:7b || echo "[!] Failed to pull qwen2.5-coder:7b model. You'll need to pull it manually."
     
     # Pull backup model: gemma3:1b (for low-resource compatibility)
     echo "[+] Pulling gemma3:1b model (for systems with limited resources)..."
     echo "    This is a smaller model for systems with limited RAM..."
-    ollama pull gemma3:1b
+    ollama pull gemma3:1b || echo "[!] Failed to pull gemma3:1b model. You'll need to pull it manually."
     
     # Verify models were installed
     if ollama list | grep -q "qwen2.5-coder:7b"; then
