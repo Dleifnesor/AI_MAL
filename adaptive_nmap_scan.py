@@ -2408,7 +2408,7 @@ if __name__ == "__main__":
             # Start animation
             animation = self.viewer.scanning_animation(f"Scanning {target}")
             
-            # Run nmap as a subprocess
+            # Run nmap as a subprocess with proper timeout
             self.logger.debug(f"Executing: {' '.join(nmap_cmd)}")
             process = subprocess.Popen(
                 nmap_cmd,
@@ -2417,8 +2417,14 @@ if __name__ == "__main__":
                 universal_newlines=True
             )
             
-            # Wait for the process to complete
-            stdout, stderr = process.communicate()
+            # Wait for the process to complete with a timeout
+            try:
+                stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+            except subprocess.TimeoutExpired:
+                process.kill()
+                self.logger.error("Nmap scan timed out after 5 minutes")
+                self.viewer.error("Scan timed out after 5 minutes")
+                return None
             
             # Stop animation
             animation.set()
