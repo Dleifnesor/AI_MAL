@@ -1,4 +1,4 @@
-AI_MAL combines the power of AI with network scanning and penetration testing tools to create a fully autonomous security reconnaissance and exploitation platform.
+See [use-cases.md](use-cases.md) for full details on each arg
 
 ## Features
 
