@@ -63,6 +63,20 @@ apt-get install -y \
     libsmbclient-dev \
     samba \
     samba-dev \
+    python3-samba \
+    python3-ldap \
+    python3-kerberos \
+    python3-gssapi \
+    python3-ntlm \
+    python3-cryptography \
+    python3-openssl \
+    python3-dns \
+    python3-netifaces \
+    python3-paramiko \
+    python3-scapy \
+    python3-requests \
+    python3-psutil \
+    python3-wmi \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
@@ -123,9 +137,26 @@ python3 -m pip install --upgrade \
     pyOpenSSL \
     dnspython \
     python-whois \
-    smbclient \
     wmi \
     || { echo -e "${RED}Failed to install core dependencies${NC}"; exit 1; }
+
+# Install smbclient separately with error handling
+echo -e "${YELLOW}[+] Installing smbclient...${NC}"
+python3 -m pip install --upgrade smbclient || {
+    echo -e "${RED}Failed to install smbclient from PyPI${NC}"
+    echo -e "${YELLOW}Trying alternative installation method...${NC}"
+    
+    # Try installing from source
+    git clone https://github.com/samba-team/samba.git
+    cd samba
+    ./configure
+    make
+    cd ..
+    python3 -m pip install ./samba/python/smbclient || {
+        echo -e "${RED}Failed to install smbclient from source${NC}"
+        echo -e "${YELLOW}Using system package instead...${NC}"
+    }
+}
 
 # Install optional dependencies
 echo -e "${YELLOW}[+] Installing optional dependencies...${NC}"
