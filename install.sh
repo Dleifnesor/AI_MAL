@@ -30,6 +30,10 @@ if ! grep -q "Kali GNU/Linux" /etc/os-release; then
     fi
 fi
 
+# Get current directory
+INSTALL_DIR=$(pwd)
+echo -e "${GREEN}Installing AI_MAL in: ${INSTALL_DIR}${NC}"
+
 # Update system
 echo -e "${GREEN}Updating system...${NC}"
 apt-get update
@@ -48,7 +52,8 @@ apt-get install -y \
     wget \
     build-essential \
     libssl-dev \
-    libffi-dev
+    libffi-dev \
+    python3-nmap
 
 # Check if Ollama is installed
 if ! command -v ollama &> /dev/null; then
@@ -65,58 +70,67 @@ if ! command -v ollama &> /dev/null; then
     ollama pull mistral:7b
 fi
 
+# Create full directory structure
+echo -e "${GREEN}Creating directory structure...${NC}"
+mkdir -p "${INSTALL_DIR}/ai_mal/core"
+mkdir -p "${INSTALL_DIR}/examples"
+mkdir -p "${INSTALL_DIR}/tests"
+mkdir -p "${INSTALL_DIR}/msf_resources"
+mkdir -p "${INSTALL_DIR}/scan_results"
+mkdir -p "${INSTALL_DIR}/generated_scripts"
+mkdir -p "${INSTALL_DIR}/logs"
+
 # Create virtual environment
 echo -e "${GREEN}Setting up Python virtual environment...${NC}"
 python3 -m venv venv
 source venv/bin/activate
 
+# Install Python dependencies
+echo -e "${GREEN}Installing Python dependencies...${NC}"
+pip install -U pip
+pip install -r requirements.txt
+
 # Install package in development mode
 echo -e "${GREEN}Installing AI_MAL package...${NC}"
 pip install -e .
 
-# Create necessary directories
-echo -e "${GREEN}Creating directories...${NC}"
-mkdir -p msf_resources
-mkdir -p scan_results
-mkdir -p generated_scripts
-mkdir -p logs
-
 # Set up environment variables
 echo -e "${GREEN}Setting up environment variables...${NC}"
 cat > .env << EOL
+OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=qwen2.5-coder:7b
 OLLAMA_FALLBACK_MODEL=mistral:7b
-SCAN_RESULTS_DIR=scan_results
-MSF_RESOURCES_DIR=msf_resources
-GENERATED_SCRIPTS_DIR=generated_scripts
-LOG_DIR=logs
+SCAN_RESULTS_DIR=${INSTALL_DIR}/scan_results
+MSF_RESOURCES_DIR=${INSTALL_DIR}/msf_resources
+GENERATED_SCRIPTS_DIR=${INSTALL_DIR}/generated_scripts
+LOG_DIR=${INSTALL_DIR}/logs
 EOL
 
 # Create symbolic link for command-line access
 echo -e "${GREEN}Creating command-line shortcut...${NC}"
-ln -sf "$(pwd)/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
+ln -sf "${INSTALL_DIR}/venv/bin/ai_mal" /usr/local/bin/ai_mal
 
 # Set up completion script
 echo -e "${GREEN}Setting up command completion...${NC}"
-cat > /etc/bash_completion.d/AI_MAL << EOL
-_AI_MAL_completions()
+cat > /etc/bash_completion.d/ai_mal << EOL
+_ai_mal_completions()
 {
     local cur=\${COMP_WORDS[COMP_CWORD]}
     COMPREPLY=( \$(compgen -W "--msf --exploit --model --fallback-model --full-auto --custom-scripts --script-type --execute-scripts --stealth --continuous --delay --services --version --os --vuln --dos --output-dir --output-format --quiet --iterations --custom-vuln --ai-analysis" -- \$cur) )
 }
-complete -F _AI_MAL_completions AI_MAL
+complete -F _ai_mal_completions ai_mal
 EOL
 
 # Set permissions
 echo -e "${GREEN}Setting permissions...${NC}"
-chmod +x /usr/local/bin/AI_MAL
-chmod -R 755 scan_results msf_resources generated_scripts logs
+chmod +x /usr/local/bin/ai_mal
+chmod -R 755 "${INSTALL_DIR}/scan_results" "${INSTALL_DIR}/msf_resources" "${INSTALL_DIR}/generated_scripts" "${INSTALL_DIR}/logs"
 
 # Print success message
 echo -e "${GREEN}Installation completed successfully!${NC}"
 echo -e "${YELLOW}Please restart your shell to enable command completion${NC}"
-echo -e "${YELLOW}You can now use the 'AI_MAL' command from anywhere${NC}"
+echo -e "${YELLOW}You can now use the 'ai_mal' command from anywhere${NC}"
 echo
 echo -e "${GREEN}Example usage:${NC}"
-echo "AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto"
-echo "AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 
+echo "ai_mal 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto"
+echo "ai_mal 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 

@@ -12,19 +12,20 @@ setup(
         "colorama>=0.4.6",
         "rich>=13.7.0",
         "pyyaml>=6.0.1",
-        "jinja2>=3.1.3"
+        "jinja2>=3.1.3",
+        "python-nmap>=0.7.1"
     ],
     entry_points={
         "console_scripts": [
-            "AI_MAL=ai_mal.main:main",
+            "ai_mal=ai_mal.main:main",
         ],
     },
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Dleifnesor",
+    author_email="phlegmenthusiast@gmail.com",
     description="AI-Powered Penetration Testing Tool",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ai_mal",
+    url="https://github.com/ai-mal/ai_mal",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Information Technology",

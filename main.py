@@ -11,18 +11,26 @@ import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 from ai_mal.core.adaptive import AdaptiveScanner
 from ai_mal.core.ai_manager import AIManager
 from ai_mal.core.metasploit import MetasploitManager
 from ai_mal.core.script_generator import ScriptGenerator
 
+# Load environment variables
+load_dotenv()
+
 # Configure logging
+log_dir = os.getenv('LOG_DIR', 'logs')
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, 'ai_mal.log')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('ai_mal.log'),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
@@ -34,8 +42,8 @@ class AI_MAL:
         self.kwargs = kwargs
         self.scanner = AdaptiveScanner(target)
         self.ai_manager = AIManager(
-            model=kwargs.get('model', 'qwen2.5-coder:7b'),
-            fallback_model=kwargs.get('fallback_model', 'mistral:7b')
+            model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')),
+            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'mistral:7b'))
         )
         self.metasploit = MetasploitManager() if kwargs.get('msf') else None
         self.script_generator = ScriptGenerator()
@@ -56,31 +64,54 @@ class AI_MAL:
 
             # AI Analysis
             if self.kwargs.get('ai_analysis', True):
+                logger.info("Analyzing scan results with AI...")
                 analysis = await self.ai_manager.analyze_results(scan_results)
                 logger.info("AI Analysis Results:")
-                logger.info(analysis)
+                for key, value in analysis.items():
+                    if isinstance(value, list):
+                        logger.info(f"{key.upper()}:")
+                        for item in value:
+                            logger.info(f"- {item}")
+                    else:
+                        logger.info(f"{key.upper()}: {value}")
 
             # Metasploit Integration
             if self.metasploit and self.kwargs.get('exploit', False):
+                logger.info("Finding potential Metasploit exploits...")
                 exploits = await self.metasploit.find_exploits(scan_results)
                 if exploits:
-                    logger.info("Found potential Metasploit exploits:")
+                    logger.info(f"Found {len(exploits)} potential Metasploit exploits:")
                     for exploit in exploits:
-                        logger.info(f"- {exploit}")
+                        logger.info(f"- {exploit['name']} ({exploit['rank']}): {exploit['description']}")
                     
                     if self.kwargs.get('full_auto', False):
-                        await self.metasploit.run_exploits(exploits)
+                        logger.info("Running exploits in full-auto mode...")
+                        exploit_results = await self.metasploit.run_exploits(exploits)
+                        for result in exploit_results:
+                            logger.info(f"Exploit {result['exploit']['name']} result: {result['result']['status']}")
+                else:
+                    logger.info("No suitable exploits found for the target.")
 
             # Custom Script Generation
             if self.kwargs.get('custom_scripts', False):
                 script_type = self.kwargs.get('script_type', 'python')
+                logger.info(f"Generating custom {script_type} scripts...")
                 scripts = await self.script_generator.generate_scripts(
                     scan_results,
                     script_type=script_type
                 )
                 
+                logger.info(f"Generated {len(scripts)} {script_type} scripts:")
+                for script in scripts:
+                    logger.info(f"- {script['name']}: {script['description']} ({script['path']})")
+                
                 if self.kwargs.get('execute_scripts', False):
-                    await self.script_generator.execute_scripts(scripts)
+                    logger.info("Executing generated scripts...")
+                    script_results = await self.script_generator.execute_scripts(scripts)
+                    for result in script_results:
+                        status = result['result']['status']
+                        script_name = result['script']['name']
+                        logger.info(f"Script {script_name} execution: {status}")
 
             return scan_results
 
@@ -95,8 +126,8 @@ def main():
     # Basic Options
     parser.add_argument('--msf', action='store_true', help='Enable Metasploit integration')
     parser.add_argument('--exploit', action='store_true', help='Attempt exploitation of vulnerabilities')
-    parser.add_argument('--model', default='qwen2.5-coder:7b', help='Ollama model to use')
-    parser.add_argument('--fallback-model', default='mistral:7b', help='Fallback Ollama model')
+    parser.add_argument('--model', help='Ollama model to use (default: from .env or qwen2.5-coder:7b)')
+    parser.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or mistral:7b)')
     parser.add_argument('--full-auto', action='store_true', help='Enable full automation mode')
     
     # Script Generation Options
@@ -116,7 +147,7 @@ def main():
     parser.add_argument('--dos', action='store_true', help='Attempt Denial of Service attacks')
     
     # Output Options
-    parser.add_argument('--output-dir', default='scan_results', help='Output directory for results')
+    parser.add_argument('--output-dir', help='Output directory for results (default: from .env or scan_results)')
     parser.add_argument('--output-format', choices=['xml', 'json'], default='json',
                       help='Output format for scan results')
     parser.add_argument('--quiet', action='store_true', help='Suppress progress output')
@@ -129,18 +160,22 @@ def main():
     
     args = parser.parse_args()
     
+    # Set output directory from args or environment
+    output_dir = args.output_dir or os.getenv('SCAN_RESULTS_DIR', 'scan_results')
+    
     # Create output directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     
     # Initialize and run AI_MAL
     ai_mal = AI_MAL(args.target, **vars(args))
     
     try:
+        logger.info(f"Starting scan of target: {args.target}")
         results = asyncio.run(ai_mal.run())
         
         # Save results
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(args.output_dir, f'scan_results_{timestamp}.{args.output_format}')
+        output_file = os.path.join(output_dir, f'scan_results_{timestamp}.{args.output_format}')
         
         if args.output_format == 'json':
             with open(output_file, 'w') as f:
@@ -149,7 +184,34 @@ def main():
             import xml.etree.ElementTree as ET
             root = ET.Element('scan_results')
             # Convert results to XML format
-            # ... (implement XML conversion)
+            scan_info = ET.SubElement(root, 'scan_info')
+            ET.SubElement(scan_info, 'target').text = results['scan_info']['target']
+            ET.SubElement(scan_info, 'scan_type').text = results['scan_info']['scan_type']
+            ET.SubElement(scan_info, 'scan_start').text = results['scan_info']['scan_start']
+            ET.SubElement(scan_info, 'scan_end').text = results['scan_info']['scan_end']
+            
+            hosts = ET.SubElement(root, 'hosts')
+            for host_data in results['hosts']:
+                host = ET.SubElement(hosts, 'host')
+                ET.SubElement(host, 'ip').text = host_data['ip']
+                ET.SubElement(host, 'status').text = host_data['status']
+                if host_data['hostname']:
+                    ET.SubElement(host, 'hostname').text = host_data['hostname']
+                
+                ports = ET.SubElement(host, 'ports')
+                for port_data in host_data['ports']:
+                    port = ET.SubElement(ports, 'port')
+                    ET.SubElement(port, 'number').text = str(port_data['port'])
+                    ET.SubElement(port, 'state').text = port_data['state']
+                    ET.SubElement(port, 'service').text = port_data['service']
+                    ET.SubElement(port, 'version').text = port_data['version']
+                
+                if host_data['os']:
+                    os_elem = ET.SubElement(host, 'os')
+                    for key, value in host_data['os'].items():
+                        if value:
+                            ET.SubElement(os_elem, key).text = str(value)
+            
             tree = ET.ElementTree(root)
             tree.write(output_file)
             
