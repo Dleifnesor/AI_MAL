@@ -64,47 +64,45 @@ fi
 INSTALL_DIR=$(dirname "$PYTHON_SCRIPT")
 echo -e "${BLUE}Found AI_MAL installation at: ${INSTALL_DIR}${NC}"
 
-# If no venv found yet, check for system Python with required modules
-if [ -z "$VENV_DIR" ]; then
-    echo -e "${YELLOW}No virtual environment found, checking system Python...${NC}"
-    
-    # Check if system Python has the required modules
+# Determine the Python executable to use
+PYTHON_EXECUTABLE=""
+
+# If we found a venv, prioritize it
+if [ -n "$VENV_DIR" ] && [ -f "${VENV_DIR}/bin/python3" ]; then
+    PYTHON_EXECUTABLE="${VENV_DIR}/bin/python3"
+    echo -e "${GREEN}Using Python from virtual environment: ${PYTHON_EXECUTABLE}${NC}"
+else
+    # If no venv found, check if system Python has required modules
+    echo -e "${YELLOW}No virtual environment found or venv Python missing, checking system Python...${NC}"
     MISSING_MODULES=0
-    for module in "requests" "pymetasploit3" "netifaces"; do
+    # Check a few core modules installed by pip
+    for module in "requests" "pymetasploit3" "paramiko" "rich"; do
         if ! python3 -c "import $module" 2>/dev/null; then
+            echo -e "${YELLOW}System Python missing module: $module${NC}"
             MISSING_MODULES=$((MISSING_MODULES+1))
         fi
     done
     
+    # Also check for samba, which should come from system site packages if venv uses them
+    if ! python3 -c "import samba" 2>/dev/null; then
+         echo -e "${YELLOW}System Python missing module: samba${NC}"
+         MISSING_MODULES=$((MISSING_MODULES+1))
+    fi
+    
     if [ $MISSING_MODULES -eq 0 ]; then
-        echo -e "${GREEN}All required modules found in system Python. Using system Python.${NC}"
-        SYSTEM_PYTHON=1
+        echo -e "${GREEN}All required core modules found. Using system python3.${NC}"
+        PYTHON_EXECUTABLE="python3"
     else
-        # Try to create a venv in the installation directory
-        echo -e "${YELLOW}Creating virtual environment in ${INSTALL_DIR}/venv...${NC}"
-        python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null
-        if [ -d "${INSTALL_DIR}/venv" ]; then
-            VENV_DIR="${INSTALL_DIR}/venv"
-            echo -e "${GREEN}Created virtual environment at: ${VENV_DIR}${NC}"
-            echo -e "${YELLOW}Installing required packages...${NC}"
-            "${VENV_DIR}/bin/pip" install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python
-        else
-            echo -e "${RED}Error: Could not create a virtual environment.${NC}"
-            echo -e "Please install required modules manually:"
-            echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python${NC}"
-            exit 1
-        fi
+        echo -e "${RED}Error: System Python is missing required modules and no valid virtual environment was found.${NC}"
+        echo -e "Please re-run the installation script: ${GREEN}sudo ./install.sh${NC}"
+        exit 1
+        # Fallback venv creation removed as install.sh should handle this reliably
     fi
 fi
 
-# Verify virtual environment exists if we're using one
-if [ -z "$SYSTEM_PYTHON" ] && [ ! -d "$VENV_DIR" ]; then
-    echo -e "${RED}Error: Python virtual environment not found.${NC}"
-    echo -e "Please run the following commands to create it:"
-    echo -e "  ${GREEN}cd ${INSTALL_DIR}${NC}"
-    echo -e "  ${GREEN}python3 -m venv venv${NC}"
-    echo -e "  ${GREEN}source venv/bin/activate${NC}"
-    echo -e "  ${GREEN}pip install requests pymetasploit3 psutil netifaces smbclient paramiko scapy h2 mysql-connector-python${NC}"
+# Final check for Python executable
+if [ -z "$PYTHON_EXECUTABLE" ]; then
+    echo -e "${RED}Error: Could not determine a suitable Python executable.${NC}"
     exit 1
 fi
 
@@ -389,18 +387,11 @@ if [ -n "$VENV_DIR" ]; then
     source "${VENV_DIR}/bin/activate"
 fi
 
-# Execute the Python script with all arguments
-if [ -n "$SYSTEM_PYTHON" ]; then
-    python3 "${PYTHON_SCRIPT}" "$@" || {
-        echo -e "${RED}Error: Failed to execute the scan.${NC}"
-        exit 1
-    }
-else
-    "${VENV_DIR}/bin/python3" "${PYTHON_SCRIPT}" "$@" || {
-        echo -e "${RED}Error: Failed to execute the scan.${NC}"
-        exit 1
-    }
-fi
+# Execute the Python script with all passed arguments
+echo -e "${BLUE}Executing: ${PYTHON_EXECUTABLE} ${PYTHON_SCRIPT} "$@"${NC}"
+"$PYTHON_EXECUTABLE" "$PYTHON_SCRIPT" "$@"
+
+exit $?
 
 # Deactivate virtual environment if it was activated
 if [ -n "$VENV_DIR" ]; then

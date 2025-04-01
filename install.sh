@@ -61,6 +61,7 @@ apt-get install -y \
     samba \
     samba-dev \
     python3-samba \
+    ca-certificates \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
@@ -90,6 +91,10 @@ msfdb init || {
     sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
 }
+
+# Clean up previous virtual environment if it exists
+echo -e "${YELLOW}[+] Cleaning up previous virtual environment (if any)...${NC}"
+rm -rf venv
 
 # Create virtual environment
 echo -e "${YELLOW}[+] Creating virtual environment...${NC}"

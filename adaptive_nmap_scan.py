@@ -33,6 +33,11 @@ import pymetasploit3
 from pymetasploit3.msfrpc import MsfRpcClient
 import smbclient
 import paramiko
+try:
+    import wmi
+except ImportError:
+    # WMI is Windows-specific, ignore if not found on other systems
+    wmi = None
 import wmi
 
 # Optional imports
