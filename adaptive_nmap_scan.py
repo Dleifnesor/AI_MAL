@@ -2580,17 +2580,23 @@ if __name__ == "__main__":
                 # Display scan summary
                 self.viewer.scan_summary(target, result)
                 
-                # Cleanup XML file
-                try:
-                    os.unlink(xml_output)
-                except:
-                    pass
+                # Clean up XML file
+                if os.path.exists(xml_output):
+                    try:
+                        os.unlink(xml_output)
+                    except OSError as e:
+                        self.logger.warning(f"Failed to remove temporary XML file: {e}")
                 
                 return result
             
             except Exception as e:
                 self.logger.error(f"Error parsing Nmap output: {e}")
                 self.viewer.error(f"Error parsing Nmap output: {str(e)}")
+                if os.path.exists(xml_output):
+                    try:
+                        os.unlink(xml_output)
+                    except:
+                        pass
                 return None
         
         except Exception as e:
