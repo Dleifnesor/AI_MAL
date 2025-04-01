@@ -17,7 +17,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "AI_MAL=ai_mal.main:main",
+            "AI_MAL=main:main",
         ],
     },
     author="Dleifnesor",

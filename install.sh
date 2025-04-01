@@ -107,9 +107,18 @@ GENERATED_SCRIPTS_DIR=${INSTALL_DIR}/generated_scripts
 LOG_DIR=${INSTALL_DIR}/logs
 EOL
 
-# Create symbolic link for command-line access
+# Create a wrapper script for the command-line access
 echo -e "${GREEN}Creating command-line shortcut...${NC}"
-ln -sf "${INSTALL_DIR}/venv/bin/ai_mal" /usr/local/bin/AI_MAL
+cat > /usr/local/bin/AI_MAL << EOL
+#!/bin/bash
+# AI_MAL wrapper script
+source ${INSTALL_DIR}/venv/bin/activate
+cd ${INSTALL_DIR}
+python ${INSTALL_DIR}/main.py "\$@"
+EOL
+
+# Make the wrapper script executable
+chmod +x /usr/local/bin/AI_MAL
 
 # Set up completion script
 echo -e "${GREEN}Setting up command completion...${NC}"
@@ -124,7 +133,6 @@ EOL
 
 # Set permissions
 echo -e "${GREEN}Setting permissions...${NC}"
-chmod +x /usr/local/bin/AI_MAL
 chmod -R 755 "${INSTALL_DIR}/scan_results" "${INSTALL_DIR}/msf_resources" "${INSTALL_DIR}/generated_scripts" "${INSTALL_DIR}/logs"
 
 # Print success message
