@@ -2282,14 +2282,26 @@ if __name__ == "__main__":
             if self.stealth:
                 # Stealthier scan with timing template 2
                 parameters = [
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "-sS", "-T2", "-F", "-sV", "--version-intensity", "2", "-O", "--osscan-limit"
+                    "-sS",  # SYN scan
+                    "-T2",  # Timing template 2 (slower but stealthier)
+                    "-F",   # Fast scan (top 100 ports)
+                    "-sV",  # Version detection
+                    "--version-intensity", "2",  # Version detection intensity
+                    "-O",   # OS detection
+                    "--osscan-limit",  # Limit OS detection to promising targets
+                    self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
             else:
                 # Normal quick scan
                 parameters = [
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "-sS", "-T4", "-F", "-sV", "--version-intensity", "2", "-O", "--osscan-limit"
+                    "-sS",  # SYN scan
+                    "-T4",  # Timing template 4 (normal speed)
+                    "-F",   # Fast scan (top 100 ports)
+                    "-sV",  # Version detection
+                    "--version-intensity", "2",  # Version detection intensity
+                    "-O",   # OS detection
+                    "--osscan-limit",  # Limit OS detection to promising targets
+                    self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         elif iteration == 2:
             # Second iteration: Detailed scan of ports found in first scan
@@ -2299,14 +2311,22 @@ if __name__ == "__main__":
                 # Scan specific ports found in previous iterations
                 port_list = ",".join(map(str, ports))
                 parameters = [
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "-sS", "-T4", "-p", port_list, "-sV", "-O"
+                    "-sS",  # SYN scan
+                    "-T4",  # Timing template 4
+                    "-p", port_list,  # Specific ports
+                    "-sV",  # Version detection
+                    "-O",   # OS detection
+                    self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
             else:
                 # Fall back to scanning top 1000 ports
                 parameters = [
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "-sS", "-T4", "-p", "1-1000", "-sV", "-O"
+                    "-sS",  # SYN scan
+                    "-T4",  # Timing template 4
+                    "-p", "1-1000",  # Top 1000 ports
+                    "-sV",  # Version detection
+                    "-O",   # OS detection
+                    self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         else:
             # Advanced iterations: Generate based on AI suggestions or use comprehensive scan
@@ -2353,17 +2373,29 @@ if __name__ == "__main__":
                     # Fallback to comprehensive scan
                     self.logger.info("Advanced iteration: Comprehensive scan (AI fallback)")
                     parameters = [
-                        self.target if self.target else self.discovered_hosts[self.current_target_index],
-                        "-sS", "-T4", "-p", "1-10000", "-sV", "--version-intensity", "4",
-                        "-O", "--osscan-guess", "--script", "default,safe"
+                        "-sS",  # SYN scan
+                        "-T4",  # Timing template 4
+                        "-p", "1-10000",  # Full port scan
+                        "-sV",  # Version detection
+                        "--version-intensity", "4",  # Maximum version detection intensity
+                        "-O",   # OS detection
+                        "--osscan-guess",  # Guess OS even if not 100% sure
+                        "--script", "default,safe",  # Run default and safe scripts
+                        self.target if self.target else self.discovered_hosts[self.current_target_index]
                     ]
             else:
                 # Not enough history for AI, use comprehensive scan
                 self.logger.info("Advanced iteration: Comprehensive scan")
                 parameters = [
-                    self.target if self.target else self.discovered_hosts[self.current_target_index],
-                    "-sS", "-T4", "-p", "1-10000", "-sV", "--version-intensity", "4",
-                    "-O", "--osscan-guess", "--script", "default,safe"
+                    "-sS",  # SYN scan
+                    "-T4",  # Timing template 4
+                    "-p", "1-10000",  # Full port scan
+                    "-sV",  # Version detection
+                    "--version-intensity", "4",  # Maximum version detection intensity
+                    "-O",   # OS detection
+                    "--osscan-guess",  # Guess OS even if not 100% sure
+                    "--script", "default,safe",  # Run default and safe scripts
+                    self.target if self.target else self.discovered_hosts[self.current_target_index]
                 ]
         
         # Apply stealth mode if enabled (for iterations after the first)
