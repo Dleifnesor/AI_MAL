@@ -62,6 +62,7 @@ apt-get install -y \
     samba-dev \
     python3-samba \
     ca-certificates \
+    dos2unix \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
@@ -158,6 +159,10 @@ echo -e "${YELLOW}[+] Pulling required models...${NC}"
 ollama pull codellama || echo -e "${RED}Failed to pull codellama model${NC}"
 ollama pull gemma3:1b || echo -e "${RED}Failed to pull gemma3:1b model${NC}"
 ollama pull qwen2.5-coder:7b || echo -e "${RED}Failed to pull qwen2.5-coder:7b model${NC}"
+
+# Fix line endings in the wrapper script
+echo -e "${GREEN}[+] Ensuring correct line endings for AI_MAL script...${NC}"
+dos2unix "$INSTALL_DIR/AI_MAL"
 
 # Make the main files executable
 echo -e "${GREEN}[+] Setting executable permissions...${NC}"
