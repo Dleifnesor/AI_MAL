@@ -11,6 +11,7 @@ cryptography>=3.4.7
 paramiko>=2.7.2
 requests>=2.26.0
 urllib3>=1.26.6
+smbclient>=1.0.0
 
 # AI and data processing
 numpy>=1.21.2

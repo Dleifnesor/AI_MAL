@@ -13,7 +13,10 @@ setup(
         "rich>=13.7.0",
         "pyyaml>=6.0.1",
         "jinja2>=3.1.3",
-        "python-nmap>=0.7.1"
+        "python-nmap>=0.7.1",
+        # Additional dependencies for data exfiltration
+        "paramiko>=2.7.2",  # For SSH connections
+        "smbclient>=1.0.0",  # For SMB connections
     ],
     entry_points={
         "console_scripts": [

