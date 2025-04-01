@@ -2485,7 +2485,7 @@ if __name__ == "__main__":
             
             # Stop animation
             if 'animation' in locals():
-                animation.stop()
+                animation.set()  # Changed from animation.stop() to animation.set()
             
             # Check if the scan was successful
             if return_code != 0:
