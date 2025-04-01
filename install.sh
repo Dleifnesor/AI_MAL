@@ -109,6 +109,10 @@ else
     exit 1
 fi
 
+# Install Rich for the pseudo GUI interface
+echo -e "${GREEN}Installing Rich library for terminal GUI...${NC}"
+pip install rich
+
 # Install package in development mode
 echo -e "${GREEN}Installing AI_MAL package...${NC}"
 pip install -e .
@@ -145,7 +149,7 @@ if [ -d "/etc/bash_completion.d" ]; then
 _AI_MAL_completions()
 {
     local cur=\${COMP_WORDS[COMP_CWORD]}
-    COMPREPLY=( \$(compgen -W "--msf --exploit --model --fallback-model --full-auto --custom-scripts --script-type --execute-scripts --stealth --continuous --delay --services --version --os --vuln --dos --output-dir --output-format --quiet --iterations --custom-vuln --ai-analysis" -- \$cur) )
+    COMPREPLY=( \$(compgen -W "--msf --exploit --model --fallback-model --full-auto --custom-scripts --script-type --execute-scripts --stealth --continuous --delay --services --version --os --vuln --dos --output-dir --output-format --quiet --iterations --custom-vuln --ai-analysis --no-gui" -- \$cur) )
 }
 complete -F _AI_MAL_completions AI_MAL
 EOL

@@ -9,6 +9,7 @@ AI_MAL is an advanced penetration testing tool that combines the power of Nmap, 
 - **AI Analysis**: Leverages Ollama models for intelligent vulnerability assessment
 - **Custom Script Generation**: AI-powered generation of custom exploitation scripts
 - **Full Automation**: Supports fully automated penetration testing workflows
+- **Terminal-Based GUI**: Interactive, colorful terminal interface with progress indicators
 - **Kali Linux Integration**: Optimized for Kali Linux environment
 
 ## Prerequisites
@@ -18,6 +19,7 @@ AI_MAL is an advanced penetration testing tool that combines the power of Nmap, 
 - Nmap
 - Metasploit Framework
 - Ollama (for AI model support)
+- Rich library (for terminal GUI, automatically installed)
 
 ## Installation
 
@@ -57,6 +59,11 @@ AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto
 - `--script-type`: Type of script to generate (python, bash, ruby)
 - `--execute-scripts`: Automatically execute generated scripts
 
+### Interface Options
+
+- `--quiet`: Suppress progress output and rich terminal interface
+- `--no-gui`: Disable the terminal GUI interface completely
+
 ### Advanced Options
 
 - `--stealth`: Enable stealth mode
@@ -67,6 +74,18 @@ AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto
 - `--os`: Enable OS detection
 - `--vuln`: Enable vulnerability scanning
 - `--dos`: Attempt Denial of Service attacks
+
+## Terminal GUI Interface
+
+AI_MAL comes with a rich terminal-based GUI that provides:
+
+- **Progress Bars**: Visual indicators for scanning, analysis, and exploitation tasks
+- **Color-Coded Results**: Color-highlighted output for easy interpretation
+- **Interactive Tables**: Well-formatted tables for scan results, exploits, and analysis
+- **ASCII Art Banner**: Stylish banner introducing the tool
+- **Status Indicators**: Clear status messages throughout the scanning process
+
+The GUI is powered by the Rich library and activates automatically. If you prefer a simpler output, use the `--quiet` flag to reduce verbosity or `--no-gui` to completely disable the GUI elements.
 
 ## Examples
 
@@ -88,6 +107,11 @@ AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
 4. Stealth scan with service detection:
 ```bash
 AI_MAL 192.168.1.1 --stealth --services --version
+```
+
+5. Run with minimal interface (no GUI):
+```bash
+AI_MAL 192.168.1.1 --no-gui
 ```
 
 ## Project Structure
@@ -126,4 +150,5 @@ This tool is for educational and authorized testing purposes only. Always obtain
 - Nmap Project
 - Metasploit Framework
 - Ollama Team
+- Rich library for the terminal interface
 - All contributors and users of this tool 
