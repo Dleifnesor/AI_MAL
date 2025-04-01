@@ -56,12 +56,20 @@ except ImportError:
                 
     smbclient = DummySmbClient()
 import paramiko
+# Handle wmi import error
 try:
     import wmi
+    HAS_WMI = True
 except ImportError:
-    # WMI is Windows-specific, ignore if not found on other systems
-    wmi = None
-import wmi
+    HAS_WMI = False
+    class DummyWmi:
+        def __init__(self, *args, **kwargs):
+            pass
+            
+        def WMI(self, *args, **kwargs):
+            raise Exception("WMI functionality disabled - wmi module not available")
+    
+    wmi = DummyWmi()
 
 # Optional imports
 try:

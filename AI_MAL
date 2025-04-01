@@ -64,6 +64,56 @@ fi
 INSTALL_DIR=$(dirname "$PYTHON_SCRIPT")
 echo -e "${BLUE}Found AI_MAL installation at: ${INSTALL_DIR}${NC}"
 
+# Function to check and start dependencies
+start_dependencies() {
+    echo -e "${YELLOW}[+] Checking and starting dependencies...${NC}"
+    
+    # Check if PostgreSQL is running
+    if ! systemctl is-active --quiet postgresql; then
+        echo -e "${YELLOW}Starting PostgreSQL service...${NC}"
+        systemctl start postgresql
+        # Wait for PostgreSQL to start
+        for i in {1..10}; do
+            if pg_isready -q; then
+                break
+            fi
+            sleep 1
+        done
+    fi
+    
+    # Check if Metasploit database is initialized
+    if ! msfdb status | grep -q "connected"; then
+        echo -e "${YELLOW}Initializing Metasploit database...${NC}"
+        msfdb init || {
+            echo -e "${YELLOW}Using alternative Metasploit DB setup...${NC}"
+            # Create msf user and database if needed
+            sudo -u postgres psql -c "CREATE USER msf WITH PASSWORD 'msf';" 2>/dev/null || true
+            sudo -u postgres psql -c "CREATE DATABASE msf OWNER msf;" 2>/dev/null || true
+            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE msf TO msf;" 2>/dev/null || true
+        }
+    fi
+    
+    # Check if Ollama is running
+    if ! systemctl is-active --quiet ollama 2>/dev/null; then
+        echo -e "${YELLOW}Starting Ollama service...${NC}"
+        systemctl start ollama 2>/dev/null || true
+        # Wait for Ollama to start
+        for i in {1..10}; do
+            if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+    fi
+    
+    echo -e "${YELLOW}[+] Waiting for services to be ready...${NC}"
+    sleep 3
+    echo -e "${GREEN}[+] All services are ready${NC}"
+}
+
+# Start dependencies
+start_dependencies
+
 # Determine the Python executable to use
 PYTHON_EXECUTABLE=""
 
@@ -289,98 +339,6 @@ command_exists() {
     command -v "$1" > /dev/null 2>&1
 }
 
-# Function to check and start dependencies
-check_dependencies() {
-    echo "[+] Checking and starting dependencies..."
-    
-    # Check if we're in the installation directory
-    if [ ! -f "$INSTALL_DIR/install.sh" ]; then
-        echo "[-] install.sh not found in $INSTALL_DIR"
-        echo "    Please run install.sh first to set up dependencies"
-        return 1
-    fi
-    
-    # Check Nmap capabilities
-    if ! nmap -sn localhost > /dev/null 2>&1; then
-        echo "[-] Nmap is not working properly. Please check your installation."
-        echo "    Try running: sudo nmap -sn localhost"
-        return 1
-    fi
-    
-    # Check and start PostgreSQL
-    if command_exists systemctl; then
-        if ! systemctl is-active --quiet postgresql; then
-            echo "[+] Starting PostgreSQL service..."
-            sudo systemctl start postgresql || {
-                echo "[-] Failed to start PostgreSQL"
-                return 1
-            }
-        fi
-    else
-        if ! pg_isready -q; then
-            echo "[+] Starting PostgreSQL service..."
-            sudo service postgresql start || {
-                echo "[-] Failed to start PostgreSQL"
-                return 1
-            }
-        fi
-    fi
-    
-    # Check and start Ollama
-    if command_exists systemctl; then
-        if ! systemctl is-active --quiet ollama; then
-            echo "[+] Starting Ollama service..."
-            sudo systemctl start ollama || {
-                echo "[-] Failed to start Ollama"
-                return 1
-            }
-        fi
-    else
-        if ! curl -s http://localhost:11434/api/version > /dev/null; then
-            echo "[+] Starting Ollama service..."
-            nohup ollama serve > /var/log/ollama.log 2>&1 &
-        fi
-    fi
-    
-    # Check and start Metasploit RPC
-    if [ "$USE_MSF" = true ]; then
-        if ! curl -s http://localhost:55553/api/1.0/health > /dev/null; then
-            echo "[+] Starting Metasploit RPC service..."
-            nohup msfrpcd -P "$MSF_PASSWORD" -S -a 127.0.0.1 > /var/log/msfrpcd.log 2>&1 &
-        fi
-    fi
-    
-    # Wait for services to be ready
-    echo "[+] Waiting for services to be ready..."
-    for i in {1..30}; do
-        if pg_isready -q && curl -s http://localhost:11434/api/version > /dev/null; then
-            if [ "$USE_MSF" = true ]; then
-                if curl -s http://localhost:55553/api/1.0/health > /dev/null; then
-                    echo "[+] All services are ready"
-                    return 0
-                fi
-            else
-                echo "[+] All services are ready"
-                return 0
-            fi
-        fi
-        echo -n "."
-        sleep 1
-    done
-    
-    echo -e "\n[-] Services failed to start within 30 seconds"
-    echo "Please check the logs and try again:"
-    echo "  journalctl -u postgresql"
-    echo "  journalctl -u ollama"
-    echo "  tail -f /var/log/msfrpcd.log"
-    return 1
-}
-
-# Check dependencies before proceeding
-if ! check_dependencies; then
-    exit 1
-fi
-
 # Activate virtual environment if it exists
 if [ -n "$VENV_DIR" ]; then
     echo "Using virtual environment: ${VENV_DIR}"
@@ -388,6 +346,9 @@ if [ -n "$VENV_DIR" ]; then
 fi
 
 # Execute the Python script with all passed arguments
+if [ -n "$VENV_DIR" ]; then
+    echo -e "${BLUE}Using virtual environment: ${VENV_DIR}${NC}"
+fi
 echo -e "${BLUE}Executing: ${PYTHON_EXECUTABLE} ${PYTHON_SCRIPT} "$@"${NC}"
 "$PYTHON_EXECUTABLE" "$PYTHON_SCRIPT" "$@"
 

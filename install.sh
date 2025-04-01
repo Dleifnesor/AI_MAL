@@ -52,12 +52,16 @@ apt-get install -y \
     libffi-dev \
     python3-dev \
     nmap \
-    metasploit-framework \
-    postgresql \
-    postgresql-contrib \
+    nmap-common \
+    ndiff \
+    ncat \
+    nping \
     libpcap-dev \
     ca-certificates \
     dos2unix \
+    metasploit-framework \
+    postgresql \
+    postgresql-contrib \
     || { echo -e "${RED}Failed to install system dependencies${NC}"; exit 1; }
 
 # Start and enable PostgreSQL
