@@ -19,8 +19,14 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Check if running on Kali Linux
-if ! grep -q "Kali GNU/Linux" /etc/os-release; then
+# Get current directory
+INSTALL_DIR=$(pwd)
+echo -e "${GREEN}Installing AI_MAL in: ${INSTALL_DIR}${NC}"
+
+# Check if Kali Linux
+if grep -q "Kali" /etc/os-release; then
+    echo -e "${GREEN}Kali Linux detected${NC}"
+else
     echo -e "${YELLOW}Warning: This script is designed for Kali Linux${NC}"
     echo -e "${YELLOW}Some features may not work properly on other distributions${NC}"
     read -p "Continue anyway? (y/N) " -n 1 -r
@@ -30,14 +36,9 @@ if ! grep -q "Kali GNU/Linux" /etc/os-release; then
     fi
 fi
 
-# Get current directory
-INSTALL_DIR=$(pwd)
-echo -e "${GREEN}Installing AI_MAL in: ${INSTALL_DIR}${NC}"
-
 # Update system
 echo -e "${GREEN}Updating system...${NC}"
 apt-get update
-apt-get upgrade -y
 
 # Install required system packages
 echo -e "${GREEN}Installing system dependencies...${NC}"
@@ -55,20 +56,32 @@ apt-get install -y \
     libffi-dev \
     python3-nmap
 
+# Check if Nmap is installed
+if ! command -v nmap &> /dev/null; then
+    echo -e "${RED}Error: Nmap is not installed. Please install nmap manually.${NC}"
+    exit 1
+fi
+
+# Check if Metasploit is installed
+if ! command -v msfconsole &> /dev/null; then
+    echo -e "${RED}Error: Metasploit Framework is not installed. Please install it manually.${NC}"
+    exit 1
+fi
+
 # Check if Ollama is installed
 if ! command -v ollama &> /dev/null; then
     echo -e "${GREEN}Installing Ollama...${NC}"
     curl -fsSL https://ollama.com/install.sh | sh
     
     # Start Ollama service
-    systemctl enable ollama
-    systemctl start ollama
+    systemctl enable ollama || true
+    systemctl start ollama || true
     
     # Pull required models
     echo -e "${GREEN}Pulling AI models...${NC}"
-    ollama pull qwen2.5-coder:7b
-    ollama pull mistral:7b
-    ollama pull gemma3:1b
+    ollama pull qwen2.5-coder:7b || echo -e "${YELLOW}Failed to pull qwen2.5-coder:7b model, will try to use later${NC}"
+    ollama pull mistral:7b || echo -e "${YELLOW}Failed to pull mistral:7b model, will try to use later${NC}"
+    ollama pull gemma3:1b || echo -e "${YELLOW}Failed to pull gemma3:1b model, will try to use later${NC}"
 fi
 
 # Create full directory structure
@@ -89,7 +102,12 @@ source venv/bin/activate
 # Install Python dependencies
 echo -e "${GREEN}Installing Python dependencies...${NC}"
 pip install -U pip
-pip install -r requirements.txt
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt
+else
+    echo -e "${RED}Error: requirements.txt not found${NC}"
+    exit 1
+fi
 
 # Install package in development mode
 echo -e "${GREEN}Installing AI_MAL package...${NC}"
@@ -112,8 +130,8 @@ echo -e "${GREEN}Creating command-line shortcut...${NC}"
 cat > /usr/local/bin/AI_MAL << EOL
 #!/bin/bash
 # AI_MAL wrapper script
-source ${INSTALL_DIR}/venv/bin/activate
 cd ${INSTALL_DIR}
+source ${INSTALL_DIR}/venv/bin/activate
 python ${INSTALL_DIR}/main.py "\$@"
 EOL
 
@@ -122,7 +140,8 @@ chmod +x /usr/local/bin/AI_MAL
 
 # Set up completion script
 echo -e "${GREEN}Setting up command completion...${NC}"
-cat > /etc/bash_completion.d/AI_MAL << EOL
+if [ -d "/etc/bash_completion.d" ]; then
+    cat > /etc/bash_completion.d/AI_MAL << EOL
 _AI_MAL_completions()
 {
     local cur=\${COMP_WORDS[COMP_CWORD]}
@@ -130,6 +149,9 @@ _AI_MAL_completions()
 }
 complete -F _AI_MAL_completions AI_MAL
 EOL
+else
+    echo -e "${YELLOW}Bash completion directory not found, skipping command completion setup${NC}"
+fi
 
 # Set permissions
 echo -e "${GREEN}Setting permissions...${NC}"
@@ -141,5 +163,5 @@ echo -e "${YELLOW}Please restart your shell to enable command completion${NC}"
 echo -e "${YELLOW}You can now use the 'AI_MAL' command from anywhere${NC}"
 echo
 echo -e "${GREEN}Example usage:${NC}"
-echo "AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto"
+echo "AI_MAL 192.168.1.1 --msf --exploit --model gemma3:1b --full-auto"
 echo "AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 

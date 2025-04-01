@@ -167,62 +167,33 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Initialize and run AI_MAL
-    ai_mal = AI_MAL(args.target, **vars(args))
-    
+    args_dict = vars(args)
+    target = args_dict.pop('target')  # Remove target from args dict to avoid duplicate argument
+    ai_mal = AI_MAL(target, **args_dict)
+
     try:
-        logger.info(f"Starting scan of target: {args.target}")
-        results = asyncio.run(ai_mal.run())
+        # Run the async scan
+        loop = asyncio.get_event_loop()
+        scan_results = loop.run_until_complete(ai_mal.run())
         
-        # Save results
+        # Save scan results
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(output_dir, f'scan_results_{timestamp}.{args.output_format}')
+        output_file = os.path.join(output_dir, f'scan_{timestamp}.json')
         
-        if args.output_format == 'json':
-            with open(output_file, 'w') as f:
-                json.dump(results, f, indent=2)
-        else:
-            import xml.etree.ElementTree as ET
-            root = ET.Element('scan_results')
-            # Convert results to XML format
-            scan_info = ET.SubElement(root, 'scan_info')
-            ET.SubElement(scan_info, 'target').text = results['scan_info']['target']
-            ET.SubElement(scan_info, 'scan_type').text = results['scan_info']['scan_type']
-            ET.SubElement(scan_info, 'scan_start').text = results['scan_info']['scan_start']
-            ET.SubElement(scan_info, 'scan_end').text = results['scan_info']['scan_end']
+        with open(output_file, 'w') as f:
+            json.dump(scan_results, f, indent=2)
             
-            hosts = ET.SubElement(root, 'hosts')
-            for host_data in results['hosts']:
-                host = ET.SubElement(hosts, 'host')
-                ET.SubElement(host, 'ip').text = host_data['ip']
-                ET.SubElement(host, 'status').text = host_data['status']
-                if host_data['hostname']:
-                    ET.SubElement(host, 'hostname').text = host_data['hostname']
-                
-                ports = ET.SubElement(host, 'ports')
-                for port_data in host_data['ports']:
-                    port = ET.SubElement(ports, 'port')
-                    ET.SubElement(port, 'number').text = str(port_data['port'])
-                    ET.SubElement(port, 'state').text = port_data['state']
-                    ET.SubElement(port, 'service').text = port_data['service']
-                    ET.SubElement(port, 'version').text = port_data['version']
-                
-                if host_data['os']:
-                    os_elem = ET.SubElement(host, 'os')
-                    for key, value in host_data['os'].items():
-                        if value:
-                            ET.SubElement(os_elem, key).text = str(value)
-            
-            tree = ET.ElementTree(root)
-            tree.write(output_file)
-            
-        logger.info(f"Results saved to {output_file}")
+        logger.info(f"Scan results saved to {output_file}")
+        
+        # Close event loop
+        loop.close()
         
     except KeyboardInterrupt:
         logger.info("Scan interrupted by user")
         sys.exit(1)
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Fatal error: {str(e)}")
         sys.exit(1)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 
