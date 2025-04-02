@@ -11,7 +11,9 @@ cryptography>=3.4.7
 paramiko>=2.7.2
 requests>=2.26.0
 urllib3>=1.26.6
-smbclient>=1.0.0
+# Note: smbclient is a system package, not a Python package
+# Install it using: sudo apt-get install smbclient (Debian/Ubuntu/Kali)
+# or: sudo yum install samba-client (RHEL/CentOS)
 
 # AI and data processing
 numpy>=1.21.2

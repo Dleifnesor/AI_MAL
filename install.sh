@@ -54,7 +54,8 @@ apt-get install -y \
     build-essential \
     libssl-dev \
     libffi-dev \
-    python3-nmap
+    python3-nmap \
+    smbclient
 
 # Check if Nmap is installed
 if ! command -v nmap &> /dev/null; then
@@ -168,4 +169,7 @@ echo -e "${YELLOW}You can now use the 'AI_MAL' command from anywhere${NC}"
 echo
 echo -e "${GREEN}Example usage:${NC}"
 echo "AI_MAL 192.168.1.1 --msf --exploit --model gemma3:1b --full-auto"
-echo "AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts" 
+echo "AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts"
+
+echo ">>> Installation complete!"
+echo ">>> To activate the virtual environment, run: source venv/bin/activate" 
