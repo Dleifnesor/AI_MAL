@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="ai_mal",
+    name="AI_MAL",
     version="0.1.0",
-    packages=find_packages(include=['ai_mal', 'ai_mal.*']),
+    packages=find_packages(include=['AI_MAL', 'AI_MAL.*']),
     install_requires=[
         "aiohttp>=3.8.0",
         "python-dotenv>=0.19.0",
@@ -14,13 +14,20 @@ setup(
         "pyyaml>=6.0.1",
         "jinja2>=3.1.3",
         "python-nmap>=0.7.1",
-        # Additional dependencies for data exfiltration
         "paramiko>=2.7.2",  # For SSH connections
-        "smbclient>=1.0.0",  # For SMB connections
+        "scapy>=2.4.5",
+        "cryptography>=3.4.7",
+        "numpy>=1.21.2",
+        "pandas>=1.3.3",
+        "scikit-learn>=0.24.2",
+        "torch>=1.9.0",
+        "transformers>=4.11.3",
+        "tqdm>=4.62.3",
+        "click>=8.0.1",
     ],
     entry_points={
         "console_scripts": [
-            "AI_MAL=main:main",
+            "AI_MAL=AI_MAL.main:main",
         ],
     },
     author="Dleifnesor",
@@ -42,6 +49,6 @@ setup(
     python_requires=">=3.8",
     include_package_data=True,
     package_data={
-        'ai_mal': ['core/*', 'examples/*', 'tests/*'],
+        'AI_MAL': ['core/*', 'examples/*', 'tests/*'],
     },
 ) 

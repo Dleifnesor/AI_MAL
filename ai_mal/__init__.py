@@ -6,10 +6,11 @@ __version__ = "0.1.0"
 __author__ = "Dleifnesor"
 __email__ = "phlegmenthusiast@gmail.com"
 
-from ai_mal.core.adaptive import AdaptiveScanner
-from ai_mal.core.ai_manager import AIManager
-from ai_mal.core.metasploit import MetasploitManager
-from ai_mal.core.script_generator import ScriptGenerator
+# Import core components
+from AI_MAL.core.adaptive import AdaptiveScanner
+from AI_MAL.core.ai_manager import AIManager
+from AI_MAL.core.metasploit import MetasploitManager
+from AI_MAL.core.script_generator import ScriptGenerator
 
 __all__ = [
     'AdaptiveScanner',
