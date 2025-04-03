@@ -5,7 +5,7 @@ Advanced example of using AI_MAL with all features
 
 import asyncio
 import logging
-from ai_mal import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
+from AI_MAL import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
 
 # Configure logging
 logging.basicConfig(

@@ -6,7 +6,7 @@ Tests for AI_MAL example scripts
 import os
 import pytest
 import asyncio
-from ai_mal import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
+from AI_MAL import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
 
 @pytest.mark.asyncio
 async def test_basic_example():

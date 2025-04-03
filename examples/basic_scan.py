@@ -4,7 +4,7 @@ Basic example of using AI_MAL
 """
 
 import asyncio
-from ai_mal import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
+from AI_MAL import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
 
 async def main():
     # Target IP address

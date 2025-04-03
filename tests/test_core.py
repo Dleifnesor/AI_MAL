@@ -5,7 +5,7 @@ Tests for AI_MAL core functionality
 
 import asyncio
 import pytest
-from ai_mal import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
+from AI_MAL import AdaptiveScanner, AIManager, MetasploitManager, ScriptGenerator
 
 @pytest.fixture
 def target():

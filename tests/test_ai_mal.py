@@ -5,8 +5,8 @@ import pytest
 import asyncio
 from typing import Dict, Any
 
-from ai_mal.core.adaptive import AdaptiveNmapScanner, ScanConfig
-from ai_mal.core.ai_manager import AIManager
+from AI_MAL.core.adaptive import AdaptiveNmapScanner, ScanConfig
+from AI_MAL.core.ai_manager import AIManager
 
 @pytest.fixture
 def scan_config():
