@@ -40,6 +40,23 @@ if [ -f /etc/os-release ]; then
             python3-dev \
             python3-setuptools \
             python3-wheel
+
+        # Install Ollama
+        echo ">>> Installing Ollama..."
+        curl -fsSL https://ollama.com/install.sh | sh
+
+        # Start Ollama service
+        echo ">>> Starting Ollama service..."
+        sudo systemctl start ollama
+        sudo systemctl enable ollama
+
+        # Pull the specified model
+        echo ">>> Pulling artifish/llama3.2-uncensored model..."
+        ollama pull artifish/llama3.2-uncensored
+
+        # Set as default model
+        echo ">>> Setting artifish/llama3.2-uncensored as default model..."
+        ollama use artifish/llama3.2-uncensored
     else
         echo ">>> Error: This script is designed for Kali Linux"
         echo ">>> Please install Kali Linux or modify this script for your distribution"
@@ -73,4 +90,5 @@ pip install -e .
 
 echo ">>> Installation complete!"
 echo ">>> To activate the virtual environment, run: source venv/bin/activate"
-echo ">>> To run AI_MAL, simply type: AI_MAL" 
+echo ">>> To run AI_MAL, simply type: AI_MAL"
+echo ">>> Ollama is installed and configured with artifish/llama3.2-uncensored model" 

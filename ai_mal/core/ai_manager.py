@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class AIManager:
-    def __init__(self, model: str = 'qwen2.5-coder:7b', fallback_model: str = 'mistral:7b'):
+    def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'mistral:7b'):
         # Set default models if empty strings are provided
-        self.primary_model = model if model else 'qwen2.5-coder:7b'
+        self.primary_model = model if model else 'artifish/llama3.2-uncensored'
         self.fallback_model = fallback_model if fallback_model else 'gemma:7b'
         
         # Define backup models to try if both primary and fallback fail
         # These are the default models that should be installed
-        self.backup_models = ['qwen2.5-coder:7b', 'gemma:7b']
+        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma:7b']
         
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         logger.info(f"AI Manager initialized with model: {self.primary_model}, fallback model: {self.fallback_model}")

@@ -93,7 +93,7 @@ class AI_MAL:
         self.kwargs = kwargs
         self.scanner = AdaptiveScanner(target)
         self.ai_manager = AIManager(
-            model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')),
+            model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
             fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'mistral:7b'))
         )
         # Create a workspace name based on target and timestamp
