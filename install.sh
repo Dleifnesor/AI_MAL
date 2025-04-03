@@ -101,7 +101,19 @@ pip install -r requirements.txt
 echo ">>> Installing AI_MAL package..."
 pip install -e .
 
+# Create a symbolic link to make AI_MAL available system-wide
+echo ">>> Creating symbolic link for AI_MAL command..."
+# Get the absolute path to the current directory
+CURRENT_DIR=$(pwd)
+# Create a symbolic link in /usr/local/bin
+sudo ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
+
+# Create an alias in .bashrc for easy activation
+echo ">>> Adding alias to .bashrc for easy activation..."
+echo "alias activate_ai_mal='source $CURRENT_DIR/venv/bin/activate'" >> ~/.bashrc
+
 echo ">>> Installation complete!"
 echo ">>> To activate the virtual environment, run: source venv/bin/activate"
+echo ">>> Or simply run: activate_ai_mal"
 echo ">>> To run AI_MAL, simply type: AI_MAL"
 echo ">>> Ollama is installed and configured with artifish/llama3.2-uncensored model" 
