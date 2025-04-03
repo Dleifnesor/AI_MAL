@@ -39,32 +39,7 @@ if [ -f /etc/os-release ]; then
             libnetfilter-conntrack3 \
             python3-dev \
             python3-setuptools \
-            python3-wheel \
-            python3-cffi \
-            python3-cryptography \
-            python3-scapy \
-            python3-paramiko \
-            python3-requests \
-            python3-urllib3 \
-            python3-numpy \
-            python3-pandas \
-            python3-scikit-learn \
-            python3-torch \
-            python3-transformers \
-            python3-colorama \
-            python3-tqdm \
-            python3-yaml \
-            python3-jinja2 \
-            python3-click \
-            python3-rich \
-            python3-pytest \
-            python3-pytest-asyncio \
-            python3-pytest-cov \
-            python3-pytest-mock \
-            python3-black \
-            python3-flake8 \
-            python3-mypy \
-            python3-isort
+            python3-wheel
     else
         echo ">>> Error: This script is designed for Kali Linux"
         echo ">>> Please install Kali Linux or modify this script for your distribution"
@@ -90,6 +65,10 @@ pip install --upgrade pip
 
 # Install Python dependencies
 echo ">>> Installing Python dependencies..."
+pip install -r requirements.txt
+
+# Install the package in development mode
+echo ">>> Installing AI_MAL package..."
 pip install -e .
 
 echo ">>> Installation complete!"
