@@ -14,370 +14,193 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 9. [Best Practices](#best-practices)
 10. [Troubleshooting](#troubleshooting)
 
+## Command-Line Arguments Reference
+
+| Argument | Type | Default | Description | Use Case |
+|----------|------|---------|-------------|----------|
+| `target` | str | required | Target IP address or hostname | Basic scanning target |
+| `--stealth` | flag | False | Enable stealth mode for minimal detection | Covert scanning operations |
+| `--continuous` | flag | False | Run continuous scanning | Network monitoring |
+| `--delay` | int | 300 | Delay between scans in seconds | Continuous monitoring with custom intervals |
+| `--services` | flag | False | Enable service detection | Service enumeration |
+| `--version` | flag | False | Enable version detection | Version fingerprinting |
+| `--os` | flag | False | Enable OS detection | OS fingerprinting |
+| `--vuln` | flag | False | Enable vulnerability scanning | Vulnerability assessment |
+| `--dos` | flag | False | Enable DoS testing | Service resilience testing |
+| `--msf` | flag | False | Enable Metasploit integration | Exploitation framework integration |
+| `--exploit` | flag | False | Attempt exploitation of vulnerabilities | Automated exploitation |
+| `--custom-scripts` | flag | False | Enable AI-powered script generation | Custom tool development |
+| `--script-type` | str | python | Script language (python/bash/ruby) | Language-specific tool development |
+| `--execute-scripts` | flag | False | Automatically execute generated scripts | Automated tool execution |
+| `--script-output` | str | ./scripts | Output directory for generated scripts | Script management |
+| `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
+| `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
+| `--model` | str | qwen2.5-coder:7b | Primary AI model | Custom AI model selection |
+| `--fallback-model` | str | mistral:7b | Fallback AI model | Backup AI model selection |
+| `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
+| `--implant` | str | None | Path to implant script | Custom payload deployment |
+| `--output-dir` | str | ./results | Output directory for results | Result management |
+| `--output-format` | str | json | Output format (xml/json) | Result format selection |
+| `--quiet` | flag | False | Suppress progress output | Silent operation |
+| `--no-gui` | flag | False | Disable terminal GUI features | Text-only output |
+| `--log-level` | str | info | Logging level (debug/info/warning/error) | Debugging and monitoring |
+| `--log-file` | str | logs/ai_mal.log | Log file path | Log management |
+| `--full-auto` | flag | False | Enable full automation mode | Hands-off operation |
+| `--custom-vuln` | str | None | Path to custom vulnerability definitions | Custom vulnerability testing |
+
 ## Basic Usage
 
-### Simple Network Scanning
+### Simple Network Scan
 ```bash
-# Basic scan of a single target
 AI_MAL 192.168.1.1
-
-# Stealth mode for minimal detection
-AI_MAL 192.168.1.1 --stealth
 ```
+Performs a basic network scan on the target IP address.
 
-### Continuous Scanning
+### Advanced Scanning
 ```bash
-# Run continuous scanning with 5-minute delay
-AI_MAL 192.168.1.1 --continuous --delay 300
+AI_MAL 192.168.1.1 --stealth --continuous --delay 600
 ```
+- `--stealth`: Enables stealth mode for minimal detection
+- `--continuous`: Runs continuous scanning
+- `--delay`: Sets delay between scans (default: 300 seconds)
 
-## Advanced Scanning
-
-### Service Detection
+### Service and Version Detection
 ```bash
-# Enable service detection
-AI_MAL 192.168.1.1 --services
-
-# Enable version detection
-AI_MAL 192.168.1.1 --version
-
-# Enable OS detection
-AI_MAL 192.168.1.1 --os
+AI_MAL 192.168.1.1 --services --version --os
 ```
-
-### Vulnerability Assessment
-```bash
-# Enable vulnerability scanning
-AI_MAL 192.168.1.1 --vuln
-
-# Combine multiple scanning options
-AI_MAL 192.168.1.1 --services --version --vuln
-```
-
-### Denial of Service Testing
-```bash
-# Perform DoS vulnerability testing
-AI_MAL 192.168.1.1 --dos
-
-# Combined DoS testing with other scan types
-AI_MAL 192.168.1.1 --services --version --dos
-
-# Full penetration test with DoS assessment
-AI_MAL 192.168.1.1 --services --version --vuln --dos --msf --exploit
-```
-
-### Data Exfiltration
-```bash
-# Attempt to exfiltrate data from the target
-AI_MAL 192.168.1.1 --exfil
-
-# Combine exfiltration with service detection
-AI_MAL 192.168.1.1 --services --exfil
-
-# Comprehensive scan with exfiltration
-AI_MAL 192.168.1.1 --services --version --vuln --exfil
-```
-
-### Implant Deployment
-```bash
-# Deploy a custom script to the target system
-AI_MAL 192.168.1.1 --implant /path/to/payload.sh
-
-# Deploy implant with service detection
-AI_MAL 192.168.1.1 --services --implant /path/to/payload.py
-
-# Full red team operation with implant and data exfiltration
-AI_MAL 192.168.1.1 --services --vuln --exfil --implant /path/to/payload.rb
-```
-
-The `--dos` option performs actual DoS vulnerability testing against discovered services:
-* Uses specialized Nmap DoS-related NSE scripts
-* Tests HTTP servers for Slowloris vulnerability
-* Performs controlled HTTP flood testing using Apache Benchmark
-* Conducts SYN flood testing using hping3
-* Verifies service responsiveness after each test
-* Provides a detailed vulnerability report for each service
+- `--services`: Enables service detection
+- `--version`: Enables version detection
+- `--os`: Enables OS detection
 
 ## Metasploit Integration
 
 ### Basic Metasploit Usage
 ```bash
-# Enable Metasploit integration
 AI_MAL 192.168.1.1 --msf
-
-# Run Metasploit exploits
-AI_MAL 192.168.1.1 --msf --exploit
 ```
+Enables Metasploit integration for the scan.
 
-### Full Automated Exploitation
+### Exploitation
 ```bash
-# Full automation with Metasploit exploitation
-AI_MAL 192.168.1.1 --msf --exploit --full-auto
-
-# Comprehensive scan with all options
-AI_MAL 192.168.1.1 --services --version --os --vuln --msf --exploit --full-auto
+AI_MAL 192.168.1.1 --msf --exploit --vuln
 ```
+- `--exploit`: Attempts exploitation of vulnerabilities
+- `--vuln`: Enables vulnerability scanning
 
 ## Custom Script Generation
 
 ### Basic Script Generation
 ```bash
-# Generate custom scripts
 AI_MAL 192.168.1.1 --custom-scripts
-
-# Generate Python scripts
-AI_MAL 192.168.1.1 --custom-scripts --script-type python
-
-# Generate Bash scripts
-AI_MAL 192.168.1.1 --custom-scripts --script-type bash
-
-# Generate Ruby scripts
-AI_MAL 192.168.1.1 --custom-scripts --script-type ruby
 ```
+Enables AI-powered script generation.
 
-### Script Execution
+### Advanced Script Options
 ```bash
-# Generate and execute custom scripts
-AI_MAL 192.168.1.1 --custom-scripts --execute-scripts
-
-# Generate and execute Python scripts
-AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
+AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts --script-output ./scripts
 ```
+- `--script-type`: Specifies script language (python/bash/ruby)
+- `--execute-scripts`: Automatically executes generated scripts
+- `--script-output`: Specifies output directory for scripts
+- `--script-format`: Sets script format (raw/base64)
 
-## Data Exfiltration
+## AI Analysis
 
-### Basic Exfiltration
+### Basic AI Analysis
 ```bash
-# Attempt to exfiltrate data from a single target
-AI_MAL 192.168.1.1 --exfil
-
-# Exfiltration with service detection for better targeting
-AI_MAL 192.168.1.1 --services --exfil
-```
-
-### Advanced Exfiltration
-```bash
-# Comprehensive exfiltration with vulnerability scanning
-AI_MAL 192.168.1.1 --services --version --vuln --exfil
-
-# Automated red team exfiltration
-AI_MAL 192.168.1.1 --msf --exploit --full-auto --exfil
-```
-
-The `--exfil` option enables data exfiltration capabilities:
-* Attempts to access and download files from target systems using multiple methods
-* Tries various credential combinations for authenticated access
-* Uses FTP, SMB, SSH, and HTTP/HTTPS protocols for exfiltration when available
-* Downloads sensitive files from common locations (config files, credentials, etc.)
-* Stores all exfiltrated data in an organized directory structure for analysis
-* Provides detailed logs and success/failure reporting
-
-## Implant Deployment
-
-### Basic Implant Deployment
-```bash
-# Deploy a bash script to the target
-AI_MAL 192.168.1.1 --implant /path/to/script.sh
-
-# Deploy a Python script to the target
-AI_MAL 192.168.1.1 --implant /path/to/script.py
-```
-
-### Advanced Implant Deployment
-```bash
-# Deploy implant with service detection for better targeting
-AI_MAL 192.168.1.1 --services --implant /path/to/script.rb
-
-# Full red team operation with implant and exfiltration
-AI_MAL 192.168.1.1 --services --vuln --exfil --implant /path/to/script.sh
-```
-
-The `--implant` option enables payload deployment capabilities:
-* Takes a path to a script file that will be uploaded to the target
-* Attempts multiple methods to deliver and execute the implant
-* Uses SSH for direct upload and execution when available
-* Leverages SMB, FTP, and HTTP upload forms as alternatives
-* Automatically attempts execution based on file extension (.py, .sh, .rb, etc.)
-* Creates detailed logs of deployment attempts and success/failure status
-* Tracks implanted targets for future reference
-
-## AI Model Configuration
-
-### Model Selection
-```bash
-# Use default model (qwen2.5-coder:7b)
-AI_MAL 192.168.1.1 --model qwen2.5-coder:7b
-
-# Use lightweight model (gemma:7b)
-AI_MAL 192.168.1.1 --model gemma:7b
-
-# Use any other pre-installed Ollama model
-AI_MAL 192.168.1.1 --model mistral:7b
-
-# Specify fallback model
-AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model gemma:7b
-```
-
-### AI Analysis
-```bash
-# Explicitly enable AI analysis (enabled by default)
 AI_MAL 192.168.1.1 --ai-analysis
 ```
+Enables AI analysis of scan results.
 
-## GUI Interface Options
-
-### Rich Terminal Interface
+### Custom AI Models
 ```bash
-# Default rich interface
-AI_MAL 192.168.1.1
-
-# Disable GUI interface (text-only output)
-AI_MAL 192.168.1.1 --no-gui
-
-# Suppress progress output
-AI_MAL 192.168.1.1 --quiet
+AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model mistral:7b
 ```
+- `--model`: Specifies primary AI model
+- `--fallback-model`: Specifies fallback AI model
 
-### Output Options
+## Advanced Features
+
+### Data Exfiltration
 ```bash
-# Set custom output directory
-AI_MAL 192.168.1.1 --output-dir /path/to/results
-
-# Set output format to JSON (default)
-AI_MAL 192.168.1.1 --output-format json
-
-# Set output format to XML
-AI_MAL 192.168.1.1 --output-format xml
+AI_MAL 192.168.1.1 --exfil
 ```
+Attempts to exfiltrate files from target systems.
+
+### Implant Deployment
+```bash
+AI_MAL 192.168.1.1 --implant ./payload.py
+```
+Deploys a custom script to target machines.
+
+### Denial of Service
+```bash
+AI_MAL 192.168.1.1 --dos
+```
+Attempts Denial of Service attacks.
+
+## Output Configuration
+
+### Basic Output
+```bash
+AI_MAL 192.168.1.1 --output-dir ./results --output-format json
+```
+- `--output-dir`: Specifies output directory
+- `--output-format`: Sets output format (xml/json)
+
+### Logging Options
+```bash
+AI_MAL 192.168.1.1 --log-level debug --log-file ./logs/scan.log
+```
+- `--log-level`: Sets logging level (debug/info/warning/error)
+- `--log-file`: Specifies log file path
+
+### Quiet Mode
+```bash
+AI_MAL 192.168.1.1 --quiet --no-gui
+```
+- `--quiet`: Suppresses progress output
+- `--no-gui`: Disables terminal GUI features
+
+## Full Automation
+
+### Complete Automated Scan
+```bash
+AI_MAL 192.168.1.1 --full-auto --ai-analysis --msf --exploit --vuln --custom-scripts
+```
+Runs a fully automated scan with all features enabled.
+
+### Custom Vulnerability Definitions
+```bash
+AI_MAL 192.168.1.1 --custom-vuln ./vulnerabilities.json
+```
+Uses custom vulnerability definitions for scanning.
 
 ## Best Practices
 
-### Security Considerations
-1. Always run with proper authorization
-2. Use stealth mode when appropriate
-3. Limit scan intensity on production networks
-4. Follow responsible disclosure practices
-5. Document all testing activities
-6. **Special Caution with DoS Testing**: The `--dos` option performs actual denial of service testing that could impact production systems
-
-### Performance Optimization
-1. Choose appropriate model based on system resources
-   - For systems with >8GB RAM: `--model qwen2.5-coder:7b`
-   - For systems with <8GB RAM: `--model gemma:7b`
-2. Use stealth mode for initial reconnaissance
-3. When generating scripts, start with Python for maximum compatibility
-4. Specify fallback models in case primary models are unavailable
-
-### Example Recommended Workflows
-
-#### Basic Security Assessment
-```bash
-# Basic security assessment with AI analysis
-AI_MAL 192.168.1.1 --services --version --os
-```
-
-#### Vulnerability Assessment
-```bash
-# Vulnerability assessment with service detection
-AI_MAL 192.168.1.1 --services --version --vuln
-```
-
-#### Penetration Testing
-```bash
-# Full penetration testing workflow
-AI_MAL 192.168.1.1 --services --version --os --vuln --msf --exploit --custom-scripts
-```
-
-#### Automated Red Team
-```bash
-# Fully automated red team engagement
-AI_MAL 192.168.1.1 --msf --exploit --full-auto --custom-scripts --execute-scripts
-
-# Advanced red team with exfiltration and implant
-AI_MAL 192.168.1.1 --msf --exploit --full-auto --exfil --implant /path/to/payload.sh
-```
-
-#### DoS Vulnerability Assessment
-```bash
-# Focused DoS testing with minimal scanning
-AI_MAL 192.168.1.1 --services --dos
-```
-
-#### Data Exfiltration Operation
-```bash
-# Targeted data exfiltration operation
-AI_MAL 192.168.1.1 --services --stealth --exfil
-```
-
-#### Implant Deployment Mission
-```bash
-# Covert implant deployment
-AI_MAL 192.168.1.1 --stealth --implant /path/to/backdoor.py
-```
-
-## Command-Line Arguments Reference
-
-The following table provides a comprehensive list of all available command-line arguments in AI_MAL:
-
-| Argument | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `--stealth` | Enables stealth mode to minimize detection | False | `AI_MAL 192.168.1.1 --stealth` |
-| `--continuous` | Runs scan in continuous mode until stopped | False | `AI_MAL 192.168.1.1 --continuous` |
-| `--delay` | Sets delay between scan iterations in seconds | 300 | `AI_MAL 192.168.1.1 --delay 600` |
-| `--services` | Enables detailed service detection | False | `AI_MAL 192.168.1.1 --services` |
-| `--version` | Enables version detection | False | `AI_MAL 192.168.1.1 --version` |
-| `--os` | Enables OS detection | False | `AI_MAL 192.168.1.1 --os` |
-| `--vuln` | Enables vulnerability scanning | False | `AI_MAL 192.168.1.1 --vuln` |
-| `--dos` | Performs denial of service vulnerability testing | False | `AI_MAL 192.168.1.1 --dos` |
-| `--exfil` | Attempts to exfiltrate data from target systems | False | `AI_MAL 192.168.1.1 --exfil` |
-| `--implant` | Path to a script to deploy on target systems | None | `AI_MAL 192.168.1.1 --implant script.py` |
-| `--msf` | Enables Metasploit integration | False | `AI_MAL 192.168.1.1 --msf` |
-| `--exploit` | Attempts exploitation of vulnerabilities | False | `AI_MAL 192.168.1.1 --exploit` |
-| `--custom-scripts` | Enables AI-powered script generation | False | `AI_MAL 192.168.1.1 --custom-scripts` |
-| `--script-type` | Specifies script generation type | python | `AI_MAL 192.168.1.1 --script-type bash` |
-| `--execute-scripts` | Automatically executes generated scripts | False | `AI_MAL 192.168.1.1 --execute-scripts` |
-| `--model` | Specifies Ollama model to use | qwen2.5-coder:7b | `AI_MAL 192.168.1.1 --model gemma:7b` |
-| `--fallback-model` | Specifies fallback Ollama model | gemma:7b | `AI_MAL 192.168.1.1 --fallback-model gemma:7b` |
-| `--full-auto` | Enables full autonomous mode | False | `AI_MAL 192.168.1.1 --full-auto` |
-| `--output-dir` | Sets output directory for results | scan_results | `AI_MAL 192.168.1.1 --output-dir ./results` |
-| `--output-format` | Sets output format for scan results | json | `AI_MAL 192.168.1.1 --output-format xml` |
-| `--iterations` | Sets number of scan iterations | 1 | `AI_MAL 192.168.1.1 --iterations 3` |
-| `--ai-analysis` | Enables AI analysis of results | True | `AI_MAL 192.168.1.1 --ai-analysis` |
-| `--quiet` | Suppresses progress output and logging to console | False | `AI_MAL 192.168.1.1 --quiet` |
-| `--no-gui` | Disables the terminal GUI interface | False | `AI_MAL 192.168.1.1 --no-gui` |
-| `--custom-vuln` | Path to custom vulnerability definitions | None | `AI_MAL 192.168.1.1 --custom-vuln vuln.json` |
-
-### Notes:
-- Multiple arguments can be combined in a single command
-- Some arguments may have dependencies on others (e.g., `--exploit` requires `--msf`)
-- By default, only `qwen2.5-coder:7b` and `gemma:7b` will be auto-installed if needed
-- Any other Ollama model can be used with `--model` if already installed on your system
-- The tool will automatically choose the best available model if your specified model is not available
-- For data exfiltration (`--exfil`), files will be saved in the `exfiltrated_data` directory
-- For implant deployment (`--implant`), logs will be saved in the `implant_logs` directory
-
-### Data Exfiltration Prerequisites
-To fully utilize the data exfiltration capabilities (`--exfil`), you may need:
-- Network access to the target systems
-- Appropriate permissions for exfiltration methods
-- For SMB exfiltration: `pip install smbclient`
-- For SSH exfiltration: `pip install paramiko`
-
-### Implant Deployment Prerequisites
-To fully utilize the implant deployment capabilities (`--implant`), you may need:
-- A properly crafted script to deploy
-- Network access to the target systems
-- Appropriate permissions for deployment methods
-- For SMB deployment: `pip install smbclient`
-- For SSH deployment: `pip install paramiko`
-
-### DoS Testing Prerequisites
-To fully utilize the DoS testing capabilities (`--dos`), you need:
-- Nmap with NSE scripts (including http-slowloris, syn-flood)
-- Apache Benchmark (ab) for HTTP flood testing
-- hping3 for SYN flood testing
+1. Always start with basic scans before enabling advanced features
+2. Use stealth mode for sensitive environments
+3. Enable AI analysis for better results interpretation
+4. Use custom output directories for better organization
+5. Consider using continuous scanning for monitoring
+6. Enable logging for debugging and analysis
+7. Use custom models for specific use cases
+8. Test scripts in a controlled environment before execution
+9. Monitor system resources during intensive scans
+10. Keep vulnerability definitions up to date
 
 ## Troubleshooting
+
+1. If AI analysis fails, try using a different model
+2. For Metasploit issues, ensure the service is running
+3. Check log files for detailed error information
+4. Use debug logging level for troubleshooting
+5. Verify network connectivity before scanning
+6. Ensure sufficient system resources are available
+7. Check file permissions for output directories
+8. Verify script execution permissions
+9. Monitor system logs for potential issues
+10. Use quiet mode for minimal output during troubleshooting
 
 ### Common Issues
 

@@ -1,154 +1,149 @@
 # AI_MAL - AI-Powered Penetration Testing Tool
 
-AI_MAL is an advanced penetration testing tool that combines the power of Nmap, Metasploit, and AI to automate and enhance security assessments. It uses Ollama's AI models to analyze scan results and generate custom exploitation scripts.
+AI_MAL is an advanced penetration testing tool that combines traditional scanning techniques with AI-powered analysis and automation. It integrates with Metasploit, supports custom script generation, and provides comprehensive vulnerability assessment capabilities.
 
 ## Features
 
-- **Intelligent Scanning**: Uses Nmap with AI-powered analysis to identify vulnerabilities
-- **Metasploit Integration**: Automated exploitation and post-exploitation
-- **AI Analysis**: Leverages Ollama models for intelligent vulnerability assessment
-- **Custom Script Generation**: AI-powered generation of custom exploitation scripts
-- **Full Automation**: Supports fully automated penetration testing workflows
-- **Terminal-Based GUI**: Interactive, colorful terminal interface with progress indicators
-- **Kali Linux Integration**: Optimized for Kali Linux environment
-
-## Prerequisites
-
-- Kali Linux (recommended) or similar penetration testing distribution
-- Python 3.8 or higher
-- Nmap
-- Metasploit Framework
-- Ollama (for AI model support)
-- Rich library (for terminal GUI, automatically installed)
+- AI-powered analysis of scan results
+- Metasploit integration for exploitation
+- Custom script generation and execution
+- Stealth and continuous scanning modes
+- Service and version detection
+- Vulnerability scanning
+- DoS testing capabilities
+- Data exfiltration
+- Implant deployment
+- Rich terminal interface
+- Multiple output formats
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ai_mal.git
-cd ai_mal
+# Clone the repository
+git clone https://github.com/yourusername/AI_MAL.git
+cd AI_MAL
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install the package
+pip install -e .
 ```
 
-2. Run the installation script:
+## Command-Line Arguments
+
+| Argument | Type | Default | Description | Use Case |
+|----------|------|---------|-------------|----------|
+| `target` | str | required | Target IP address or hostname | Basic scanning target |
+| `--stealth` | flag | False | Enable stealth mode for minimal detection | Covert scanning operations |
+| `--continuous` | flag | False | Run continuous scanning | Network monitoring |
+| `--delay` | int | 300 | Delay between scans in seconds | Continuous monitoring with custom intervals |
+| `--services` | flag | False | Enable service detection | Service enumeration |
+| `--version` | flag | False | Enable version detection | Version fingerprinting |
+| `--os` | flag | False | Enable OS detection | OS fingerprinting |
+| `--vuln` | flag | False | Enable vulnerability scanning | Vulnerability assessment |
+| `--dos` | flag | False | Enable DoS testing | Service resilience testing |
+| `--msf` | flag | False | Enable Metasploit integration | Exploitation framework integration |
+| `--exploit` | flag | False | Attempt exploitation of vulnerabilities | Automated exploitation |
+| `--custom-scripts` | flag | False | Enable AI-powered script generation | Custom tool development |
+| `--script-type` | str | python | Script language (python/bash/ruby) | Language-specific tool development |
+| `--execute-scripts` | flag | False | Automatically execute generated scripts | Automated tool execution |
+| `--script-output` | str | ./scripts | Output directory for generated scripts | Script management |
+| `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
+| `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
+| `--model` | str | qwen2.5-coder:7b | Primary AI model | Custom AI model selection |
+| `--fallback-model` | str | mistral:7b | Fallback AI model | Backup AI model selection |
+| `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
+| `--implant` | str | None | Path to implant script | Custom payload deployment |
+| `--output-dir` | str | ./results | Output directory for results | Result management |
+| `--output-format` | str | json | Output format (xml/json) | Result format selection |
+| `--quiet` | flag | False | Suppress progress output | Silent operation |
+| `--no-gui` | flag | False | Disable terminal GUI features | Text-only output |
+| `--log-level` | str | info | Logging level (debug/info/warning/error) | Debugging and monitoring |
+| `--log-file` | str | logs/ai_mal.log | Log file path | Log management |
+| `--full-auto` | flag | False | Enable full automation mode | Hands-off operation |
+| `--custom-vuln` | str | None | Path to custom vulnerability definitions | Custom vulnerability testing |
+
+## Usage Examples
+
+### Basic Scan
 ```bash
-sudo ./install.sh
+AI_MAL 192.168.1.1
 ```
 
-The script will:
-- Install system dependencies
-- Set up Python virtual environment
-- Install AI_MAL package
-- Configure environment variables
-- Set up command-line access
-- Install command completion
-
-## Usage
-
-Basic usage:
+### Advanced Scanning
 ```bash
-AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto
+AI_MAL 192.168.1.1 --stealth --continuous --delay 600
 ```
 
-### Common Options
-
-- `--msf`: Enable Metasploit integration
-- `--exploit`: Attempt exploitation of vulnerabilities
-- `--model`: Specify Ollama model to use (default: qwen2.5-coder:7b)
-- `--full-auto`: Enable full automation mode
-- `--custom-scripts`: Enable AI-powered script generation
-- `--script-type`: Type of script to generate (python, bash, ruby)
-- `--execute-scripts`: Automatically execute generated scripts
-
-### Interface Options
-
-- `--quiet`: Suppress progress output and rich terminal interface
-- `--no-gui`: Disable the terminal GUI interface completely
-
-### Advanced Options
-
-- `--stealth`: Enable stealth mode
-- `--continuous`: Run continuous scanning
-- `--delay`: Delay between scans in seconds
-- `--services`: Enable service detection
-- `--version`: Enable version detection
-- `--os`: Enable OS detection
-- `--vuln`: Enable vulnerability scanning
-- `--dos`: Attempt Denial of Service attacks
-
-## Terminal GUI Interface
-
-AI_MAL comes with a rich terminal-based GUI that provides:
-
-- **Progress Bars**: Visual indicators for scanning, analysis, and exploitation tasks
-- **Color-Coded Results**: Color-highlighted output for easy interpretation
-- **Interactive Tables**: Well-formatted tables for scan results, exploits, and analysis
-- **ASCII Art Banner**: Stylish banner introducing the tool
-- **Status Indicators**: Clear status messages throughout the scanning process
-
-The GUI is powered by the Rich library and activates automatically. If you prefer a simpler output, use the `--quiet` flag to reduce verbosity or `--no-gui` to completely disable the GUI elements.
-
-## Examples
-
-1. Basic scan with AI analysis:
+### Service and Version Detection
 ```bash
-AI_MAL 192.168.1.1 --ai-analysis
+AI_MAL 192.168.1.1 --services --version --os
 ```
 
-2. Full automated penetration test:
+### Metasploit Integration
 ```bash
-AI_MAL 192.168.1.1 --msf --exploit --model qwen2.5-coder:7b --full-auto
+AI_MAL 192.168.1.1 --msf --exploit --vuln
 ```
 
-3. Generate and execute custom scripts:
+### Custom Script Generation
 ```bash
 AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
 ```
 
-4. Stealth scan with service detection:
+### Full Automation
 ```bash
-AI_MAL 192.168.1.1 --stealth --services --version
+AI_MAL 192.168.1.1 --full-auto --ai-analysis --msf --exploit --vuln --custom-scripts
 ```
 
-5. Run with minimal interface (no GUI):
-```bash
-AI_MAL 192.168.1.1 --no-gui
-```
+## Prerequisites
 
-## Project Structure
+- Python 3.8+
+- Nmap
+- Metasploit Framework (optional)
+- Ollama (for AI features)
+- Required Python packages (see requirements.txt)
 
-```
-ai_mal/
-├── ai_mal/              # Main package directory
-│   ├── core/           # Core functionality
-│   ├── tests/          # Test files
-│   └── examples/       # Example scripts
-├── main.py             # Entry point
-├── setup.py           # Package setup
-├── requirements.txt   # Python dependencies
-├── install.sh         # Installation script
-└── README.md         # This file
-```
+## Dependencies
 
-## Contributing
+- rich
+- python-dotenv
+- aiohttp
+- paramiko (for SSH features)
+- smbclient (for SMB features)
+- Apache Benchmark (for DoS testing)
+- hping3 (for DoS testing)
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Best Practices
+
+1. Always start with basic scans before enabling advanced features
+2. Use stealth mode for sensitive environments
+3. Enable AI analysis for better results interpretation
+4. Use custom output directories for better organization
+5. Consider using continuous scanning for monitoring
+6. Enable logging for debugging and analysis
+7. Use custom models for specific use cases
+8. Test scripts in a controlled environment before execution
+9. Monitor system resources during intensive scans
+10. Keep vulnerability definitions up to date
+
+## Troubleshooting
+
+1. If AI analysis fails, try using a different model
+2. For Metasploit issues, ensure the service is running
+3. Check log files for detailed error information
+4. Use debug logging level for troubleshooting
+5. Verify network connectivity before scanning
+6. Ensure sufficient system resources are available
+7. Check file permissions for output directories
+8. Verify script execution permissions
+9. Monitor system logs for potential issues
+10. Use quiet mode for minimal output during troubleshooting
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Disclaimer
+## Contributing
 
-This tool is for educational and authorized testing purposes only. Always obtain proper authorization before performing security assessments.
-
-## Acknowledgments
-
-- Nmap Project
-- Metasploit Framework
-- Ollama Team
-- Rich library for the terminal interface
-- All contributors and users of this tool 
+Contributions are welcome! Please feel free to submit a Pull Request. 

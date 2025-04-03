@@ -1291,8 +1291,29 @@ def configure_event_loop():
     return loop
 
 def main():
-    parser = argparse.ArgumentParser(description='AI_MAL - AI-Powered Penetration Testing Tool')
-    parser.add_argument('target', help='Target IP address or range')
+    parser = argparse.ArgumentParser(
+        description='AI_MAL - AI-Powered Penetration Testing Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Basic scan:
+    AI_MAL 192.168.1.1
+  
+  Advanced scan with Metasploit:
+    AI_MAL 192.168.1.1 --msf --exploit --vuln
+  
+  Custom script generation:
+    AI_MAL 192.168.1.1 --custom-scripts --script-type python --execute-scripts
+  
+  Stealth mode with continuous scanning:
+    AI_MAL 192.168.1.1 --stealth --continuous --delay 600
+  
+  Full automation with AI analysis:
+    AI_MAL 192.168.1.1 --full-auto --ai-analysis --output-format json
+""")
+    
+    # Required arguments
+    parser.add_argument('target', help='Target IP address or range to scan')
     
     # Basic Options
     basic_group = parser.add_argument_group('Basic Options')
@@ -1301,6 +1322,10 @@ def main():
     basic_group.add_argument('--model', help='Ollama model to use (default: from .env or qwen2.5-coder:7b)')
     basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or mistral:7b)')
     basic_group.add_argument('--full-auto', action='store_true', help='Enable full automation mode')
+    basic_group.add_argument('--ai-analysis', action='store_true', default=True,
+                      help='Enable AI analysis of results')
+    basic_group.add_argument('--no-ai', action='store_false', dest='ai_analysis',
+                      help='Disable AI analysis of results')
     
     # Script Generation Options
     script_group = parser.add_argument_group('Script Generation Options')
@@ -1308,10 +1333,13 @@ def main():
     script_group.add_argument('--script-type', choices=['python', 'bash', 'ruby'], default='python',
                       help='Type of script to generate')
     script_group.add_argument('--execute-scripts', action='store_true', help='Automatically execute generated scripts')
+    script_group.add_argument('--script-output', metavar='DIR', help='Directory to save generated scripts')
+    script_group.add_argument('--script-format', choices=['raw', 'base64'], default='raw',
+                      help='Format for generated scripts')
     
     # Scanning Options
     scan_group = parser.add_argument_group('Scanning Options')
-    scan_group.add_argument('--stealth', action='store_true', help='Enable stealth mode')
+    scan_group.add_argument('--stealth', action='store_true', help='Enable stealth mode for minimal detection')
     scan_group.add_argument('--continuous', action='store_true', help='Run continuous scanning')
     scan_group.add_argument('--delay', type=int, default=300, help='Delay between scans in seconds')
     scan_group.add_argument('--services', action='store_true', help='Enable service detection')
@@ -1321,6 +1349,8 @@ def main():
     scan_group.add_argument('--dos', action='store_true', help='Attempt Denial of Service attacks')
     scan_group.add_argument('--exfil', action='store_true', help='Attempt to exfiltrate files from target systems')
     scan_group.add_argument('--implant', metavar='PATH', help='Path to a script to implant on target machines')
+    scan_group.add_argument('--iterations', type=int, default=1, help='Number of scan iterations')
+    scan_group.add_argument('--custom-vuln', help='Path to custom vulnerability definitions')
     
     # Output Options
     output_group = parser.add_argument_group('Output Options')
@@ -1330,13 +1360,9 @@ def main():
     output_group.add_argument('--quiet', action='store_true', help='Suppress progress output and logging to console')
     output_group.add_argument('--no-gui', action='store_true', 
                       help='Disable the terminal GUI features (uses plain text output instead)')
-    
-    # Advanced Options
-    advanced_group = parser.add_argument_group('Advanced Options')
-    advanced_group.add_argument('--iterations', type=int, default=1, help='Number of scan iterations')
-    advanced_group.add_argument('--custom-vuln', help='Path to custom vulnerability definitions')
-    advanced_group.add_argument('--ai-analysis', action='store_true', default=True,
-                      help='Enable AI analysis of results')
+    output_group.add_argument('--log-level', choices=['debug', 'info', 'warning', 'error'], default='info',
+                      help='Set the logging level')
+    output_group.add_argument('--log-file', help='Path to log file (default: logs/ai_mal.log)')
     
     args = parser.parse_args()
     

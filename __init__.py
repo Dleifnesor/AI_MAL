@@ -2,8 +2,9 @@
 
 __version__ = "1.0.0"
 
-from .core.scanner import DirectNmapScanner
-from .core.port_scanner import PortScanner
-from .core.adaptive import AdaptiveNmapScanner
+from AI_MAL.core.adaptive import AdaptiveScanner
+from AI_MAL.core.ai_manager import AIManager
+from AI_MAL.core.metasploit import MetasploitManager
+from AI_MAL.core.script_generator import ScriptGenerator
 
-__all__ = ['DirectNmapScanner', 'PortScanner', 'AdaptiveNmapScanner'] 
+__all__ = ['AdaptiveScanner', 'AIManager', 'MetasploitManager', 'ScriptGenerator'] 
