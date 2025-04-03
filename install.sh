@@ -54,9 +54,22 @@ if [ -f /etc/os-release ]; then
         echo ">>> Pulling artifish/llama3.2-uncensored model..."
         ollama pull artifish/llama3.2-uncensored
 
-        # Set as default model
+        # Set as default model in .env file
         echo ">>> Setting artifish/llama3.2-uncensored as default model..."
-        ollama use artifish/llama3.2-uncensored
+        # Create or update .env file
+        if [ -f .env ]; then
+            # Update existing .env file
+            sed -i 's/^OLLAMA_MODEL=.*/OLLAMA_MODEL=artifish\/llama3.2-uncensored/' .env
+        else
+            # Create new .env file
+            echo "OLLAMA_MODEL=artifish/llama3.2-uncensored" > .env
+            echo "OLLAMA_FALLBACK_MODEL=mistral:7b" >> .env
+            echo "LOG_DIR=logs" >> .env
+            echo "WORKSPACE_DIR=workspaces" >> .env
+        fi
+        
+        # Also set it in the current shell session
+        export OLLAMA_MODEL=artifish/llama3.2-uncensored
     else
         echo ">>> Error: This script is designed for Kali Linux"
         echo ">>> Please install Kali Linux or modify this script for your distribution"
