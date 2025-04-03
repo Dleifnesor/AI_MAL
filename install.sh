@@ -97,6 +97,10 @@ pip install --upgrade pip
 echo ">>> Installing Python dependencies..."
 pip install -r requirements.txt
 
+# Remove any existing installation
+echo ">>> Removing any existing AI_MAL installation..."
+pip uninstall -y AI_MAL || true
+
 # Install the package in development mode
 echo ">>> Installing AI_MAL package..."
 pip install -e .
@@ -105,6 +109,8 @@ pip install -e .
 echo ">>> Creating symbolic link for AI_MAL command..."
 # Get the absolute path to the current directory
 CURRENT_DIR=$(pwd)
+# Remove any existing symbolic link
+sudo rm -f /usr/local/bin/AI_MAL
 # Create a symbolic link in /usr/local/bin
 sudo ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
 
