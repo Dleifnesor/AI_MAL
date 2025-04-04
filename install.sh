@@ -3,22 +3,37 @@
 # Exit on error
 set -e
 
-echo ">>> Installing system dependencies..."
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Get the current directory
+CURRENT_DIR=$(pwd)
+
+echo -e "${YELLOW}>>> Installing AI_MAL...${NC}"
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Please run as root${NC}"
+    exit 1
+fi
 
 # Check if running on Kali Linux
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [ "$ID" = "kali" ]; then
-        echo ">>> Detected Kali Linux"
+        echo -e "${YELLOW}>>> Detected Kali Linux${NC}"
         
         # Update system
-        echo ">>> Updating system packages..."
-        sudo apt-get update
-        sudo apt-get upgrade -y
+        echo -e "${YELLOW}>>> Updating system packages...${NC}"
+        apt-get update
+        apt-get upgrade -y
         
         # Install required system packages
-        echo ">>> Installing system dependencies..."
-        sudo apt-get install -y \
+        echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
+        apt-get install -y \
             python3 \
             python3-pip \
             python3-venv \
@@ -42,26 +57,23 @@ if [ -f /etc/os-release ]; then
             python3-wheel
 
         # Install Ollama
-        echo ">>> Installing Ollama..."
+        echo -e "${YELLOW}>>> Installing Ollama...${NC}"
         curl -fsSL https://ollama.com/install.sh | sh
 
         # Start Ollama service
-        echo ">>> Starting Ollama service..."
-        sudo systemctl start ollama
-        sudo systemctl enable ollama
+        echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
+        systemctl start ollama
+        systemctl enable ollama
 
         # Pull the specified model
-        echo ">>> Pulling artifish/llama3.2-uncensored model..."
+        echo -e "${YELLOW}>>> Pulling artifish/llama3.2-uncensored model...${NC}"
         ollama pull artifish/llama3.2-uncensored
 
         # Set as default model in .env file
-        echo ">>> Setting artifish/llama3.2-uncensored as default model..."
-        # Create or update .env file
+        echo -e "${YELLOW}>>> Setting artifish/llama3.2-uncensored as default model...${NC}"
         if [ -f .env ]; then
-            # Update existing .env file
             sed -i 's/^OLLAMA_MODEL=.*/OLLAMA_MODEL=artifish\/llama3.2-uncensored/' .env
         else
-            # Create new .env file
             echo "OLLAMA_MODEL=artifish/llama3.2-uncensored" > .env
             echo "OLLAMA_FALLBACK_MODEL=mistral:7b" >> .env
             echo "LOG_DIR=logs" >> .env
@@ -71,55 +83,55 @@ if [ -f /etc/os-release ]; then
         # Also set it in the current shell session
         export OLLAMA_MODEL=artifish/llama3.2-uncensored
     else
-        echo ">>> Error: This script is designed for Kali Linux"
-        echo ">>> Please install Kali Linux or modify this script for your distribution"
+        echo -e "${RED}>>> Error: This script is designed for Kali Linux${NC}"
+        echo -e "${RED}>>> Please install Kali Linux or modify this script for your distribution${NC}"
         exit 1
     fi
 else
-    echo ">>> Error: Could not detect Linux distribution"
-    echo ">>> Please ensure you are running Kali Linux"
+    echo -e "${RED}>>> Error: Could not detect Linux distribution${NC}"
+    echo -e "${RED}>>> Please ensure you are running Kali Linux${NC}"
     exit 1
 fi
 
-# Create Python virtual environment
-echo ">>> Creating Python virtual environment..."
+# Create virtual environment
+echo -e "${YELLOW}>>> Creating virtual environment...${NC}"
 python3 -m venv venv
-
-# Activate virtual environment
-echo ">>> Activating virtual environment..."
 source venv/bin/activate
 
-# Upgrade pip
-echo ">>> Upgrading pip..."
-pip install --upgrade pip
+# Install dependencies
+echo -e "${YELLOW}>>> Installing dependencies...${NC}"
+pip3 install --upgrade pip
+pip3 install -r requirements.txt
 
-# Install Python dependencies
-echo ">>> Installing Python dependencies..."
-pip install -r requirements.txt
+# Install AI_MAL package
+echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
+pip3 install -e .
 
-# Remove any existing installation
-echo ">>> Removing any existing AI_MAL installation..."
-pip uninstall -y AI_MAL || true
+# Create necessary directories
+echo -e "${YELLOW}>>> Creating necessary directories...${NC}"
+mkdir -p logs
+mkdir -p results
+mkdir -p scripts
+mkdir -p workspaces
 
-# Install the package in development mode
-echo ">>> Installing AI_MAL package..."
-pip install -e .
+# Set permissions
+echo -e "${YELLOW}>>> Setting permissions...${NC}"
+chmod -R 755 "$CURRENT_DIR"
+chmod +x "$CURRENT_DIR/venv/bin/AI_MAL"
 
-# Create a symbolic link to make AI_MAL available system-wide
-echo ">>> Creating symbolic link for AI_MAL command..."
-# Get the absolute path to the current directory
-CURRENT_DIR=$(pwd)
-# Remove any existing symbolic link
-sudo rm -f /usr/local/bin/AI_MAL
-# Create a symbolic link in /usr/local/bin
-sudo ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
+# Create symbolic link
+echo -e "${YELLOW}>>> Creating symbolic link...${NC}"
+rm -f /usr/local/bin/AI_MAL
+ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
 
-# Create an alias in .bashrc for easy activation
-echo ">>> Adding alias to .bashrc for easy activation..."
-echo "alias activate_ai_mal='source $CURRENT_DIR/venv/bin/activate'" >> ~/.bashrc
+# Add alias to .bashrc
+echo -e "${YELLOW}>>> Adding alias to .bashrc...${NC}"
+if ! grep -q "alias activate_ai_mal" ~/.bashrc; then
+    echo "alias activate_ai_mal='source $CURRENT_DIR/venv/bin/activate'" >> ~/.bashrc
+fi
 
-echo ">>> Installation complete!"
-echo ">>> To activate the virtual environment, run: source venv/bin/activate"
-echo ">>> Or simply run: activate_ai_mal"
-echo ">>> To run AI_MAL, simply type: AI_MAL"
-echo ">>> Ollama is installed and configured with artifish/llama3.2-uncensored model" 
+echo -e "${GREEN}>>> Installation complete!${NC}"
+echo -e "${GREEN}>>> To activate the virtual environment, run: source venv/bin/activate${NC}"
+echo -e "${GREEN}>>> Or simply run: activate_ai_mal${NC}"
+echo -e "${GREEN}>>> To run AI_MAL, simply type: AI_MAL${NC}"
+echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}" 
