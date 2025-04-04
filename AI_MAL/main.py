@@ -69,7 +69,7 @@ load_dotenv()
 # Configure logging
 log_dir = os.getenv('LOG_DIR', 'logs')
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, 'ai_mal.log')
+log_file = os.path.join(log_dir, 'AI_MAL.log')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,7 +97,7 @@ class AI_MAL:
             fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'mistral:7b'))
         )
         # Create a workspace name based on target and timestamp
-        workspace = f"ai_mal_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
+        workspace = f"AI_MAL_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
         self.metasploit = MetasploitManager(workspace=workspace) if kwargs.get('msf') else None
         self.script_generator = ScriptGenerator()
         self.quiet = kwargs.get('quiet', False)

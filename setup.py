@@ -35,7 +35,7 @@ setup(
     description="AI-Powered Penetration Testing Tool",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/ai-mal/ai_mal",
+    url="https://github.com/Dleifnesor/AI_MAL",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Information Technology",

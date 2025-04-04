@@ -60,7 +60,7 @@ pip install -e .
 | `--quiet` | flag | False | Suppress progress output | Silent operation |
 | `--no-gui` | flag | False | Disable terminal GUI features | Text-only output |
 | `--log-level` | str | info | Logging level (debug/info/warning/error) | Debugging and monitoring |
-| `--log-file` | str | logs/ai_mal.log | Log file path | Log management |
+| `--log-file` | str | logs/AI_MAL.log | Log file path | Log management |
 | `--full-auto` | flag | False | Enable full automation mode | Hands-off operation |
 | `--custom-vuln` | str | None | Path to custom vulnerability definitions | Custom vulnerability testing |
 

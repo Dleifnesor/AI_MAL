@@ -35,7 +35,7 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 | `--script-output` | str | ./scripts | Output directory for generated scripts | Script management |
 | `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
 | `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
-| `--model` | str | qwen2.5-coder:7b | Primary AI model | Custom AI model selection |
+| `--model` | str | artifish/llama3.2-uncensored | Primary AI model | Custom AI model selection |
 | `--fallback-model` | str | mistral:7b | Fallback AI model | Backup AI model selection |
 | `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
 | `--implant` | str | None | Path to implant script | Custom payload deployment |
@@ -44,7 +44,7 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 | `--quiet` | flag | False | Suppress progress output | Silent operation |
 | `--no-gui` | flag | False | Disable terminal GUI features | Text-only output |
 | `--log-level` | str | info | Logging level (debug/info/warning/error) | Debugging and monitoring |
-| `--log-file` | str | logs/ai_mal.log | Log file path | Log management |
+| `--log-file` | str | logs/AI_MAL.log | Log file path | Log management |
 | `--full-auto` | flag | False | Enable full automation mode | Hands-off operation |
 | `--custom-vuln` | str | None | Path to custom vulnerability definitions | Custom vulnerability testing |
 
