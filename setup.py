@@ -3,7 +3,8 @@ from setuptools import setup, find_packages
 setup(
     name="AI_MAL",
     version="0.1.0",
-    packages=find_packages(),
+    packages=find_packages(where="."),
+    package_dir={"": "."},
     install_requires=[
         "aiohttp>=3.8.0",
         "python-dotenv>=0.19.0",
@@ -49,6 +50,6 @@ setup(
     python_requires=">=3.8",
     include_package_data=True,
     package_data={
-        'AI_MAL': ['core/*', 'examples/*', 'tests/*'],
+        'AI_MAL': ['*.py', 'core/*.py', 'examples/*.py', 'tests/*.py'],
     },
 ) 

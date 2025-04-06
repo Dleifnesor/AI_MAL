@@ -103,6 +103,11 @@ echo -e "${YELLOW}>>> Installing dependencies...${NC}"
 pip3 install --upgrade pip
 pip3 install -r requirements.txt
 
+# Clean any existing installation
+echo -e "${YELLOW}>>> Cleaning any existing installation...${NC}"
+pip3 uninstall -y AI_MAL || true
+rm -f /usr/local/bin/AI_MAL
+
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
 pip3 install -e .
@@ -121,7 +126,6 @@ chmod +x "$CURRENT_DIR/venv/bin/AI_MAL"
 
 # Create symbolic link
 echo -e "${YELLOW}>>> Creating symbolic link...${NC}"
-rm -f /usr/local/bin/AI_MAL
 ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
 
 # Add alias to .bashrc
