@@ -7,10 +7,10 @@ __author__ = "Dleifnesor"
 __email__ = "phlegmenthusiast@gmail.com"
 
 # Import core components
-from AI_MAL.core.adaptive import AdaptiveScanner
-from AI_MAL.core.ai_manager import AIManager
-from AI_MAL.core.metasploit import MetasploitManager
-from AI_MAL.core.script_generator import ScriptGenerator
+from .core.adaptive import AdaptiveScanner
+from .core.ai_manager import AIManager
+from .core.metasploit import MetasploitManager
+from .core.script_generator import ScriptGenerator
 
 __all__ = [
     'AdaptiveScanner',

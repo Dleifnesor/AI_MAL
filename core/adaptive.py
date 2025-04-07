@@ -28,7 +28,7 @@ class ScanConfig:
     delay: int = 300
     output_dir: str = "scan_results"
     vuln_db_path: Optional[str] = None
-    workspace: str = "ai_mal_workspace"
+    workspace: str = "AI_MAL_workspace"
     auto_discover: bool = False
     network: Optional[str] = None
     interface: Optional[str] = None

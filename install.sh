@@ -134,12 +134,12 @@ ln -sf "$CURRENT_DIR/venv/bin/AI_MAL" /usr/local/bin/AI_MAL
 
 # Add alias to .bashrc
 echo -e "${YELLOW}>>> Adding alias to .bashrc...${NC}"
-if ! grep -q "alias activate_ai_mal" ~/.bashrc; then
-    echo "alias activate_ai_mal='source $CURRENT_DIR/venv/bin/activate'" >> ~/.bashrc
+if ! grep -q "alias activate_AI_MAL" ~/.bashrc; then
+    echo "alias activate_AI_MAL='source $CURRENT_DIR/venv/bin/activate'" >> ~/.bashrc
 fi
 
 echo -e "${GREEN}>>> Installation complete!${NC}"
 echo -e "${GREEN}>>> To activate the virtual environment, run: source venv/bin/activate${NC}"
-echo -e "${GREEN}>>> Or simply run: activate_ai_mal${NC}"
+echo -e "${GREEN}>>> Or simply run: activate_AI_MAL${NC}"
 echo -e "${GREEN}>>> To run AI_MAL, simply type: AI_MAL${NC}"
 echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}" 

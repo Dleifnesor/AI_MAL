@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class MetasploitManager:
     def __init__(self):
-        self.workspace = "ai_mal_workspace"
+        self.workspace = "AI_MAL_workspace"
         self.resource_dir = Path("msf_resources")
         self.resource_dir.mkdir(exist_ok=True)
         
