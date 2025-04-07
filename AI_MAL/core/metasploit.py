@@ -223,12 +223,12 @@ class MetasploitManager:
                 
             search_query = " ".join(search_terms)
             
-            # Build search command
+            # Build search command - use -o to get a better formatted output (requires newer MSF versions)
             cmd = [
                 'msfconsole',
                 '-q',
                 '-x',
-                f'search type:exploit {search_query}; exit'
+                f'search type:exploit {search_query} -o /tmp/msf_search_results.txt; cat /tmp/msf_search_results.txt; exit -y'
             ]
             
             # Run search
@@ -250,20 +250,149 @@ class MetasploitManager:
             results = []
             lines = output.strip().split('\n')
             
-            for line in lines:
-                if line and ('exploit/' in line or 'auxiliary/' in line) and not line.startswith('='):
-                    # Parse using regex to handle inconsistent spacing
-                    match = re.match(r'\s*(\S+)\s+(\S+)\s+(\S+)\s+(.*)', line)
+            # Find the line with search results header
+            header_index = -1
+            for i, line in enumerate(lines):
+                if "Matching Modules" in line or "=" * 10 in line:
+                    header_index = i
+                    break
+            
+            if header_index == -1 or header_index + 1 >= len(lines):
+                # Try an alternative approach - direct regex
+                exploit_pattern = re.compile(r'(exploit/[^\s]+|auxiliary/[^\s]+)\s+([^\s]+)\s+([^\s]+)\s+(.+)')
+                for line in lines:
+                    match = exploit_pattern.search(line)
                     if match:
                         module_name, disclosure_date, rank, description = match.groups()
                         results.append({
-                            "name": module_name,
-                            "disclosure_date": disclosure_date,
-                            "rank": rank,
-                            "description": description
+                            "name": module_name.strip(),
+                            "disclosure_date": disclosure_date.strip(),
+                            "rank": rank.strip(),
+                            "description": description.strip()
                         })
+                return results
+                
+            # Skip header lines
+            parsing_lines = lines[header_index + 2:]
             
-            return results
+            # For MSF6+ output format, try to identify the columns first
+            column_headers = None
+            for i, line in enumerate(parsing_lines):
+                if re.search(r'^\s*#\s+Name\s+Disclosure\s+Date\s+Rank\s+Check\s+Description\s*$', line):
+                    column_headers = i
+                    break
+                    
+            # If we found column headers, use a more structured approach
+            if column_headers is not None and column_headers + 1 < len(parsing_lines):
+                # Skip the header and the separator line
+                for line in parsing_lines[column_headers + 2:]:
+                    # Skip empty lines
+                    if not line.strip():
+                        continue
+                        
+                    # Metasploit 6+ format: # Name Disclosure Date Rank Check Description
+                    # Extract by finding the module path first as an anchor point
+                    module_match = re.search(r'(exploit/\S+|auxiliary/\S+)', line)
+                    if module_match:
+                        module_name = module_match.group(1)
+                        
+                        # Remove the module name from the line for easier parsing
+                        remaining = line[line.find(module_name) + len(module_name):].strip()
+                        
+                        # Now extract date, rank, and description
+                        # Look for a date first (yyyy-mm-dd format)
+                        date_match = re.search(r'\d{4}-\d{2}-\d{2}', remaining)
+                        if date_match:
+                            disclosure_date = date_match.group(0)
+                            # Remove date from the remaining string
+                            remaining = remaining[remaining.find(disclosure_date) + len(disclosure_date):].strip()
+                            
+                            # Next word should be rank
+                            rank_match = re.search(r'^(\S+)', remaining)
+                            if rank_match:
+                                rank = rank_match.group(1)
+                                
+                                # Check if we have a "yes/no" check field to skip
+                                remaining = remaining[remaining.find(rank) + len(rank):].strip()
+                                check_match = re.search(r'^(Yes|No)', remaining)
+                                if check_match:
+                                    remaining = remaining[remaining.find(check_match.group(0)) + len(check_match.group(0)):].strip()
+                                
+                                # The rest is the description
+                                description = remaining.strip()
+                                
+                                results.append({
+                                    "name": module_name,
+                                    "disclosure_date": disclosure_date,
+                                    "rank": rank,
+                                    "description": description
+                                })
+            else:
+                # Fallback to the regular parsing for older MSF versions
+                for line in parsing_lines:
+                    # Skip empty lines or header lines
+                    if not line.strip() or "=" in line or "Matching Modules" in line:
+                        continue
+                        
+                    # Fix common formatting issues in MSF output
+                    line = re.sub(r'\s+', ' ', line.strip())
+                    
+                    # Use regex to parse different output formats
+                    if 'exploit/' in line or 'auxiliary/' in line:
+                        try:
+                            # Try different parsing patterns
+                            # Pattern 1: module_name date rank description
+                            match = re.match(r'^(\S+)\s+(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(.+)$', line)
+                            if match:
+                                module_name, disclosure_date, rank, description = match.groups()
+                            else:
+                                # Pattern 2: index module_name date rank description
+                                match = re.match(r'^\s*(\d+)\s+(\S+)\s+(\d{4}-\d{2}-\d{2})\s+(\S+)\s+(.+)$', line)
+                                if match:
+                                    _, module_name, disclosure_date, rank, description = match.groups()
+                                else:
+                                    # Fallback pattern: Try to extract module path
+                                    module_match = re.search(r'(exploit/\S+|auxiliary/\S+)', line)
+                                    if module_match:
+                                        module_name = module_match.group(1)
+                                        # Extract other parts
+                                        parts = line.split(module_name, 1)[1].strip().split(None, 2)
+                                        if len(parts) >= 3:
+                                            disclosure_date, rank, description = parts
+                                        else:
+                                            disclosure_date = "unknown"
+                                            rank = "normal" 
+                                            description = line.split(module_name, 1)[1].strip()
+                                    else:
+                                        # Skip this line if we can't parse it
+                                        continue
+                            
+                            # Clean up and normalize the data
+                            module_name = module_name.strip()
+                            disclosure_date = disclosure_date.strip() if disclosure_date else "unknown"
+                            rank = rank.strip() if rank else "normal"
+                            description = description.strip() if description else "No description available"
+                            
+                            results.append({
+                                "name": module_name,
+                                "disclosure_date": disclosure_date,
+                                "rank": rank,
+                                "description": description
+                            })
+                        except Exception as e:
+                            logger.warning(f"Error parsing line '{line}': {str(e)}")
+                            continue
+            
+            # Deduplicate results
+            seen = set()
+            unique_results = []
+            for result in results:
+                name = result["name"]
+                if name not in seen:
+                    seen.add(name)
+                    unique_results.append(result)
+            
+            return unique_results
             
         except Exception as e:
             logger.error(f"Error searching exploits: {str(e)}")
@@ -504,4 +633,46 @@ exploit -j
                 "error": str(e),
                 "output": "",
                 "duration": 0
-            } 
+            }
+
+    def format_exploits_table(self, exploits: List[Dict[str, Any]]) -> str:
+        """
+        Format exploits as a plain text table with proper alignment
+        """
+        if not exploits:
+            return "No exploits found."
+            
+        # Define column widths
+        name_width = 30
+        rank_width = 10
+        desc_width = 40
+        total_width = name_width + rank_width + desc_width + 4  # +4 for separators
+        
+        # Create header
+        header = f"{'Name':<{name_width}} | {'Rank':<{rank_width}} | {'Description':<{desc_width}}"
+        separator = "-" * total_width
+        
+        # Build table
+        table = [f"Potential Exploits ({len(exploits)} found):", separator, header, separator]
+        
+        # Add rows (limit to 10)
+        for exploit in exploits[:10]:
+            name = exploit.get('name', 'Unknown')
+            if len(name) > name_width - 3:
+                name = name[:name_width-3] + "..."
+                
+            rank = exploit.get('rank', 'Unknown')
+            description = exploit.get('description', 'No description')
+            if len(description) > desc_width - 3:
+                description = description[:desc_width-3] + "..."
+                
+            row = f"{name:<{name_width}} | {rank:<{rank_width}} | {description:<{desc_width}}"
+            table.append(row)
+            
+        if len(exploits) > 10:
+            table.append(separator)
+            table.append(f"Showing 10 of {len(exploits)} exploits")
+        else:
+            table.append(separator)
+            
+        return "\n".join(table) 

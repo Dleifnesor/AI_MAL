@@ -51,6 +51,7 @@ try:
     from rich.table import Table
     from rich.live import Live
     from rich import print as rprint
+    from rich import box
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
@@ -91,7 +92,7 @@ class AI_MAL:
         self.scanner = AdaptiveScanner(target)
         self.ai_manager = AIManager(
             model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
-            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'mistral:7b'))
+            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
         )
         # Create a workspace name based on target and timestamp
         workspace = f"AI_MAL_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
@@ -446,7 +447,29 @@ class AI_MAL:
             'Unknown': 'dim red'
         }.get(model_used, 'cyan')
         
-        table = Table(title=f"AI Analysis Results [using {model_used}]")
+        from rich.box import Box
+        
+        # Create a custom box style with divisions between rows
+        custom_box = Box(
+            "┏━━┳━━┓",  # top
+            "┃  ┃  ┃",  # head
+            "┣━━╋━━┫",  # head_row
+            "┃  ┃  ┃",  # mid
+            "┣━━┻━━┫",  # row
+            "┃     ┃",  # mid_section
+            "┣━━━━━┫",  # section
+            "┃     ┃",  # bottom
+            "┗━━━━━┛",  # bottom_section
+        )
+        
+        table = Table(
+            title=f"AI Analysis Results [using {model_used}]",
+            box=custom_box,
+            show_header=True,
+            show_lines=True,
+            padding=(1, 2)
+        )
+        
         table.add_column("Category", style="cyan")
         table.add_column("Details", style="green")
         
@@ -462,9 +485,15 @@ class AI_MAL:
         
         table.add_row("Risk Level", f"[{risk_style}]{risk_level}[/{risk_style}]")
         
+        # Add empty row for spacing
+        table.add_row("")
+        
         # Summary
         summary = analysis.get('summary', 'No summary available')
         table.add_row("Summary", summary)
+        
+        # Add empty row for spacing
+        table.add_row("")
         
         # Vulnerabilities
         vulns = analysis.get('vulnerabilities', [])
@@ -475,6 +504,9 @@ class AI_MAL:
             vulns_str = "None detected"
         table.add_row("Vulnerabilities", vulns_str)
         
+        # Add empty row for spacing
+        table.add_row("")
+        
         # Attack vectors
         vectors = analysis.get('attack_vectors', [])
         vectors_str = "\n".join([f"• {v}" for v in vectors[:5]])
@@ -483,6 +515,9 @@ class AI_MAL:
         if not vectors:
             vectors_str = "None detected"
         table.add_row("Attack Vectors", vectors_str)
+        
+        # Add empty row for spacing
+        table.add_row("")
         
         # Recommendations
         recommendations = analysis.get('recommendations', [])
@@ -500,16 +535,32 @@ class AI_MAL:
         if not RICH_AVAILABLE or self.quiet or not exploits:
             return
             
-        table = Table(title=f"Potential Exploits for {self.target}")
-        table.add_column("Name", style="cyan")
-        table.add_column("Rank", style="green")
-        table.add_column("Description", style="yellow")
+        # Define a consistent fixed-width table layout
+        table = Table(
+            title=f"Potential Exploits for {self.target}",
+            box=box.MINIMAL_HEAVY_HEAD,
+            show_header=True,
+            header_style="bold",
+            padding=(1, 2),
+            collapse_padding=False,
+            min_width=80
+        )
         
-        for exploit in exploits[:10]:  # Limit to 10 exploits to avoid overwhelming the display
+        # Use fixed column widths to ensure proper alignment
+        table.add_column("Name", style="cyan", width=30, no_wrap=True)
+        table.add_column("Rank", style="green", width=15, justify="center")
+        table.add_column("Description", style="yellow", width=40)
+        
+        # Only show top 10 exploits
+        for exploit in exploits[:10]:  
             name = exploit.get('name', 'Unknown')
-            rank = exploit.get('rank', 'Unknown')
-            description = exploit.get('description', 'No description')
+            rank = exploit.get('rank', 'Unknown').strip()
+            description = exploit.get('description', 'No description').strip()
             
+            # Truncate long names and add ellipsis
+            if len(name) > 28:
+                name = name[:25] + "..."
+                
             # Set color based on rank
             rank_style = {
                 'excellent': 'bright_green',
@@ -521,10 +572,13 @@ class AI_MAL:
                 'manual': 'red'
             }.get(rank.lower(), 'white')
             
-            table.add_row(name, f"[{rank_style}]{rank}[/{rank_style}]", description)
+            styled_rank = f"[{rank_style}]{rank}[/{rank_style}]"
             
+            # Add row
+            table.add_row(name, styled_rank, description)
+        
         if len(exploits) > 10:
-            console.print(f"Showing 10 of {len(exploits)} exploits")
+            console.print(f"\nShowing 10 of {len(exploits)} exploits")
             
         console.print(table)
         

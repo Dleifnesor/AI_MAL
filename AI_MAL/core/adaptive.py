@@ -20,6 +20,7 @@ class AdaptiveScanner:
         self.target = target
         self.scan_results_dir = os.getenv('SCAN_RESULTS_DIR', 'scan_results')
         os.makedirs(self.scan_results_dir, exist_ok=True)
+        self.workspace = "AI_MAL_workspace"
 
     async def scan(
         self,
@@ -39,6 +40,25 @@ class AdaptiveScanner:
         max_retries = 3
         retry_count = 0
         original_mac = None
+        
+        # First check if nmap is installed
+        try:
+            nmap_check = await asyncio.create_subprocess_exec(
+                'nmap', '--version',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            nmap_out, nmap_err = await nmap_check.communicate()
+            
+            if nmap_check.returncode != 0:
+                logger.error("Nmap is not installed or not in PATH")
+                raise Exception("Nmap is not installed or not in PATH. Please install nmap before running AI_MAL.")
+            else:
+                nmap_version = nmap_out.decode().strip().split('\n')[0]
+                logger.info(f"Using {nmap_version}")
+        except FileNotFoundError:
+            logger.error("Nmap executable not found")
+            raise Exception("Nmap executable not found. Please install nmap before running AI_MAL.")
         
         try:
             # Save original MAC address if we can get it
@@ -109,60 +129,82 @@ class AdaptiveScanner:
                             logger.info(f"Changing MAC address to {new_mac}")
                             await self._change_mac_address(new_mac)
                     
+                    # Always add target
                     nmap_args.append(self.target)
+                    
+                    # Add verbose flag for better logging
+                    nmap_args.append('-v')
                     
                     # Run nmap scan
                     logger.info(f"Starting scan with command: {' '.join(nmap_args)}")
-                    process = await asyncio.create_subprocess_exec(
-                        *nmap_args,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
                     
-                    stdout, stderr = await process.communicate()
-                    
-                    if process.returncode != 0:
-                        error_msg = stderr.decode()
-                        logger.warning(f"Scan attempt {retry_count+1} failed: {error_msg}")
+                    try:
+                        process = await asyncio.create_subprocess_exec(
+                            *nmap_args,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
                         
-                        if retry_count == max_retries - 1:
-                            # Last attempt failed, raise exception
-                            logger.error(f"All scan attempts failed. Last error: {error_msg}")
-                            raise Exception(f"Nmap scan failed after {max_retries} attempts: {error_msg}")
+                        stdout, stderr = await process.communicate()
                         
-                        # Increment retry counter and continue to next attempt
-                        retry_count += 1
-                        continue
-                    
-                    # Scan successful, parse results
-                    logger.info(f"Scan successful on attempt {retry_count+1}")
-                    results = self._parse_nmap_output(stdout.decode())
-                    
-                    # If DoS scanning was requested, perform additional DoS testing
-                    if dos and results.get('hosts'):
-                        logger.warning("Performing additional DoS testing against discovered services...")
-                        dos_results = await self._perform_additional_dos_tests(results)
+                        # Log stdout and stderr for debugging
+                        logger.debug(f"Nmap stdout: {stdout.decode()}")
+                        if stderr:
+                            logger.debug(f"Nmap stderr: {stderr.decode()}")
                         
-                        # Add DoS test results to the main results
-                        for host in results.get('hosts', []):
-                            host['dos_tests'] = dos_results.get(host.get('ip'), {})
-                    
-                    # Save results
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    output_file = os.path.join(self.scan_results_dir, f'scan_{timestamp}.json')
-                    
-                    with open(output_file, 'w') as f:
-                        json.dump(results, f, indent=2)
-                    
-                    logger.info(f"Scan results saved to {output_file}")
-                    
-                    # Restore original MAC address if we changed it
-                    if retry_count > 0 and original_mac:
-                        logger.info(f"Restoring original MAC address: {original_mac}")
-                        await self._change_mac_address(original_mac)
-                    
-                    return results
-                    
+                        if process.returncode != 0:
+                            error_msg = stderr.decode()
+                            logger.warning(f"Scan attempt {retry_count+1} failed: {error_msg}")
+                            
+                            if retry_count == max_retries - 1:
+                                # Last attempt failed, raise exception
+                                logger.error(f"All scan attempts failed. Last error: {error_msg}")
+                                raise Exception(f"Nmap scan failed after {max_retries} attempts: {error_msg}")
+                            
+                            # Increment retry counter and continue to next attempt
+                            retry_count += 1
+                            continue
+                        
+                        # Check if stdout is empty
+                        if not stdout:
+                            logger.warning("Nmap returned empty output, possible permission issue or no results")
+                            if retry_count == max_retries - 1:
+                                raise Exception("Nmap returned empty output. Check if running with sufficient permissions.")
+                            retry_count += 1
+                            continue
+                        
+                        # Scan successful, parse results
+                        logger.info(f"Scan successful on attempt {retry_count+1}")
+                        results = self._parse_nmap_output(stdout.decode())
+                        
+                        # If DoS scanning was requested, perform additional DoS testing
+                        if dos and results.get('hosts'):
+                            logger.warning("Performing additional DoS testing against discovered services...")
+                            dos_results = await self._perform_additional_dos_tests(results)
+                            
+                            # Add DoS test results to the main results
+                            for host in results.get('hosts', []):
+                                host['dos_tests'] = dos_results.get(host.get('ip'), {})
+                        
+                        # Save results
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        output_file = os.path.join(self.scan_results_dir, f'scan_{timestamp}.json')
+                        
+                        with open(output_file, 'w') as f:
+                            json.dump(results, f, indent=2)
+                        
+                        logger.info(f"Scan results saved to {output_file}")
+                        
+                        # Restore original MAC address if we changed it
+                        if retry_count > 0 and original_mac:
+                            logger.info(f"Restoring original MAC address: {original_mac}")
+                            await self._change_mac_address(original_mac)
+                        
+                        return results
+                    except FileNotFoundError:
+                        logger.error("Nmap executable not found. Please make sure nmap is installed and in PATH.")
+                        raise Exception("Nmap executable not found. Please install nmap before running AI_MAL.")
+                        
                 except Exception as e:
                     logger.warning(f"Error during scan attempt {retry_count+1}: {str(e)}")
                     retry_count += 1
@@ -185,7 +227,7 @@ class AdaptiveScanner:
                     await self._change_mac_address(original_mac)
                 except:
                     pass
-                
+            
             raise
     
     async def _get_current_mac(self) -> Optional[str]:
@@ -319,7 +361,7 @@ class AdaptiveScanner:
         
         # Parse host information
         current_host = None
-        lines = output.split('\n')
+        lines = output.strip().split('\n')
         i = 0
         while i < len(lines):
             line = lines[i]
@@ -351,7 +393,7 @@ class AdaptiveScanner:
                             "ports": [],
                             "os": {}
                         }
-                
+            
             # Host status
             elif line.startswith('Host is ') and current_host:
                 current_host["status"] = "up" if "up" in line else "down"

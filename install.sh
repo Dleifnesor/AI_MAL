@@ -71,7 +71,7 @@ if [ -f /etc/os-release ]; then
         # Install Ollama if not already installed
         if ! command_exists ollama; then
             echo -e "${YELLOW}>>> Installing Ollama...${NC}"
-            curl -fsSL https://ollama.com/install.sh | sh -s -- -q
+            curl -fsSL https://ollama.com/install.sh | sh -s -- -q > /dev/null 2>&1
             
             # Start Ollama service
             echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
@@ -84,19 +84,19 @@ if [ -f /etc/os-release ]; then
             
             # Pull the specified models
             echo -e "${YELLOW}>>> Pulling required AI models...${NC}"
-            ollama pull artifish/llama3.2-uncensored
-            ollama pull mistral:7b
+            ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
+            ollama pull gemma:1b > /dev/null 2>&1
         else
             echo -e "${YELLOW}>>> Ollama already installed, checking for required models...${NC}"
             # Check if models are available
             if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
                 echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
-                ollama pull artifish/llama3.2-uncensored
+                ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
             fi
             
-            if ! ollama list | grep -q "mistral:7b"; then
-                echo -e "${YELLOW}>>> Pulling fallback AI model: mistral:7b${NC}"
-                ollama pull mistral:7b
+            if ! ollama list | grep -q "gemma:1b"; then
+                echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
+                ollama pull gemma:1b > /dev/null 2>&1
             fi
         fi
 
@@ -106,7 +106,7 @@ if [ -f /etc/os-release ]; then
             sed -i 's/^OLLAMA_MODEL=.*/OLLAMA_MODEL=artifish\/llama3.2-uncensored/' .env
         else
             echo "OLLAMA_MODEL=artifish/llama3.2-uncensored" > .env
-            echo "OLLAMA_FALLBACK_MODEL=mistral:7b" >> .env
+            echo "OLLAMA_FALLBACK_MODEL=gemma:1b" >> .env
             echo "LOG_DIR=logs" >> .env
             echo "WORKSPACE_DIR=workspaces" >> .env
         fi
@@ -182,16 +182,58 @@ echo -e "${YELLOW}>>> Creating system-wide executable wrapper...${NC}"
 cat > /usr/local/bin/AI_MAL << EOF
 #!/bin/bash
 # AI_MAL wrapper script
-# This script automatically activates the virtual environment before running AI_MAL
+# This script automatically activates the virtual environment and starts all dependencies before running AI_MAL
 
 # Path to the virtual environment and installation
 INSTALL_DIR="$INSTALL_DIR"
 VENV_PATH="\$INSTALL_DIR/venv"
 PYTHON_PATH="\$VENV_PATH/bin/python"
 
+# Function to check if a service is running
+is_service_running() {
+    systemctl is-active --quiet \$1
+    return \$?
+}
+
 # Ensure needed directories exist
 mkdir -p "\$INSTALL_DIR/logs" 2>/dev/null || true
 mkdir -p "\$INSTALL_DIR/scan_results" 2>/dev/null || true
+mkdir -p "\$INSTALL_DIR/msf_resources" 2>/dev/null || true
+mkdir -p "\$INSTALL_DIR/generated_scripts" 2>/dev/null || true
+mkdir -p "\$INSTALL_DIR/workspaces" 2>/dev/null || true
+mkdir -p "\$INSTALL_DIR/exfiltrated_data" 2>/dev/null || true
+mkdir -p "\$INSTALL_DIR/implant_logs" 2>/dev/null || true
+
+# Check and start required services
+# 1. Check PostgreSQL (required for Metasploit)
+if ! is_service_running postgresql; then
+    echo "Starting PostgreSQL service..."
+    sudo systemctl start postgresql
+fi
+
+# 2. Check and start Ollama
+if ! is_service_running ollama; then
+    echo "Starting Ollama service..."
+    sudo systemctl start ollama
+    # Give Ollama time to initialize
+    sleep 3
+fi
+
+# 3. Initialize Metasploit database if needed
+if ! pgrep -f msfrpcd > /dev/null; then
+    echo "Initializing Metasploit database..."
+    sudo msfdb init > /dev/null 2>&1
+fi
+
+# 4. Set environment variables
+export OLLAMA_MODEL="artifish/llama3.2-uncensored"
+export OLLAMA_FALLBACK_MODEL="gemma:1b"
+export LOG_DIR="\$INSTALL_DIR/logs"
+export WORKSPACE_DIR="\$INSTALL_DIR/workspaces"
+export MSF_RESOURCES_DIR="\$INSTALL_DIR/msf_resources"
+export SCAN_RESULTS_DIR="\$INSTALL_DIR/scan_results"
+export GENERATED_SCRIPTS_DIR="\$INSTALL_DIR/generated_scripts"
+export EXFIL_DIR="\$INSTALL_DIR/exfiltrated_data"
 
 # Activate the virtual environment and run AI_MAL with all arguments passed to this script
 cd "\$INSTALL_DIR" && "\$PYTHON_PATH" -m AI_MAL.main "\$@"
@@ -227,6 +269,29 @@ fi
 
 # Reload systemd
 systemctl daemon-reload
+
+# Create a sudoers file for AI_MAL
+echo -e "${YELLOW}>>> Configuring sudoers permissions for AI_MAL...${NC}"
+cat > /etc/sudoers.d/ai_mal << EOF
+# Allow AI_MAL to run specific privileged commands without password
+
+# Commands needed for Metasploit
+ALL ALL=(ALL) NOPASSWD: /usr/bin/msfdb
+ALL ALL=(ALL) NOPASSWD: /usr/bin/msfconsole
+
+# Commands needed for network operations
+ALL ALL=(ALL) NOPASSWD: /usr/bin/nmap
+ALL ALL=(ALL) NOPASSWD: /sbin/ip
+ALL ALL=(ALL) NOPASSWD: /bin/systemctl start postgresql
+ALL ALL=(ALL) NOPASSWD: /bin/systemctl start ollama
+ALL ALL=(ALL) NOPASSWD: /usr/sbin/arp
+ALL ALL=(ALL) NOPASSWD: /usr/sbin/arping
+ALL ALL=(ALL) NOPASSWD: /bin/ip
+ALL ALL=(ALL) NOPASSWD: /sbin/ifconfig
+EOF
+
+# Secure the sudoers file
+chmod 0440 /etc/sudoers.d/ai_mal
 
 # Make a link in /usr/bin as well for maximum compatibility
 ln -sf /usr/local/bin/AI_MAL /usr/bin/AI_MAL 2>/dev/null || true

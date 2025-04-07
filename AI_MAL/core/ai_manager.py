@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class AIManager:
-    def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'mistral:7b'):
+    def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'gemma:1b'):
         # Set default models if empty strings are provided
         self.primary_model = model if model else 'artifish/llama3.2-uncensored'
-        self.fallback_model = fallback_model if fallback_model else 'gemma:7b'
+        self.fallback_model = fallback_model if fallback_model else 'gemma:1b'
         
         # Define backup models to try if both primary and fallback fail
         # These are the default models that should be installed
-        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma:7b']
+        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma:1b']
         
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         logger.info(f"AI Manager initialized with model: {self.primary_model}, fallback model: {self.fallback_model}")
@@ -286,4 +286,179 @@ Recommendations:
                 "vulnerabilities": [],
                 "attack_vectors": [],
                 "recommendations": []
-            } 
+            }
+
+    def _format_assessment_rich(self, assessment: Dict[str, Any]) -> str:
+        """Format assessment results into a rich table"""
+        try:
+            from rich.table import Table
+            from rich.box import Box
+            from rich.console import Console
+            
+            # Create a custom box style with divisions between rows
+            custom_box = Box(
+                "┏━━┳━━┓",  # top
+                "┃  ┃  ┃",  # head
+                "┣━━╋━━┫",  # head_row
+                "┃  ┃  ┃",  # mid
+                "┣━━┻━━┫",  # row
+                "┃     ┃",  # mid_section
+                "┣━━━━━┫",  # section
+                "┃     ┃",  # bottom
+                "┗━━━━━┛",  # bottom_section
+            )
+            
+            table = Table(
+                title=None,
+                show_header=True,
+                header_style="bold",
+                box=custom_box,
+                expand=True,
+                show_lines=True,
+                highlight=True,
+                padding=(1, 2)
+            )
+            
+            table.add_column("Category", style="bold cyan")
+            table.add_column("Details", style="white")
+            
+            # Add assessment data
+            table.add_row("Risk Level", assessment.get('risk_level', 'UNKNOWN'))
+            
+            table.add_row("")  # Add empty row for spacing
+            
+            table.add_row("Summary", assessment.get('summary', 'No summary available'))
+            
+            table.add_row("")  # Add empty row for spacing
+            
+            # Format vulnerabilities list
+            vulnerabilities = assessment.get('vulnerabilities', [])
+            if vulnerabilities:
+                vuln_text = ""
+                for vuln in vulnerabilities[:5]:
+                    vuln_text += f"• {vuln}\n"
+                if len(vulnerabilities) > 5:
+                    vuln_text += f"• (+{len(vulnerabilities) - 5} more)"
+                table.add_row("Vulnerabilities", vuln_text)
+            else:
+                table.add_row("Vulnerabilities", "None detected")
+            
+            table.add_row("")  # Add empty row for spacing
+            
+            # Format attack vectors list
+            attack_vectors = assessment.get('attack_vectors', [])
+            if attack_vectors:
+                vector_text = ""
+                for vector in attack_vectors:
+                    vector_text += f"• {vector}\n"
+                table.add_row("Attack Vectors", vector_text)
+            else:
+                table.add_row("Attack Vectors", "None identified")
+            
+            table.add_row("")  # Add empty row for spacing
+            
+            # Format recommendations list
+            recommendations = assessment.get('recommendations', [])
+            if recommendations:
+                rec_text = ""
+                for rec in recommendations:
+                    rec_text += f"• {rec}\n"
+                table.add_row("Recommendations", rec_text)
+            else:
+                table.add_row("Recommendations", "No specific recommendations")
+            
+            # Render table to string
+            console = Console(width=80)
+            with console.capture() as capture:
+                console.print(table)
+            return capture.get()
+            
+        except ImportError:
+            # Fallback to plain text if rich is not available
+            return self._format_assessment_text(assessment)
+
+    def _format_assessment_text(self, assessment: Dict[str, Any]) -> str:
+        """Format assessment results into plain text with dividers"""
+        text = "┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+        text += "┃ Category        ┃ Details                                                 ┃\n"
+        text += "┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩\n"
+        
+        # Risk Level
+        risk_level = assessment.get("risk_level", "UNKNOWN")
+        text += f"│ Risk Level      │ {risk_level}{' ' * (54 - len(risk_level))}│\n"
+        
+        # Add divider
+        text += "├─────────────────┼─────────────────────────────────────────────────────────┤\n"
+        
+        # Summary 
+        summary = assessment.get("summary", "No summary available")
+        # Split summary into multiple lines if needed
+        summary_lines = self._wrap_text(summary, 54)
+        text += f"│ Summary         │ {summary_lines[0]}{' ' * (54 - len(summary_lines[0]))}│\n"
+        for line in summary_lines[1:]:
+            text += f"│                 │ {line}{' ' * (54 - len(line))}│\n"
+        
+        # Add divider
+        text += "├─────────────────┼─────────────────────────────────────────────────────────┤\n"
+        
+        # Vulnerabilities
+        vulns = assessment.get("vulnerabilities", [])
+        if vulns:
+            text += f"│ Vulnerabilities │ • {vulns[0]}{' ' * (54 - len('• ' + vulns[0]))}│\n"
+            for vuln in vulns[1:5]:
+                text += f"│                 │ • {vuln}{' ' * (54 - len('• ' + vuln))}│\n"
+            if len(vulns) > 5:
+                more_text = f"• (+{len(vulns) - 5} more)"
+                text += f"│                 │ {more_text}{' ' * (54 - len(more_text))}│\n"
+        else:
+            text += "│ Vulnerabilities │ None detected                                       │\n"
+        
+        # Add divider
+        text += "├─────────────────┼─────────────────────────────────────────────────────────┤\n"
+        
+        # Attack Vectors
+        vectors = assessment.get("attack_vectors", [])
+        if vectors:
+            text += f"│ Attack Vectors  │ • {vectors[0]}{' ' * (54 - len('• ' + vectors[0]))}│\n"
+            for vector in vectors[1:]:
+                text += f"│                 │ • {vector}{' ' * (54 - len('• ' + vector))}│\n"
+        else:
+            text += "│ Attack Vectors  │ None identified                                     │\n"
+        
+        # Add divider
+        text += "├─────────────────┼─────────────────────────────────────────────────────────┤\n"
+        
+        # Recommendations
+        recs = assessment.get("recommendations", [])
+        if recs:
+            text += f"│ Recommendations │ • {recs[0]}{' ' * (54 - len('• ' + recs[0]))}│\n"
+            for rec in recs[1:]:
+                text += f"│                 │ • {rec}{' ' * (54 - len('• ' + rec))}│\n"
+        else:
+            text += "│ Recommendations │ No specific recommendations                         │\n"
+        
+        text += "└─────────────────┴─────────────────────────────────────────────────────────┘\n"
+        
+        return text
+    
+    def _wrap_text(self, text: str, width: int) -> List[str]:
+        """Wrap text to specified width"""
+        if len(text) <= width:
+            return [text]
+            
+        lines = []
+        current_line = ""
+        for word in text.split():
+            if len(current_line) + len(word) + 1 <= width:
+                if current_line:
+                    current_line += " " + word
+                else:
+                    current_line = word
+            else:
+                lines.append(current_line)
+                current_line = word
+                
+        if current_line:
+            lines.append(current_line)
+            
+        return lines 
