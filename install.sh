@@ -690,265 +690,85 @@ echo -e "${GREEN}>>> AI_MAL package installed${NC}"
 # Set permissions
 echo -e "${YELLOW}>>> Setting permissions...${NC}"
 chmod -R 755 "$INSTALL_DIR"
+chown -R "$REAL_USER:$REAL_USER" "$INSTALL_DIR" 2>/dev/null || true
 
-# Check if Metasploit is running, if not start it
+# Check Metasploit service
 echo -e "${YELLOW}>>> Checking Metasploit service...${NC}"
-if ! pgrep -x "postgres" > /dev/null; then
+if ! systemctl is-active --quiet postgresql; then
     echo -e "${YELLOW}>>> Starting PostgreSQL for Metasploit...${NC}"
-    systemctl start postgresql
     systemctl enable postgresql
+    systemctl start postgresql
 fi
 
-if ! pgrep -f "msfrpcd" > /dev/null; then
-    echo -e "${YELLOW}>>> Initializing Metasploit database...${NC}"
-    suppress_output msfdb init
-fi
-
-# Create system-wide executable wrapper script
-echo -e "${YELLOW}>>> Creating system-wide executable wrapper...${NC}"
-cat > /usr/local/bin/AI_MAL << EOF
-#!/bin/bash
-# AI_MAL wrapper script
-# This script automatically activates the virtual environment and starts all dependencies before running AI_MAL
-
-# Path to the virtual environment and installation
-INSTALL_DIR="$INSTALL_DIR"
-VENV_PATH="\$INSTALL_DIR/venv"
-PYTHON_PATH="\$VENV_PATH/bin/python"
-
-# Function to check if a service is running
-is_service_running() {
-    systemctl is-active --quiet \$1
-    return \$?
-}
-
-# Ensure needed directories exist
-mkdir -p "\$INSTALL_DIR/logs" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/scan_results" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/msf_resources" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/generated_scripts" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/workspaces" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/exfiltrated_data" 2>/dev/null || true
-mkdir -p "\$INSTALL_DIR/implant_logs" 2>/dev/null || true
-
-# Check and start required services
-# 1. Check PostgreSQL (required for Metasploit)
-if ! is_service_running postgresql; then
-    echo "Starting PostgreSQL service..."
-    sudo systemctl start postgresql
-fi
-
-# 2. Check and start Ollama
-if ! is_service_running ollama; then
-    echo "Starting Ollama service..."
-    sudo systemctl start ollama
-    # Give Ollama time to initialize
-    sleep 3
-fi
-
-# 3. Initialize Metasploit database if needed
+# Initialize Metasploit database if needed
+echo -e "${YELLOW}>>> Initializing Metasploit database...${NC}"
 if ! pgrep -f msfrpcd > /dev/null; then
-    echo "Initializing Metasploit database..."
-    sudo msfdb init > /dev/null 2>&1
+    msfdb init > /dev/null 2>&1
 fi
 
-# 4. Set environment variables
-export OLLAMA_MODEL="artifish/llama3.2-uncensored"
-export OLLAMA_FALLBACK_MODEL="gemma:1b"
-export LOG_DIR="\$INSTALL_DIR/logs"
-export WORKSPACE_DIR="\$INSTALL_DIR/workspaces"
-export MSF_RESOURCES_DIR="\$INSTALL_DIR/msf_resources"
-export SCAN_RESULTS_DIR="\$INSTALL_DIR/scan_results"
-export GENERATED_SCRIPTS_DIR="\$INSTALL_DIR/generated_scripts"
-export EXFIL_DIR="\$INSTALL_DIR/exfiltrated_data"
-
-# Activate the virtual environment and run AI_MAL with all arguments passed to this script
-cd "\$INSTALL_DIR" && "\$PYTHON_PATH" -m AI_MAL.main "\$@"
-EOF
-
-# Make the wrapper executable
-chmod +x /usr/local/bin/AI_MAL
-
-# Double-check that the wrapper was created properly
-if [ ! -x /usr/local/bin/AI_MAL ]; then
-    echo -e "${RED}>>> Error: Failed to create executable wrapper at /usr/local/bin/AI_MAL${NC}"
-    echo -e "${YELLOW}>>> Attempting to fix permissions...${NC}"
-    cat > /usr/local/bin/AI_MAL << EOF
-#!/bin/bash
-# AI_MAL wrapper script
-cd "$INSTALL_DIR" && "$INSTALL_DIR/venv/bin/python" -m AI_MAL.main "\$@"
-EOF
-    chmod +x /usr/local/bin/AI_MAL
-fi
-
-# Add to system PATH and make it persist across reboots
+# Create systemd service for persistence
 echo -e "${YELLOW}>>> Creating systemd service for persistence...${NC}"
-
-# Create Metasploit autostart service if it doesn't exist
-if [ ! -f /etc/systemd/system/metasploit.service ]; then
-    cat > /etc/systemd/system/metasploit.service << EOF
+cat > /etc/systemd/system/metasploit.service << EOF
 [Unit]
-Description=Metasploit Framework Service
+Description=Metasploit Framework
 After=network.target postgresql.service
-Requires=postgresql.service
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/msfdb init
-ExecStart=/usr/bin/msfconsole -q
-Restart=on-failure
+User=root
+ExecStart=/usr/bin/msfrpcd -P password -S -f
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Enable the service but don't start it immediately
-    systemctl enable metasploit.service
-fi
-
-# Reload systemd
 systemctl daemon-reload
+systemctl enable metasploit.service
 
-# Create a sudoers file for AI_MAL
+# Configure sudoers permissions for AI_MAL
 echo -e "${YELLOW}>>> Configuring sudoers permissions for AI_MAL...${NC}"
-cat > /etc/sudoers.d/ai_mal << EOF
-# Allow AI_MAL to run specific privileged commands without password
-
-# Commands needed for Metasploit
-ALL ALL=(ALL) NOPASSWD: /usr/bin/msfdb
-ALL ALL=(ALL) NOPASSWD: /usr/bin/msfconsole
-
-# Commands needed for network operations
-ALL ALL=(ALL) NOPASSWD: /usr/bin/nmap
-ALL ALL=(ALL) NOPASSWD: /sbin/ip
-ALL ALL=(ALL) NOPASSWD: /bin/systemctl start postgresql
-ALL ALL=(ALL) NOPASSWD: /bin/systemctl start ollama
-ALL ALL=(ALL) NOPASSWD: /usr/sbin/arp
-ALL ALL=(ALL) NOPASSWD: /usr/sbin/arping
-ALL ALL=(ALL) NOPASSWD: /bin/ip
-ALL ALL=(ALL) NOPASSWD: /sbin/ifconfig
-EOF
-
-# Secure the sudoers file
-chmod 0440 /etc/sudoers.d/ai_mal
-
-# Make a link in /usr/bin as well for maximum compatibility
-ln -sf /usr/local/bin/AI_MAL /usr/bin/AI_MAL 2>/dev/null || true
-
-# Make sure AI_MAL is in the PATH
-if ! grep -q "PATH=.*\/usr\/local\/bin" ~/.bashrc; then
-    echo 'export PATH="/usr/local/bin:/usr/bin:$PATH"' >> ~/.bashrc
+if [ ! -z "$SUDO_USER" ]; then
+    echo "$SUDO_USER ALL=(ALL) NOPASSWD: /usr/bin/nmap" | sudo tee -a /etc/sudoers.d/ai_mal > /dev/null
+    chmod 440 /etc/sudoers.d/ai_mal
 fi
 
-# Also update the PATH for the current session
-export PATH="/usr/local/bin:/usr/bin:$PATH"
-
-# Create a bash completion script for AI_MAL
+# Create bash completion for AI_MAL
 echo -e "${YELLOW}>>> Creating bash completion for AI_MAL...${NC}"
-cat > /etc/bash_completion.d/AI_MAL << EOF
-#!/bin/bash
-# Bash completion for AI_MAL
-
-_ai_mal_completions()
-{
+cat > /etc/bash_completion.d/ai_mal << 'EOF'
+_AI_MAL_completion() {
     local cur prev opts
     COMPREPLY=()
-    cur="\${COMP_WORDS[COMP_CWORD]}"
-    prev="\${COMP_WORDS[COMP_CWORD-1]}"
-    
-    # Basic options
-    opts="--help --stealth --continuous --msf --version --os --services --vuln --dos --exfil --implant --ai-analysis --full-auto --iterations --custom-vuln --output-dir --output-format --quiet --no-gui --log-level --log-file"
-    
-    # Complete with options
-    if [[ \${cur} == -* ]]; then
-        COMPREPLY=( \$(compgen -W "\${opts}" -- \${cur}) )
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts="--help --version --target --ports --scan-type --output --verbose --quiet --msf --exploit --vuln --os --services --full-auto"
+
+    if [[ ${cur} == -* ]] ; then
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         return 0
     fi
 }
-
-complete -F _ai_mal_completions AI_MAL
+complete -F _AI_MAL_completion AI_MAL
 EOF
 
-# Make the completion script executable
-chmod +x /etc/bash_completion.d/AI_MAL
-
-# Source the completion script immediately
-source /etc/bash_completion.d/AI_MAL 2>/dev/null || true
-
-# Create a temporary alias for the current shell session
+# Make AI_MAL immediately available in current session
 echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
-alias AI_MAL="/usr/local/bin/AI_MAL"
-echo "alias AI_MAL='/usr/local/bin/AI_MAL'" >> ~/.bash_aliases
-source ~/.bash_aliases 2>/dev/null || true
-
-# Add the alias to .bashrc of the user who ran sudo
 if [ ! -z "$SUDO_USER" ]; then
-  REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-  if [ -f "$REAL_HOME/.bashrc" ]; then
-    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bashrc"; then
-      echo "alias AI_MAL='/usr/local/bin/AI_MAL'" >> "$REAL_HOME/.bashrc"
-    fi
-  fi
-fi
-
-# Create a shell wrapper that will be used for current session
-echo '#!/bin/bash' > /tmp/AI_MAL_wrapper
-echo "exec /usr/local/bin/AI_MAL \"\$@\"" >> /tmp/AI_MAL_wrapper
-chmod +x /tmp/AI_MAL_wrapper
-cp /tmp/AI_MAL_wrapper /usr/bin/AI_MAL
-rm /tmp/AI_MAL_wrapper
-
-# Create a shell script in /usr/bin that can't be overridden by PATH issues
-echo -e "${YELLOW}>>> Creating unambiguous binary in /usr/bin...${NC}"
-cat > /usr/bin/AI_MAL << EOF
-#!/bin/bash
-# Direct AI_MAL executor
-exec "/usr/local/bin/AI_MAL" "\$@"
-EOF
-chmod 755 /usr/bin/AI_MAL
-
-# If run with sudo, setup the environment for the actual user too
-if [ ! -z "$SUDO_USER" ]; then
-  REAL_USER="$SUDO_USER"
-  REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-  
-  echo -e "${YELLOW}>>> Setting up environment for user $REAL_USER...${NC}"
-  
-  # Ensure user has access to the AI_MAL directories
-  chown -R "$REAL_USER" "$INSTALL_DIR"
-  
-  # Add the AI_MAL alias to user's bash_profile or bashrc
-  if [ -f "$REAL_HOME/.bash_profile" ]; then
-    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bash_profile"; then
-      echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bash_profile"
-    fi
-  fi
-  
-  if [ -f "$REAL_HOME/.bashrc" ]; then
-    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bashrc"; then
-      echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bashrc"
-    fi
-  fi
-  
-  # Create .bash_aliases if it doesn't exist
-  if [ ! -f "$REAL_HOME/.bash_aliases" ]; then
-    touch "$REAL_HOME/.bash_aliases"
-    chown "$REAL_USER" "$REAL_HOME/.bash_aliases"
-  fi
-  
-  # Add alias to .bash_aliases
-  if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bash_aliases"; then
-    echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bash_aliases"
-  fi
-
-  # Make all changes owned by the real user
-  chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
-  chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
-  chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+    # Add to user's .bashrc
+    echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bashrc"
+    # Add to user's .bash_profile if it exists
+    [ -f "$REAL_HOME/.bash_profile" ] && echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bash_profile"
+    # Add to user's .bash_aliases if it exists
+    [ -f "$REAL_HOME/.bash_aliases" ] && echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bash_aliases"
+    
+    # Set ownership of the files
+    chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
+    chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+    chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
 fi
 
 # Export current function to make it immediately available
-export -f AI_MAL 2>/dev/null || true
+export PATH="$INSTALL_DIR/venv/bin:$PATH"
 
 # Test the nmap functionality
 echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
@@ -1012,72 +832,29 @@ else
 fi
 rm -f /tmp/nmap_test.log
 
-# Create a global profile script to ensure AI_MAL is always available
-echo -e "${YELLOW}>>> Creating global profile to ensure AI_MAL is always available...${NC}"
-cat > /etc/profile.d/ai_mal.sh << EOL
-#!/bin/bash
-# Global profile for AI_MAL
-export PATH="/usr/bin:/usr/local/bin:\$PATH"
-# Make sure the AI_MAL command is always available
-if [ ! -x "/usr/bin/AI_MAL" ] && [ -x "/usr/local/bin/AI_MAL" ]; then
-  alias AI_MAL="/usr/local/bin/AI_MAL"
-fi
-EOL
-chmod 644 /etc/profile.d/ai_mal.sh
-
-# Create a symlink in /bin as a fallback for other shells
-echo -e "${YELLOW}>>> Creating symlink in /bin for maximum compatibility...${NC}"
-ln -sf /usr/bin/AI_MAL /bin/AI_MAL 2>/dev/null || true
-
-# Export current function to make it immediately available
-export -f AI_MAL 2>/dev/null || true
-
-# Define a shell function that will be immediately available in this shell
-echo -e "${YELLOW}>>> Creating shell function for immediate use...${NC}"
-# This is a trick that makes the function available in the current shell
-cat > /tmp/ai_mal_function << EOF
-function AI_MAL() {
-  /usr/bin/AI_MAL "\$@"
-}
-EOF
-# Source the function in the current shell
-. /tmp/ai_mal_function
-# If being run with sudo, try to make it available to the real user's shell too
-if [ ! -z "$SUDO_USER" ]; then
-  # Try using su to add the function to the user's shell
-  su - "$SUDO_USER" -c "cat > ~/.ai_mal_function << EOF
-function AI_MAL() {
-  /usr/bin/AI_MAL \"\\\$@\"
-}
-EOF
-  echo '. ~/.ai_mal_function' >> ~/.bashrc
-  . ~/.ai_mal_function" 2>/dev/null || true
-fi
-rm /tmp/ai_mal_function
-
 echo -e "${GREEN}>>> Installation complete!${NC}"
 echo -e "${GREEN}>>> You can now run AI_MAL from anywhere with: AI_MAL <target> [options]${NC}"
 echo -e "${GREEN}>>> For example: AI_MAL 192.168.1.1 --msf --exploit --full-auto --vuln${NC}"
 
 if [ "$SKIP_MODELS" = true ]; then
-  echo -e "${YELLOW}>>> Note: AI models were not installed. For AI features to work, please run:${NC}"
-  echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
-  echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+    echo -e "${YELLOW}>>> Note: AI models were not installed. For AI features to work, please run:${NC}"
+    echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+    echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
 else
-  echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}"
+    echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}"
 fi
 
 # Suggestion to use when install completes
 echo -e "${YELLOW}>>> TIP: To test AI_MAL, try running:${NC}"
-echo -e "${GREEN}>>>   AI_MAL 127.0.0.1 --vuln --os --services${NC}" 
+echo -e "${GREEN}>>>   AI_MAL 127.0.0.1 --vuln --os --services${NC}"
 
 # Display a fancy completion animation
 echo ""
 echo -ne "${YELLOW}▄${NC}"
 sleep 0.05
 for i in {1..40}; do
-  echo -ne "${YELLOW}▄${NC}"
-  sleep 0.01
+    echo -ne "${YELLOW}▄${NC}"
+    sleep 0.01
 done
 echo ""
 
@@ -1087,7 +864,7 @@ echo -e "${CYAN} AI_MAL is now ready to use ${NC}"
 echo -ne "${YELLOW}▀${NC}"
 sleep 0.05
 for i in {1..40}; do
-  echo -ne "${YELLOW}▀${NC}"
-  sleep 0.01
+    echo -ne "${YELLOW}▀${NC}"
+    sleep 0.01
 done
 echo "" 
