@@ -753,6 +753,19 @@ EOF
 
 # Make AI_MAL immediately available in current session
 echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
+
+# Setup for root user
+if [ "$(id -u)" = "0" ]; then
+    # Add to root's .bashrc
+    cat >> /root/.bashrc << EOF
+
+# AI_MAL environment setup
+export PATH="$INSTALL_DIR/venv/bin:\$PATH"
+alias AI_MAL='python -m AI_MAL.main'
+EOF
+fi
+
+# Setup for regular user if running with sudo
 if [ ! -z "$SUDO_USER" ]; then
     # Add to user's .bashrc
     cat >> "$REAL_HOME/.bashrc" << EOF
@@ -798,6 +811,9 @@ chmod 644 /etc/profile.d/ai_mal.sh
 # Export current function to make it immediately available
 export PATH="$INSTALL_DIR/venv/bin:$PATH"
 alias AI_MAL='python -m AI_MAL.main'
+
+# Source the profile script to make changes take effect immediately
+source /etc/profile.d/ai_mal.sh
 
 # Test the nmap functionality
 echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
