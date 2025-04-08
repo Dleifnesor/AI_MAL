@@ -22,12 +22,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.box import ROUNDED
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich import print as rprint
 
 # Import Pygments for syntax highlighting
 try:
     from pygments import highlight
-    from pygments.lexers import get_lexer_for_filename, get_lexer_by_name
-    from pygments.formatters import Terminal256Formatter
+    from pygments.lexers import PythonLexer, BashLexer, RubyLexer
+    from pygments.formatters import TerminalFormatter
     PYGMENTS_AVAILABLE = True
 except ImportError:
     PYGMENTS_AVAILABLE = False
@@ -544,21 +546,24 @@ class AI_MAL:
                         
                         # Get appropriate lexer based on file extension
                         try:
-                            lexer = get_lexer_for_filename(path)
+                            lexer = PythonLexer() if path.endswith('.py') else \
+                                    BashLexer() if path.endswith('.sh') or path.endswith('.bash') else \
+                                    RubyLexer() if path.endswith('.rb') else \
+                                    None
                         except:
                             # Fallback to Python if can't determine
                             extension = os.path.splitext(path)[1].lower()
                             if extension in ['.sh', '.bash']:
-                                lexer = get_lexer_by_name('bash')
+                                lexer = BashLexer()
                             elif extension in ['.bat', '.cmd']:
-                                lexer = get_lexer_by_name('batch')
+                                lexer = None
                             elif extension in ['.ps1']:
-                                lexer = get_lexer_by_name('powershell')
+                                lexer = None
                             else:
-                                lexer = get_lexer_by_name('python')
+                                lexer = PythonLexer()
                         
                         # Apply syntax highlighting
-                        formatted = highlight(content, lexer, Terminal256Formatter())
+                        formatted = highlight(content, lexer, TerminalFormatter())
                         
                         # Display the script
                         console.print(f"\n[bold cyan]Script: {os.path.basename(path)}[/bold cyan]")
