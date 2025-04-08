@@ -9,6 +9,17 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Parse command line arguments
+SKIP_MODELS=false
+for arg in "$@"; do
+  case $arg in
+    --no-models)
+      SKIP_MODELS=true
+      shift
+      ;;
+  esac
+done
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -82,21 +93,154 @@ if [ -f /etc/os-release ]; then
             echo -e "${YELLOW}>>> Waiting for Ollama service to start...${NC}"
             sleep 5
             
-            # Pull the specified models
-            echo -e "${YELLOW}>>> Pulling required AI models...${NC}"
-            ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
-            ollama pull gemma:1b > /dev/null 2>&1
+            # Check if we should skip model downloads
+            if [ "$SKIP_MODELS" = true ]; then
+                echo -e "${YELLOW}>>> Skipping model downloads (--no-models flag detected)${NC}"
+                echo -e "${YELLOW}>>> You will need to pull models manually later with:${NC}"
+                echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+                echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+            else
+                # Pull the specified models with progress indication
+                echo -e "${YELLOW}>>> Pulling required AI models...${NC}"
+                echo -e "${YELLOW}>>> This may take several minutes for large models. Please be patient.${NC}"
+                echo -e "${YELLOW}>>> To skip model downloads, run the installer with --no-models${NC}"
+                
+                # Function to pull a model with timeout
+                pull_model_with_timeout() {
+                    local model=$1
+                    local timeout=$2
+                    local start_time=$(date +%s)
+                    
+                    echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
+                    
+                    # Start the pull in background
+                    ollama pull $model &
+                    local pull_pid=$!
+                    
+                    # Monitor the process with progress updates
+                    while kill -0 $pull_pid 2>/dev/null; do
+                        local current_time=$(date +%s)
+                        local elapsed=$((current_time - start_time))
+                        
+                        if [ $elapsed -ge $timeout ]; then
+                            echo -e "${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
+                            kill -9 $pull_pid 2>/dev/null || true
+                            wait $pull_pid 2>/dev/null || true
+                            return 1
+                        fi
+                        
+                        if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+                            echo -e "${YELLOW}>>> Still pulling $model... ($elapsed seconds elapsed)${NC}"
+                        fi
+                        
+                        sleep 2
+                    done
+                    
+                    # Check if the model is now available
+                    if ollama list | grep -q "$model"; then
+                        echo -e "${GREEN}>>> Successfully pulled $model${NC}"
+                        return 0
+                    else
+                        echo -e "${RED}>>> Failed to pull $model${NC}"
+                        return 1
+                    fi
+                }
+
+                # Try to pull the primary model with a generous timeout (10 minutes)
+                if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
+                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
+                    echo -e "${YELLOW}>>> This is a large model and may take several minutes...${NC}"
+                    if ! pull_model_with_timeout "artifish/llama3.2-uncensored" 600; then
+                        echo -e "${RED}>>> Could not pull artifish/llama3.2-uncensored within the timeout period.${NC}"
+                        echo -e "${YELLOW}>>> Will try to use a smaller model instead.${NC}"
+                    fi
+                else
+                    echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
+                fi
+
+                # Pull the fallback model (smaller and faster to download)
+                if ! ollama list | grep -q "gemma:1b"; then
+                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
+                    if ! pull_model_with_timeout "gemma:1b" 300; then
+                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
+                        echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
+                    fi
+                else
+                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
+                fi
+            fi
         else
             echo -e "${YELLOW}>>> Ollama already installed, checking for required models...${NC}"
-            # Check if models are available
-            if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
-                echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
-                ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
-            fi
             
-            if ! ollama list | grep -q "gemma:1b"; then
-                echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
-                ollama pull gemma:1b > /dev/null 2>&1
+            # Check if we should skip model downloads
+            if [ "$SKIP_MODELS" = true ]; then
+                echo -e "${YELLOW}>>> Skipping model downloads (--no-models flag detected)${NC}"
+                echo -e "${YELLOW}>>> You will need to pull models manually later with:${NC}"
+                echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+                echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+            else
+                # Function to pull a model with timeout
+                pull_model_with_timeout() {
+                    local model=$1
+                    local timeout=$2
+                    local start_time=$(date +%s)
+                    
+                    echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
+                    
+                    # Start the pull in background
+                    ollama pull $model &
+                    local pull_pid=$!
+                    
+                    # Monitor the process with progress updates
+                    while kill -0 $pull_pid 2>/dev/null; do
+                        local current_time=$(date +%s)
+                        local elapsed=$((current_time - start_time))
+                        
+                        if [ $elapsed -ge $timeout ]; then
+                            echo -e "${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
+                            kill -9 $pull_pid 2>/dev/null || true
+                            wait $pull_pid 2>/dev/null || true
+                            return 1
+                        fi
+                        
+                        if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+                            echo -e "${YELLOW}>>> Still pulling $model... ($elapsed seconds elapsed)${NC}"
+                        fi
+                        
+                        sleep 2
+                    done
+                    
+                    # Check if the model is now available
+                    if ollama list | grep -q "$model"; then
+                        echo -e "${GREEN}>>> Successfully pulled $model${NC}"
+                        return 0
+                    else
+                        echo -e "${RED}>>> Failed to pull $model${NC}"
+                        return 1
+                    fi
+                }
+                
+                # Check if models are available
+                if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
+                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
+                    echo -e "${YELLOW}>>> This is a large model and may take several minutes...${NC}"
+                    if ! pull_model_with_timeout "artifish/llama3.2-uncensored" 600; then
+                        echo -e "${RED}>>> Could not pull artifish/llama3.2-uncensored within the timeout period.${NC}"
+                        echo -e "${YELLOW}>>> Will try to use a smaller model instead.${NC}"
+                    fi
+                else
+                    echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
+                fi
+                
+                if ! ollama list | grep -q "gemma:1b"; then
+                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
+                    if ! pull_model_with_timeout "gemma:1b" 300; then
+                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
+                        echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
+                    fi
+                else
+                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
+                fi
             fi
         fi
 
@@ -466,4 +610,15 @@ rm /tmp/ai_mal_function
 echo -e "${GREEN}>>> Installation complete!${NC}"
 echo -e "${GREEN}>>> You can now run AI_MAL from anywhere with: AI_MAL <target> [options]${NC}"
 echo -e "${GREEN}>>> For example: AI_MAL 192.168.1.1 --msf --exploit --full-auto --vuln${NC}"
-echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}" 
+
+if [ "$SKIP_MODELS" = true ]; then
+  echo -e "${YELLOW}>>> Note: AI models were not installed. For AI features to work, please run:${NC}"
+  echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+  echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+else
+  echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}"
+fi
+
+# Suggestion to use when install completes
+echo -e "${YELLOW}>>> TIP: To test AI_MAL, try running:${NC}"
+echo -e "${GREEN}>>>   AI_MAL 127.0.0.1 --vuln --os --services${NC}" 
