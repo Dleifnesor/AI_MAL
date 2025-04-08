@@ -945,6 +945,7 @@ if [ ! -z "$SUDO_USER" ]; then
   chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
   chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
   chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+fi
 
 # Export current function to make it immediately available
 export -f AI_MAL 2>/dev/null || true
