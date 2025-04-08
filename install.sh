@@ -566,20 +566,30 @@ pip_pid=$!
 spinner $pip_pid "${CYAN}Upgrading pip"
 
 echo -e "${CYAN}Installing project dependencies...${NC}"
-# Count the number of packages in requirements.txt
-req_count=$(grep -v '^\s*$\|^\s*\#' requirements.txt | wc -l)
+# Count the number of valid packages in requirements.txt
+req_count=$(grep -v '^\s*$\|^\s*\#' requirements.txt | grep -v '^$' | wc -l)
 echo -ne "${CYAN}Installing packages ${NC}["
 
 count=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip empty lines and comments
-    [[ -z "$line" || "$line" =~ ^#.* ]] && continue
+    # Skip empty lines, comments, and lines with only whitespace
+    if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
+        continue
+    fi
+    
+    # Clean the line of any leading/trailing whitespace
+    line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    
+    # Skip if the line is empty after cleaning
+    if [[ -z "$line" ]]; then
+        continue
+    fi
     
     # Install the package with error handling
-    if ! pip3 install $line > /dev/null 2>&1; then
+    if ! pip3 install "$line" > /dev/null 2>&1; then
         echo -e "\n${RED}>>> Error installing package: $line${NC}"
         echo -e "${YELLOW}>>> Attempting to install with verbose output...${NC}"
-        pip3 install $line
+        pip3 install "$line"
         if [ $? -ne 0 ]; then
             echo -e "${RED}>>> Failed to install package: $line${NC}"
             echo -e "${YELLOW}>>> Continuing with remaining packages...${NC}"
