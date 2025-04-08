@@ -566,13 +566,18 @@ pip_pid=$!
 spinner $pip_pid "${CYAN}Upgrading pip"
 
 echo -e "${CYAN}Installing project dependencies...${NC}"
-# Count the number of valid packages in requirements.txt
-req_count=$(grep -v '^\s*$\|^\s*\#' requirements.txt | grep -v '^$' | wc -l)
+
+# Create a temporary cleaned requirements file
+temp_req=$(mktemp)
+grep -v '^\s*$\|^\s*\#' requirements.txt | sed '/^$/d' > "$temp_req"
+
+# Count the number of valid packages
+req_count=$(wc -l < "$temp_req")
 echo -ne "${CYAN}Installing packages ${NC}["
 
 count=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip empty lines, comments, and lines with only whitespace
+    # Skip empty lines and comments
     if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
         continue
     fi
@@ -585,13 +590,16 @@ while IFS= read -r line || [[ -n "$line" ]]; do
         continue
     fi
     
+    # Extract package name for progress tracking
+    package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
+    
     # Install the package with error handling
     if ! pip3 install "$line" > /dev/null 2>&1; then
-        echo -e "\n${RED}>>> Error installing package: $line${NC}"
+        echo -e "\n${RED}>>> Error installing package: $package_name${NC}"
         echo -e "${YELLOW}>>> Attempting to install with verbose output...${NC}"
         pip3 install "$line"
         if [ $? -ne 0 ]; then
-            echo -e "${RED}>>> Failed to install package: $line${NC}"
+            echo -e "${RED}>>> Failed to install package: $package_name${NC}"
             echo -e "${YELLOW}>>> Continuing with remaining packages...${NC}"
         fi
     fi
@@ -622,15 +630,25 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     done
     printf "] ${percent}%%"
     
-done < requirements.txt
+done < "$temp_req"
 printf "\n"
+
+# Clean up temporary file
+rm "$temp_req"
 
 # Verify all packages were installed
 echo -e "${YELLOW}>>> Verifying package installation...${NC}"
 missing_packages=0
 while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -z "$line" || "$line" =~ ^#.* ]] && continue
-    package_name=$(echo "$line" | cut -d'=' -f1 | cut -d'>' -f1 | cut -d'<' -f1)
+    if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
+        continue
+    fi
+    
+    package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
+    if [[ -z "$package_name" ]]; then
+        continue
+    fi
+    
     if ! pip3 show "$package_name" > /dev/null 2>&1; then
         echo -e "${RED}>>> Package not installed: $package_name${NC}"
         missing_packages=$((missing_packages + 1))
@@ -640,8 +658,15 @@ done < requirements.txt
 if [ $missing_packages -gt 0 ]; then
     echo -e "${YELLOW}>>> $missing_packages packages failed to install. Attempting to install them individually...${NC}"
     while IFS= read -r line || [[ -n "$line" ]]; do
-        [[ -z "$line" || "$line" =~ ^#.* ]] && continue
-        package_name=$(echo "$line" | cut -d'=' -f1 | cut -d'>' -f1 | cut -d'<' -f1)
+        if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+        
+        package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
+        if [[ -z "$package_name" ]]; then
+            continue
+        fi
+        
         if ! pip3 show "$package_name" > /dev/null 2>&1; then
             echo -e "${YELLOW}>>> Retrying installation of $package_name...${NC}"
             pip3 install "$line" --no-cache-dir
