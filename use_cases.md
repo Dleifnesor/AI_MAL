@@ -36,7 +36,7 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 | `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
 | `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
 | `--model` | str | artifish/llama3.2-uncensored | Primary AI model | Custom AI model selection |
-| `--fallback-model` | str | gemma:1b | Fallback AI model | Backup AI model selection |
+| `--fallback-model` | str | gemma3:1b | Fallback AI model | Backup AI model selection |
 | `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
 | `--implant` | str | None | Path to implant script | Custom payload deployment |
 | `--output-dir` | str | ./results | Output directory for results | Result management |
@@ -114,7 +114,7 @@ Enables AI analysis of scan results.
 
 ### Custom AI Models
 ```bash
-AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model gemma:1b
+AI_MAL 192.168.1.1 --model artifish/llama3.2-uncensored --fallback-model gemma3:1b
 ```
 - `--model`: Specifies primary AI model
 - `--fallback-model`: Specifies fallback AI model
@@ -206,9 +206,9 @@ Uses custom vulnerability definitions for scanning.
 
 1. **Model not found errors**
    - Error message: `"model 'xxxx' not found"`
-   - Solution: Only qwen2.5-coder:7b and gemma:7b are auto-installed. For other models:
+   - Solution: Only artifish/llama3.2-uncensored and gemma:7b are auto-installed. For other models:
      - Install them manually first: `ollama pull model_name`
-     - Or use one of the default models: `--model qwen2.5-coder:7b` or `--model gemma:7b`
+     - Or use one of the default models: `--model artifish/llama3.2-uncensored` or `--model gemma:7b`
    - The tool will automatically fall back to an available default model if your specified model is not found
 
 2. **Metasploit connection issues**
@@ -230,14 +230,14 @@ To troubleshoot issues, you can add the following environment variables:
 ```bash
 export DEBUG=1
 export OLLAMA_HOST=http://localhost:11434
-export OLLAMA_MODEL=qwen2.5-coder:7b
-export OLLAMA_FALLBACK_MODEL=gemma:1b
+export OLLAMA_MODEL=artifish/llama3.2-uncensored
+export OLLAMA_FALLBACK_MODEL=gemma3:1b
 ```
 
 ### Recovery Procedures
 1. If AI models fail to load, the tool will automatically:
    - Try fallback model if specified
-   - Try one of the default models (qwen2.5-coder:7b or gemma:7b) if available
+   - Try one of the default models (artifish/llama3.2-uncensored or gemma:7b) if available
    - Use built-in fallback analysis if no models are available
 
 2. If the GUI interface fails, use the `--no-gui` option:

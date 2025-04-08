@@ -27,7 +27,7 @@ def scan_config():
 @pytest.fixture
 def ai_manager():
     """Create an AI manager instance."""
-    return AIManager(model_name="qwen:7b")
+    return AIManager(model_name="artifish/llama3.2-uncensored")
 
 @pytest.mark.asyncio
 async def test_scan_with_ai_analysis(scan_config, ai_manager):

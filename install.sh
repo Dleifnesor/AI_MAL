@@ -226,7 +226,7 @@ if [ -f /etc/os-release ]; then
                 echo -e "${YELLOW}>>> Skipping model downloads (--no-models flag detected)${NC}"
                 echo -e "${YELLOW}>>> You will need to pull models manually later with:${NC}"
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
-                echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+                echo -e "${GREEN}>>>   ollama pull gemma3:1b${NC}"
             else
                 # Pull the specified models with progress indication
                 echo -e "${YELLOW}>>> Pulling required AI models...${NC}"
@@ -335,14 +335,14 @@ if [ -f /etc/os-release ]; then
                 fi
 
                 # Pull the fallback model (smaller and faster to download)
-                if ! ollama list | grep -q "gemma:1b"; then
-                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
-                    if ! pull_model_with_timeout "gemma:1b" 300; then
-                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
+                if ! ollama list | grep -q "gemma3:1b"; then
+                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma3:1b${NC}"
+                    if ! pull_model_with_timeout "gemma3:1b" 300; then
+                        echo -e "${RED}>>> Could not pull gemma3:1b within the timeout period.${NC}"
                         echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
                     fi
                 else
-                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
+                    echo -e "${GREEN}>>> Fallback model gemma3:1b is already available${NC}"
                 fi
             fi
         else
@@ -353,7 +353,7 @@ if [ -f /etc/os-release ]; then
                 echo -e "${YELLOW}>>> Skipping model downloads (--no-models flag detected)${NC}"
                 echo -e "${YELLOW}>>> You will need to pull models manually later with:${NC}"
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
-                echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+                echo -e "${GREEN}>>>   ollama pull gemma3:1b${NC}"
             else
                 # Function to pull a model with timeout
                 pull_model_with_timeout() {
@@ -456,14 +456,14 @@ if [ -f /etc/os-release ]; then
                     echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
                 fi
                 
-                if ! ollama list | grep -q "gemma:1b"; then
-                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
-                    if ! pull_model_with_timeout "gemma:1b" 300; then
-                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
+                if ! ollama list | grep -q "gemma3:1b"; then
+                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma3:1b${NC}"
+                    if ! pull_model_with_timeout "gemma3:1b" 300; then
+                        echo -e "${RED}>>> Could not pull gemma3:1b within the timeout period.${NC}"
                         echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
                     fi
                 else
-                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
+                    echo -e "${GREEN}>>> Fallback model gemma3:1b is already available${NC}"
                 fi
             fi
         fi
@@ -474,7 +474,7 @@ if [ -f /etc/os-release ]; then
             sed -i 's/^OLLAMA_MODEL=.*/OLLAMA_MODEL=artifish\/llama3.2-uncensored/' .env
         else
             echo "OLLAMA_MODEL=artifish/llama3.2-uncensored" > .env
-            echo "OLLAMA_FALLBACK_MODEL=gemma:1b" >> .env
+            echo "OLLAMA_FALLBACK_MODEL=gemma3:1b" >> .env
             echo "LOG_DIR=logs" >> .env
             echo "WORKSPACE_DIR=workspaces" >> .env
         fi
@@ -900,7 +900,7 @@ echo -e "${GREEN}>>> For example: AI_MAL 192.168.1.1 --msf --exploit --full-auto
 if [ "$SKIP_MODELS" = true ]; then
     echo -e "${YELLOW}>>> Note: AI models were not installed. For AI features to work, please run:${NC}"
     echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
-    echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
+    echo -e "${GREEN}>>>   ollama pull gemma3:1b${NC}"
 else
     echo -e "${GREEN}>>> Ollama is installed and configured with artifish/llama3.2-uncensored model${NC}"
 fi

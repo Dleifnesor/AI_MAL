@@ -120,7 +120,7 @@ class AI_MAL:
         # Initialize AI manager
         self.ai_manager = AIManager(
             model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
-            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
+            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma3:1b'))
         )
         
         # Create a workspace name based on target and timestamp
@@ -1278,8 +1278,8 @@ class AI_MAL:
                 return True
 
             # Try to use fallback model
-            if "gemma:1b" in available_models:
-                self.primary_model = "gemma:1b"
+            if "gemma3:1b" in available_models:
+                self.primary_model = "gemma3:1b"
                 self.logger.info(f"Using fallback model: {self.primary_model}")
                 return True
 
@@ -1292,8 +1292,8 @@ class AI_MAL:
                 return True
 
             # Try to pull fallback model
-            if self._pull_model("gemma:1b"):
-                self.primary_model = "gemma:1b"
+            if self._pull_model("gemma3:1b"):
+                self.primary_model = "gemma3:1b"
                 return True
 
             self.logger.error("Failed to initialize any AI models")
@@ -1450,8 +1450,8 @@ Examples:
     basic_group = parser.add_argument_group('Basic Options')
     basic_group.add_argument('--msf', action='store_true', help='Enable Metasploit integration')
     basic_group.add_argument('--exploit', action='store_true', help='Attempt exploitation of vulnerabilities')
-    basic_group.add_argument('--model', help='Ollama model to use (default: from .env or qwen2.5-coder:7b)')
-    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or gemma:1b)')
+    basic_group.add_argument('--model', help='Ollama model to use (default: from .env or artifish/llama3.2-uncensored)')
+    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or gemma3:1b)')
     basic_group.add_argument('--full-auto', action='store_true', help='Enable full automation mode')
     basic_group.add_argument('--ai-analysis', action='store_true', default=True,
                        help='Enable AI analysis of results (default: enabled)')
@@ -1521,8 +1521,8 @@ Examples:
     # Verify Ollama models (only if AI analysis is enabled)
     if args.ai_analysis and not args.quiet:
         try:
-            primary_model = args.model or os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')
-            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b')
+            primary_model = args.model or os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')
+            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma3:1b')
             
             print(f"Verifying AI models availability: {primary_model} (primary) and {fallback_model} (fallback)")
             
@@ -1539,7 +1539,7 @@ Examples:
                 print(f"Warning: Could not check available Ollama models: {str(e)}")
             
             # Define the default models that should be auto-installed if not available
-            default_models = ['qwen2.5-coder:7b', 'gemma:7b']
+            default_models = ['artifish/llama3.2-uncensored', 'gemma3:7b']
             models_to_check = []
             
             # Only add models to auto-install list if they're in our default set
