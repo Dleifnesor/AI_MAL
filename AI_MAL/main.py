@@ -17,6 +17,11 @@ import aiohttp
 import io
 from urllib.parse import urljoin
 import subprocess
+from rich import Box
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.box import ROUNDED
 
 # Import Pygments for syntax highlighting
 try:
@@ -97,7 +102,9 @@ else:
 
 class AI_MAL:
     def __init__(self, target: str, **kwargs):
+        """Initialize AI_MAL with target and optional parameters."""
         self.target = target
+        self.logger = logging.getLogger(__name__)
         self.kwargs = kwargs
         
         # Set up logging directory
@@ -172,244 +179,182 @@ class AI_MAL:
                     self.implant_logs_dir.mkdir(exist_ok=True)
                     logger.info(f"Using fallback implant logs directory: {self.implant_logs_dir}")
         
-    async def run(self):
+    async def run(self) -> Dict[str, Any]:
+        """Run the AI_MAL scan and analysis."""
         try:
-            # Show welcome banner
-            if RICH_AVAILABLE and not self.quiet and not self.no_gui:
-                self._show_banner()
-                
-            # Show scanning progress
-            if RICH_AVAILABLE and not self.quiet and not self.no_gui:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[bold green]{task.description}"),
-                    BarColumn(),
-                    TimeElapsedColumn(),
-                    console=console
-                ) as progress:
-                    scan_task = progress.add_task(f"[green]Scanning target: {self.target}", total=100)
-                    progress.update(scan_task, advance=10)
-                    
-                    # Perform initial scan
-                    scan_results = await self.scanner.scan(
-                        stealth=self.kwargs.get('stealth', False),
-                        continuous=self.kwargs.get('continuous', False),
-                        delay=self.kwargs.get('delay', 300),
-                        services=self.kwargs.get('services', False),
-                        version=self.kwargs.get('version', False),
-                        os_detection=self.kwargs.get('os', False),
-                        vuln_scan=self.kwargs.get('vuln', False),
-                        dos=self.kwargs.get('dos', False)
-                    )
-                    progress.update(scan_task, completed=100)
-                    
-                    # Show scan results summary
-                    self._display_scan_summary(scan_results)
-                    
-                    # Exfiltration
-                    exfil_results = None
-                    if self.exfil_enabled:
-                        exfil_task = progress.add_task("[red]Attempting data exfiltration...", total=100)
-                        progress.update(exfil_task, advance=10)
-                        
-                        logger.info("Attempting data exfiltration from target...")
-                        exfil_results = await self._exfiltrate_data(scan_results)
-                        progress.update(exfil_task, completed=100)
-                        
-                        # Display exfiltration results
-                        self._display_exfil_results(exfil_results)
-                    
-                    # Implant deployment
-                    implant_results = None
-                    if self.implant_enabled:
-                        implant_task = progress.add_task("[red bold]Deploying implant to target systems...", total=100)
-                        progress.update(implant_task, advance=10)
-                        
-                        logger.info(f"Attempting to deploy implant: {self.implant_path}")
-                        implant_results = await self._deploy_implant(scan_results)
-                        progress.update(implant_task, completed=100)
-                        
-                        # Display implant results
-                        self._display_implant_results(implant_results)
-                    
-                    # AI Analysis
-                    analysis = None
-                    if self.kwargs.get('ai_analysis', True):
-                        ai_task = progress.add_task("[cyan]Analyzing results with AI...", total=100)
-                        progress.update(ai_task, advance=30)
-                        
-                        logger.info("Analyzing scan results with AI...")
-                        analysis = await self.ai_manager.analyze_results(scan_results)
-                        progress.update(ai_task, completed=100)
-                        
-                        # Display AI analysis results
-                        self._display_ai_results(analysis)
-                    
-                    # Metasploit Integration
-                    exploits = []
-                    if self.msf_manager and self.kwargs.get('exploit', False):
-                        msf_task = progress.add_task("[yellow]Finding potential Metasploit exploits...", total=100)
-                        progress.update(msf_task, advance=40)
-                        
-                        logger.info("Finding potential Metasploit exploits...")
-                        exploits = await self.msf_manager.find_exploits(scan_results)
-                        progress.update(msf_task, completed=100)
-                        
-                        if exploits:
-                            logger.info(f"Found {len(exploits)} potential Metasploit exploits:")
-                            for exploit in exploits:
-                                logger.info(f"- {exploit['name']} ({exploit['rank']}): {exploit['description']}")
-                            
-                            # Display exploits
-                            self._display_exploits(exploits)
-                            
-                            if self.kwargs.get('full_auto', False):
-                                exploit_task = progress.add_task("[red]Running exploits in full-auto mode...", total=100)
-                                progress.update(exploit_task, advance=20)
-                                
-                                logger.info("Running exploits in full-auto mode...")
-                                exploit_results = await self.msf_manager.exploit_targets(exploits)
-                                progress.update(exploit_task, completed=100)
-                                
-                                for result in exploit_results:
-                                    logger.info(f"Exploit {result['exploit']['name']} result: {result['result']['status']}")
-                        else:
-                            logger.info("No suitable exploits found for the target.")
-                    
-                    # Custom Script Generation
-                    if self.kwargs.get('custom_scripts', False):
-                        script_type = self.kwargs.get('script_type', 'python')
-                        script_task = progress.add_task(f"[blue]Generating {script_type} scripts...", total=100)
-                        progress.update(script_task, advance=30)
-                        
-                        logger.info(f"Generating custom {script_type} scripts...")
-                        scripts = await self.script_generator.generate_scripts(
-                            scan_results,
-                            script_type=script_type
-                        )
-                        progress.update(script_task, completed=100)
-                        
-                        logger.info(f"Generated {len(scripts)} {script_type} scripts:")
-                        for script in scripts:
-                            logger.info(f"- {script['name']}: {script['description']} ({script['path']})")
-                        
-                        # Display generated scripts
-                        self._display_scripts(scripts)
-                        
-                        if self.kwargs.get('execute_scripts', False):
-                            exec_task = progress.add_task("[magenta]Executing generated scripts...", total=100)
-                            progress.update(exec_task, advance=20)
-                            
-                            logger.info("Executing generated scripts...")
-                            script_results = await self.script_generator.execute_scripts(scripts)
-                            progress.update(exec_task, completed=100)
-                            
-                            for result in script_results:
-                                status = result['result']['status']
-                                script_name = result['script']['name']
-                                logger.info(f"Script {script_name} execution: {status}")
-            else:
-                # Non-rich version - run without the progress display
-                # Perform initial scan
-                logger.info(f"Scanning target: {self.target}")
-                scan_results = await self.scanner.scan(
-                    stealth=self.kwargs.get('stealth', False),
-                    continuous=self.kwargs.get('continuous', False),
-                    delay=self.kwargs.get('delay', 300),
-                    services=self.kwargs.get('services', False),
-                    version=self.kwargs.get('version', False),
-                    os_detection=self.kwargs.get('os', False),
-                    vuln_scan=self.kwargs.get('vuln', False),
-                    dos=self.kwargs.get('dos', False)
-                )
-                logger.info(f"Scan completed on target: {self.target}")
-
-                # Exfiltration
-                exfil_results = None
-                if self.exfil_enabled:
-                    logger.info("Attempting data exfiltration from target...")
-                    exfil_results = await self._exfiltrate_data(scan_results)
-                
-                # Implant deployment
-                implant_results = None
-                if self.implant_enabled:
-                    logger.info(f"Attempting to deploy implant: {self.implant_path}")
-                    implant_results = await self._deploy_implant(scan_results)
-                
-                # AI Analysis
-                analysis = None
-                if self.kwargs.get('ai_analysis', True):
-                    logger.info("Analyzing scan results with AI...")
-                    analysis = await self.ai_manager.analyze_results(scan_results)
-                    model_used = analysis.get('model_used', 'Unknown')
-                    logger.info(f"AI Analysis Results (using model: {model_used}):")
-                    for key, value in analysis.items():
-                        if key == 'model_used':
-                            continue
-                        if isinstance(value, list):
-                            logger.info(f"{key.upper()}:")
-                            for item in value:
-                                logger.info(f"- {item}")
-                        else:
-                            logger.info(f"{key.upper()}: {value}")
-
-                # Metasploit Integration
-                exploits = []
-                if self.msf_manager and self.kwargs.get('exploit', False):
-                    logger.info("Finding potential Metasploit exploits...")
-                    exploits = await self.msf_manager.find_exploits(scan_results)
-                    if exploits:
-                        logger.info(f"Found {len(exploits)} potential Metasploit exploits:")
-                        for exploit in exploits:
-                            logger.info(f"- {exploit['name']} ({exploit['rank']}): {exploit['description']}")
-                        
-                        if self.kwargs.get('full_auto', False):
-                            logger.info("Running exploits in full-auto mode...")
-                            exploit_results = await self.msf_manager.exploit_targets(exploits)
-                            for result in exploit_results:
-                                logger.info(f"Exploit {result['exploit']['name']} result: {result['result']['status']}")
-                    else:
-                        logger.info("No suitable exploits found for the target.")
-
-                # Custom Script Generation
-                if self.kwargs.get('custom_scripts', False):
-                    script_type = self.kwargs.get('script_type', 'python')
-                    logger.info(f"Generating custom {script_type} scripts...")
-                    scripts = await self.script_generator.generate_scripts(
-                        scan_results,
-                        script_type=script_type
-                    )
-                    
-                    logger.info(f"Generated {len(scripts)} {script_type} scripts:")
-                    for script in scripts:
-                        logger.info(f"- {script['name']}: {script['description']} ({script['path']})")
-                    
-                    if self.kwargs.get('execute_scripts', False):
-                        logger.info("Executing generated scripts...")
-                        script_results = await self.script_generator.execute_scripts(scripts)
-                        for result in script_results:
-                            status = result['result']['status']
-                            script_name = result['script']['name']
-                            logger.info(f"Script {script_name} execution: {status}")
-
-            # Show completion message
-            if RICH_AVAILABLE and not self.quiet and not self.no_gui:
-                console.print(Panel.fit("Scan completed successfully!", 
-                                          border_style="green", 
-                                          title="AI_MAL"))
-            else:
-                logger.info("Scan completed successfully!")
-
-            return scan_results
-
-        except Exception as e:
-            logger.error(f"Error during scan: {str(e)}")
-            if RICH_AVAILABLE and not self.quiet:
-                console.print(Panel.fit(f"Error: {str(e)}", 
-                                          border_style="red", 
-                                          title="AI_MAL Error"))
-            raise
+            # Get available network interfaces
+            interfaces = self._get_network_interfaces()
+            if not interfaces:
+                self.logger.error("No network interfaces found")
+                return {"error": "No network interfaces found"}
             
+            # Create scan configuration
+            scan_config = {
+                "target": self.target,
+                "interface": interfaces[0],  # Use first available interface
+                "scan_type": "aggressive",
+                "ports": "1-65535",
+                "services": True,
+                "version_detection": True,
+                "os_detection": True,
+                "vulnerability_scan": True,
+                "timeout": 300,  # 5 minutes timeout
+                "retries": 3,
+                "host_timeout": "5m",
+                "min_rate": 1000,
+                "max_retries": 3,
+                "min_parallelism": 10,
+                "max_parallelism": 100,
+                "min_hostgroup": 1,
+                "max_hostgroup": 100,
+                "scan_delay": 0,
+                "max_scan_delay": 0,
+                "initial_rtt_timeout": 1000,
+                "min_rtt_timeout": 100,
+                "max_rtt_timeout": 10000,
+                "max_retries": 3,
+                "host_timeout": "5m",
+                "script_timeout": "5m",
+                "scanflags": "SYN",
+                "ip_options": "",
+                "ttl": 0,
+                "spoof_mac": "",
+                "badsum": False,
+                "adler32": False,
+                "version_intensity": 9,
+                "light": False,
+                "version_all": True,
+                "version_trace": False,
+                "sC": True,  # Default scripts
+                "sV": True,  # Version detection
+                "O": True,   # OS detection
+                "A": True,   # Aggressive scan
+                "T4": True,  # Timing template (aggressive)
+                "n": False,  # No DNS resolution
+                "R": False,  # Never do DNS resolution
+                "PE": True,  # ICMP echo
+                "PP": True,  # ICMP timestamp
+                "PM": True,  # ICMP netmask
+                "PS": True,  # TCP SYN ping
+                "PA": True,  # TCP ACK ping
+                "PU": True,  # UDP ping
+                "PY": True,  # SCTP INIT ping
+                "PO": True,  # IP protocol ping
+                "PR": True,  # ARP ping
+                "disable_arp_ping": False,
+                "traceroute": True,
+                "reason": True,
+                "stats_every": "10s",
+                "packet_trace": True,
+                "iflist": True,
+                "append_output": True,
+                "resume": False,
+                "stylesheet": "",
+                "webxml": "",
+                "no_stylesheet": True,
+                "privileged": True,
+                "unprivileged": False,
+                "send_eth": True,
+                "send_ip": False,
+                "nmap_path": "nmap",
+                "datadir": "",
+                "servicedb": "",
+                "versiondb": "",
+                "min_hostgroup": 1,
+                "max_hostgroup": 100,
+                "min_parallelism": 10,
+                "max_parallelism": 100,
+                "min_rtt_timeout": 100,
+                "max_rtt_timeout": 10000,
+                "initial_rtt_timeout": 1000,
+                "max_retries": 3,
+                "host_timeout": "5m",
+                "scan_delay": 0,
+                "max_scan_delay": 0,
+                "min_rate": 1000,
+                "max_rate": 0,
+                "defeat_rst_ratelimit": True,
+                "defeat_icmp_ratelimit": True,
+                "nsock_engine": "epoll",
+                "proxies": "",
+                "badsum": False,
+                "adler32": False,
+                "version_intensity": 9,
+                "light": False,
+                "version_all": True,
+                "version_trace": False,
+                "sC": True,
+                "sV": True,
+                "O": True,
+                "A": True,
+                "T4": True,
+                "n": False,
+                "R": False,
+                "PE": True,
+                "PP": True,
+                "PM": True,
+                "PS": True,
+                "PA": True,
+                "PU": True,
+                "PY": True,
+                "PO": True,
+                "PR": True,
+                "disable_arp_ping": False,
+                "traceroute": True,
+                "reason": True,
+                "stats_every": "10s",
+                "packet_trace": True,
+                "iflist": True,
+                "append_output": True,
+                "resume": False,
+                "stylesheet": "",
+                "webxml": "",
+                "no_stylesheet": True,
+                "privileged": True,
+                "unprivileged": False,
+                "send_eth": True,
+                "send_ip": False,
+                "nmap_path": "nmap",
+                "datadir": "",
+                "servicedb": "",
+                "versiondb": ""
+            }
+            
+            # Initialize scanner
+            scanner = AdaptiveScanner(self.target)
+            
+            # Run scan
+            self.logger.info(f"Starting scan of {self.target} using interface {interfaces[0]}")
+            scan_results = await scanner.scan(**scan_config)
+            
+            # Analyze results
+            if scan_results:
+                analysis = await self._analyze_results(scan_results)
+                self._display_ai_results(analysis)
+                return scan_results
+            else:
+                self.logger.error("Scan failed to return results")
+                return {"error": "Scan failed to return results"}
+                
+        except Exception as e:
+            self.logger.error(f"Error during scan: {str(e)}")
+            return {"error": str(e)}
+            
+    def _get_network_interfaces(self) -> List[str]:
+        """Get available network interfaces."""
+        try:
+            import netifaces
+            interfaces = netifaces.interfaces()
+            # Filter out loopback and docker interfaces
+            valid_interfaces = [
+                iface for iface in interfaces 
+                if not iface.startswith(('lo', 'docker', 'br-', 'veth'))
+            ]
+            return valid_interfaces
+        except Exception as e:
+            self.logger.error(f"Error getting network interfaces: {str(e)}")
+            return []
+        
     def _show_banner(self):
         """Show the AI_MAL welcome banner"""
         banner = """
@@ -484,27 +429,36 @@ class AI_MAL:
             
         console.print(table)
         
-    def _display_ai_results(self, analysis: Dict[str, Any]):
-        """Display AI analysis results in a formatted box"""
+    def _display_ai_results(self, analysis: Dict[str, Any]) -> None:
+        """Display AI analysis results in a formatted box."""
         try:
-            # Create a custom box for AI results
-            custom_box = box.Box(
-                title="AI Analysis Results",
-                title_align="center",
-                padding=1,
-                box_style="rounded"
-            )
+            if not analysis:
+                self.logger.warning("No AI analysis results to display")
+                return
+
+            console = Console()
             
-            # Add analysis content
-            custom_box.add_row("Target Analysis", analysis.get('target_analysis', 'No analysis available'))
-            custom_box.add_row("Vulnerabilities", analysis.get('vulnerabilities', 'No vulnerabilities found'))
-            custom_box.add_row("Recommendations", analysis.get('recommendations', 'No recommendations available'))
+            # Create a table for the results
+            table = Table(show_header=True, header_style="bold magenta", box=ROUNDED)
+            table.add_column("Category", style="cyan")
+            table.add_column("Details", style="white")
+
+            # Add rows based on analysis content
+            if "target_analysis" in analysis:
+                table.add_row("Target Analysis", analysis["target_analysis"])
+            if "vulnerabilities" in analysis:
+                table.add_row("Vulnerabilities", analysis["vulnerabilities"])
+            if "recommendations" in analysis:
+                table.add_row("Recommendations", analysis["recommendations"])
+            if "model_used" in analysis:
+                table.add_row("Model Used", analysis["model_used"])
+
+            # Display the table in a panel
+            console.print(Panel(table, title="AI Analysis Results", border_style="green"))
             
-            # Print the box
-            console.print(custom_box)
         except Exception as e:
             self.logger.error(f"Error displaying AI results: {str(e)}")
-            console.print(f"Error displaying AI results: {str(e)}")
+            console.print(f"[red]Error displaying AI results: {str(e)}[/red]")
         
     def _display_exploits(self, exploits: List[Dict[str, Any]]):
         """Display found Metasploit exploits in a table"""
@@ -1278,8 +1232,8 @@ class AI_MAL:
                 return True
 
             # Try to use fallback model
-            if "gemma3:1b" in available_models:
-                self.primary_model = "gemma3:1b"
+            if "gemma:1b" in available_models:
+                self.primary_model = "gemma:1b"
                 self.logger.info(f"Using fallback model: {self.primary_model}")
                 return True
 
@@ -1292,8 +1246,8 @@ class AI_MAL:
                 return True
 
             # Try to pull fallback model
-            if self._pull_model("gemma3:1b"):
-                self.primary_model = "gemma3:1b"
+            if self._pull_model("gemma:1b"):
+                self.primary_model = "gemma:1b"
                 return True
 
             self.logger.error("Failed to initialize any AI models")
@@ -1303,21 +1257,39 @@ class AI_MAL:
             self.logger.error(f"Error initializing AI models: {str(e)}")
             return False
 
+    def _check_ollama_service(self) -> bool:
+        """Check if Ollama service is running"""
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags")
+            return response.status_code == 200
+        except Exception as e:
+            self.logger.error(f"Error checking Ollama service: {str(e)}")
+            return False
+
+    def _get_available_models(self) -> List[str]:
+        """Get list of available Ollama models"""
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags")
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                return [model["name"] for model in models]
+            return []
+        except Exception as e:
+            self.logger.error(f"Error getting available models: {str(e)}")
+            return []
+
     def _pull_model(self, model_name: str) -> bool:
         """Pull a model from Ollama"""
         try:
+            import requests
             self.logger.info(f"Pulling model: {model_name}")
-            result = subprocess.run(
-                ["ollama", "pull", model_name],
-                capture_output=True,
-                text=True
+            response = requests.post(
+                "http://localhost:11434/api/pull",
+                json={"name": model_name}
             )
-            if result.returncode == 0:
-                self.logger.info(f"Successfully pulled model: {model_name}")
-                return True
-            else:
-                self.logger.error(f"Failed to pull model {model_name}: {result.stderr}")
-                return False
+            return response.status_code == 200
         except Exception as e:
             self.logger.error(f"Error pulling model {model_name}: {str(e)}")
             return False

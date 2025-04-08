@@ -1228,7 +1228,7 @@ end
             return self._generate_fallback_script("port_scanner", "ruby")
 
     def _generate_ruby_service_enum(self, scan_results: Dict[str, Any]) -> Dict[str, Any]:
-        """
+        r"""
         Generate Ruby service enumeration script
         """
         try:
@@ -1424,11 +1424,11 @@ end
             return self._generate_fallback_script("vuln_scanner", "ruby")
 
     def _create_ruby_service_enumerator(self, scan_results: Dict[str, Any]) -> str:
-        """Create Ruby service enumerator script."""
+        r"""Create Ruby service enumerator script."""
         target = scan_results.get('hosts', [{}])[0].get('addresses', [{}])[0].get('addr', '')
         port_list = [port.get('portid') for port in scan_results.get('hosts', [{}])[0].get('ports', [])]
         
-        return f"""#!/usr/bin/env ruby
+        return fr"""#!/usr/bin/env ruby
 
 require 'socket'
 require 'net/http'
@@ -1474,13 +1474,13 @@ end
 """
 
     def _create_python_port_scanner(self, scan_results: Dict[str, Any]) -> str:
-        """Create Python port scanner script."""
+        r"""Create Python port scanner script."""
         try:
             # Extract values from scan results
             target = scan_results.get('hosts', [{}])[0].get('addresses', [{}])[0].get('addr', '')
             port_list = [port.get('portid') for port in scan_results.get('hosts', [{}])[0].get('ports', [])]
             
-            return f"""#!/usr/bin/env python3
+            return fr"""#!/usr/bin/env python3
 import socket
 import sys
 import logging
