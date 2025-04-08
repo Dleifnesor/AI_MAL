@@ -754,66 +754,44 @@ EOF
 # Make AI_MAL immediately available in current session
 echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
 
-# Setup for root user
-if [ "$(id -u)" = "0" ]; then
-    # Add to root's .bashrc
-    cat >> /root/.bashrc << EOF
-
-# AI_MAL environment setup
-export PATH="$INSTALL_DIR/venv/bin:\$PATH"
-alias AI_MAL='python -m AI_MAL.main'
-EOF
-fi
-
-# Setup for regular user if running with sudo
-if [ ! -z "$SUDO_USER" ]; then
-    # Add to user's .bashrc
-    cat >> "$REAL_HOME/.bashrc" << EOF
-
-# AI_MAL environment setup
-export PATH="$INSTALL_DIR/venv/bin:\$PATH"
-alias AI_MAL='python -m AI_MAL.main'
-EOF
-    
-    # Add to user's .bash_profile if it exists
-    [ -f "$REAL_HOME/.bash_profile" ] && cat >> "$REAL_HOME/.bash_profile" << EOF
-
-# AI_MAL environment setup
-export PATH="$INSTALL_DIR/venv/bin:\$PATH"
-alias AI_MAL='python -m AI_MAL.main'
-EOF
-    
-    # Add to user's .bash_aliases if it exists
-    [ -f "$REAL_HOME/.bash_aliases" ] && cat >> "$REAL_HOME/.bash_aliases" << EOF
-
-# AI_MAL environment setup
-export PATH="$INSTALL_DIR/venv/bin:\$PATH"
-alias AI_MAL='python -m AI_MAL.main'
-EOF
-    
-    # Set ownership of the files
-    chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
-    chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
-    chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
-fi
-
-# Create system-wide profile script
-echo -e "${YELLOW}>>> Creating system-wide profile script...${NC}"
-cat > /etc/profile.d/ai_mal.sh << EOF
+# Create a simple executable in /usr/bin
+echo -e "${YELLOW}>>> Creating system-wide executable...${NC}"
+cat > /usr/bin/AI_MAL << 'EOF'
 #!/bin/bash
-# AI_MAL system-wide environment setup
-export PATH="$INSTALL_DIR/venv/bin:\$PATH"
-alias AI_MAL='python -m AI_MAL.main'
+# Simple AI_MAL executor
+cd /home/kali/AI_MAL
+source venv/bin/activate
+python -m AI_MAL.main "$@"
 EOF
 
-chmod 644 /etc/profile.d/ai_mal.sh
+chmod +x /usr/bin/AI_MAL
 
-# Export current function to make it immediately available
-export PATH="$INSTALL_DIR/venv/bin:$PATH"
-alias AI_MAL='python -m AI_MAL.main'
+# Create a backup executable in /usr/local/bin
+echo -e "${YELLOW}>>> Creating backup executable...${NC}"
+cat > /usr/local/bin/AI_MAL << 'EOF'
+#!/bin/bash
+# Backup AI_MAL executor
+cd /home/kali/AI_MAL
+source venv/bin/activate
+python -m AI_MAL.main "$@"
+EOF
 
-# Source the profile script to make changes take effect immediately
-source /etc/profile.d/ai_mal.sh
+chmod +x /usr/local/bin/AI_MAL
+
+# Create a direct executable in the installation directory
+echo -e "${YELLOW}>>> Creating local executable...${NC}"
+cat > "$INSTALL_DIR/AI_MAL" << 'EOF'
+#!/bin/bash
+# Local AI_MAL executor
+cd "$(dirname "$0")"
+source venv/bin/activate
+python -m AI_MAL.main "$@"
+EOF
+
+chmod +x "$INSTALL_DIR/AI_MAL"
+
+# Add to PATH for current session
+export PATH="$INSTALL_DIR:$PATH"
 
 # Test the nmap functionality
 echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
