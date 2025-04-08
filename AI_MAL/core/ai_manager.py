@@ -36,9 +36,6 @@ class AIManager:
 
     async def list_available_models(self) -> List[str]:
         """List all available models in Ollama"""
-        if self.available_models:
-            return self.available_models
-            
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.ollama_host}/api/tags") as response:
@@ -48,8 +45,15 @@ class AIManager:
                     
                     data = await response.json()
                     models = [model["name"] for model in data.get("models", [])]
-                    self.available_models = models
-                    return models
+                    model_names = []
+                    
+                    # Store both the original name and lowercase name for comparison purposes
+                    for model in models:
+                        model_names.append(model)
+                        
+                    self.available_models = model_names
+                    logger.info(f"Available models: {', '.join(model_names[:5])}{'...' if len(model_names) > 5 else ''}")
+                    return model_names
         except Exception as e:
             logger.warning(f"Failed to list Ollama models: {str(e)}")
             return []
@@ -140,43 +144,85 @@ Format your response clearly using these exact headings.
         """
         # Get list of available models
         available_models = await self.list_available_models()
+        available_models_lower = [m.lower() for m in available_models]
         logger.debug(f"Available models: {available_models}")
         
         # Primary model attempt
         try:
-            if self.primary_model in available_models:
+            # Check using case-insensitive comparison
+            is_available = self.primary_model in available_models or self.primary_model.lower() in available_models_lower
+            
+            if is_available:
                 logger.info(f"Trying primary model: {self.primary_model}")
-                result = await self._try_model(self.primary_model, prompt)
+                
+                # Find the actual model name with correct case
+                actual_model_name = self.primary_model
+                if self.primary_model not in available_models:
+                    idx = available_models_lower.index(self.primary_model.lower())
+                    actual_model_name = available_models[idx]
+                    logger.info(f"Using case-corrected model name: {actual_model_name}")
+                
+                result = await self._try_model(actual_model_name, prompt)
                 if result:
-                    return result, self.primary_model
+                    return result, actual_model_name
                 logger.warning(f"Primary model {self.primary_model} failed to provide analysis")
             else:
                 logger.warning(f"Primary model {self.primary_model} not available in Ollama")
+                logger.info(f"Available models: {', '.join(available_models[:5])}{'...' if len(available_models) > 5 else ''}")
         except Exception as e:
             logger.warning(f"Error with primary model: {str(e)}")
         
         # Fallback model attempt
         try:
-            if self.fallback_model and self.fallback_model in available_models:
+            # Check using case-insensitive comparison
+            is_available = (self.fallback_model and 
+                           (self.fallback_model in available_models or 
+                            self.fallback_model.lower() in available_models_lower))
+            
+            if is_available:
                 logger.info(f"Trying fallback model: {self.fallback_model}")
-                result = await self._try_model(self.fallback_model, prompt)
+                
+                # Find the actual model name with correct case
+                actual_model_name = self.fallback_model
+                if self.fallback_model not in available_models:
+                    idx = available_models_lower.index(self.fallback_model.lower())
+                    actual_model_name = available_models[idx]
+                    logger.info(f"Using case-corrected model name: {actual_model_name}")
+                
+                result = await self._try_model(actual_model_name, prompt)
                 if result:
-                    return result, self.fallback_model
+                    return result, actual_model_name
                 logger.warning(f"Fallback model {self.fallback_model} failed to provide analysis")
             else:
-                logger.warning(f"Fallback model {self.fallback_model} not available in Ollama")
+                if not self.fallback_model:
+                    logger.warning("No fallback model configured")
+                else:
+                    logger.warning(f"Fallback model {self.fallback_model} not available in Ollama")
         except Exception as e:
             logger.warning(f"Error with fallback model: {str(e)}")
         
         # Backup models attempt
         for backup_model in self.backup_models:
             try:
-                if backup_model in available_models:
+                # Check using case-insensitive comparison
+                is_available = backup_model in available_models or backup_model.lower() in available_models_lower
+                
+                if is_available:
                     logger.info(f"Trying backup model: {backup_model}")
-                    result = await self._try_model(backup_model, prompt)
+                    
+                    # Find the actual model name with correct case
+                    actual_model_name = backup_model
+                    if backup_model not in available_models:
+                        idx = available_models_lower.index(backup_model.lower())
+                        actual_model_name = available_models[idx]
+                        logger.info(f"Using case-corrected model name: {actual_model_name}")
+                    
+                    result = await self._try_model(actual_model_name, prompt)
                     if result:
-                        return result, backup_model
+                        return result, actual_model_name
                     logger.warning(f"Backup model {backup_model} failed to provide analysis")
+                else:
+                    logger.debug(f"Backup model {backup_model} not available in Ollama")
             except Exception as e:
                 logger.warning(f"Error with backup model {backup_model}: {str(e)}")
                 continue
