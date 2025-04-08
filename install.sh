@@ -755,11 +755,28 @@ EOF
 echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
 if [ ! -z "$SUDO_USER" ]; then
     # Add to user's .bashrc
-    echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bashrc"
+    cat >> "$REAL_HOME/.bashrc" << EOF
+
+# AI_MAL environment setup
+export PATH="$INSTALL_DIR/venv/bin:\$PATH"
+alias AI_MAL='python -m AI_MAL.main'
+EOF
+    
     # Add to user's .bash_profile if it exists
-    [ -f "$REAL_HOME/.bash_profile" ] && echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bash_profile"
+    [ -f "$REAL_HOME/.bash_profile" ] && cat >> "$REAL_HOME/.bash_profile" << EOF
+
+# AI_MAL environment setup
+export PATH="$INSTALL_DIR/venv/bin:\$PATH"
+alias AI_MAL='python -m AI_MAL.main'
+EOF
+    
     # Add to user's .bash_aliases if it exists
-    [ -f "$REAL_HOME/.bash_aliases" ] && echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> "$REAL_HOME/.bash_aliases"
+    [ -f "$REAL_HOME/.bash_aliases" ] && cat >> "$REAL_HOME/.bash_aliases" << EOF
+
+# AI_MAL environment setup
+export PATH="$INSTALL_DIR/venv/bin:\$PATH"
+alias AI_MAL='python -m AI_MAL.main'
+EOF
     
     # Set ownership of the files
     chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
@@ -767,8 +784,20 @@ if [ ! -z "$SUDO_USER" ]; then
     chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
 fi
 
+# Create system-wide profile script
+echo -e "${YELLOW}>>> Creating system-wide profile script...${NC}"
+cat > /etc/profile.d/ai_mal.sh << EOF
+#!/bin/bash
+# AI_MAL system-wide environment setup
+export PATH="$INSTALL_DIR/venv/bin:\$PATH"
+alias AI_MAL='python -m AI_MAL.main'
+EOF
+
+chmod 644 /etc/profile.d/ai_mal.sh
+
 # Export current function to make it immediately available
 export PATH="$INSTALL_DIR/venv/bin:$PATH"
+alias AI_MAL='python -m AI_MAL.main'
 
 # Test the nmap functionality
 echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
