@@ -32,13 +32,13 @@ progress_bar() {
     local size=40
     local count=0
     local progress=0
-    local step=$((100 / $size))
+    local step=$((duration / size))
     
     printf "${prefix} ["
     while [ $count -lt $size ]; do
         printf "${BLUE}▓${NC}"
         count=$((count + 1))
-        sleep $(echo "scale=4; ${duration}/${size}" | bc)
+        sleep $step
     done
     printf "] ${GREEN}100%%${NC}\n"
 }
@@ -66,10 +66,11 @@ animated_progress() {
     local duration="$2"
     local size=40
     local count=0
+    local step=$((duration / size))
     
     echo -ne "${message} [${NC}"
     while [ $count -lt $size ]; do
-        sleep $(echo "scale=4; ${duration}/${size}" | bc)
+        sleep $step
         count=$((count + 1))
         progress=$((count * 100 / size))
         
@@ -147,7 +148,7 @@ if [ -f /etc/os-release ]; then
             "curl" "wget" "build-essential" "libssl-dev" "libffi-dev" "python3-nmap" 
             "smbclient" "libpcap-dev" "libnetfilter-queue-dev" "libnetfilter-queue1" 
             "libnetfilter-conntrack-dev" "libnetfilter-conntrack3" "python3-dev" 
-            "python3-setuptools" "python3-wheel" "hping3" "apache2-utils"
+            "python3-setuptools" "python3-wheel" "hping3" "apache2-utils" "bc"
         )
 
         total=${#packages[@]}
