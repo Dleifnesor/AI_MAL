@@ -242,6 +242,18 @@ EOF
 # Make the wrapper executable
 chmod +x /usr/local/bin/AI_MAL
 
+# Double-check that the wrapper was created properly
+if [ ! -x /usr/local/bin/AI_MAL ]; then
+    echo -e "${RED}>>> Error: Failed to create executable wrapper at /usr/local/bin/AI_MAL${NC}"
+    echo -e "${YELLOW}>>> Attempting to fix permissions...${NC}"
+    cat > /usr/local/bin/AI_MAL << EOF
+#!/bin/bash
+# AI_MAL wrapper script
+cd "$INSTALL_DIR" && "$INSTALL_DIR/venv/bin/python" -m AI_MAL.main "\$@"
+EOF
+    chmod +x /usr/local/bin/AI_MAL
+fi
+
 # Add to system PATH and make it persist across reboots
 echo -e "${YELLOW}>>> Creating systemd service for persistence...${NC}"
 
@@ -297,9 +309,159 @@ chmod 0440 /etc/sudoers.d/ai_mal
 ln -sf /usr/local/bin/AI_MAL /usr/bin/AI_MAL 2>/dev/null || true
 
 # Make sure AI_MAL is in the PATH
-if ! grep -q "PATH=" ~/.bashrc; then
-    echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+if ! grep -q "PATH=.*\/usr\/local\/bin" ~/.bashrc; then
+    echo 'export PATH="/usr/local/bin:/usr/bin:$PATH"' >> ~/.bashrc
 fi
+
+# Also update the PATH for the current session
+export PATH="/usr/local/bin:/usr/bin:$PATH"
+
+# Create a bash completion script for AI_MAL
+echo -e "${YELLOW}>>> Creating bash completion for AI_MAL...${NC}"
+cat > /etc/bash_completion.d/AI_MAL << EOF
+#!/bin/bash
+# Bash completion for AI_MAL
+
+_ai_mal_completions()
+{
+    local cur prev opts
+    COMPREPLY=()
+    cur="\${COMP_WORDS[COMP_CWORD]}"
+    prev="\${COMP_WORDS[COMP_CWORD-1]}"
+    
+    # Basic options
+    opts="--help --stealth --continuous --msf --version --os --services --vuln --dos --exfil --implant --ai-analysis --full-auto --iterations --custom-vuln --output-dir --output-format --quiet --no-gui --log-level --log-file"
+    
+    # Complete with options
+    if [[ \${cur} == -* ]]; then
+        COMPREPLY=( \$(compgen -W "\${opts}" -- \${cur}) )
+        return 0
+    fi
+}
+
+complete -F _ai_mal_completions AI_MAL
+EOF
+
+# Make the completion script executable
+chmod +x /etc/bash_completion.d/AI_MAL
+
+# Source the completion script immediately
+source /etc/bash_completion.d/AI_MAL 2>/dev/null || true
+
+# Create a temporary alias for the current shell session
+echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
+alias AI_MAL="/usr/local/bin/AI_MAL"
+echo "alias AI_MAL='/usr/local/bin/AI_MAL'" >> ~/.bash_aliases
+source ~/.bash_aliases 2>/dev/null || true
+
+# Add the alias to .bashrc of the user who ran sudo
+if [ ! -z "$SUDO_USER" ]; then
+  REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  if [ -f "$REAL_HOME/.bashrc" ]; then
+    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bashrc"; then
+      echo "alias AI_MAL='/usr/local/bin/AI_MAL'" >> "$REAL_HOME/.bashrc"
+    fi
+  fi
+fi
+
+# Create a shell wrapper that will be used for current session
+echo '#!/bin/bash' > /tmp/AI_MAL_wrapper
+echo "exec /usr/local/bin/AI_MAL \"\$@\"" >> /tmp/AI_MAL_wrapper
+chmod +x /tmp/AI_MAL_wrapper
+cp /tmp/AI_MAL_wrapper /usr/bin/AI_MAL
+rm /tmp/AI_MAL_wrapper
+
+# Create a shell script in /usr/bin that can't be overridden by PATH issues
+echo -e "${YELLOW}>>> Creating unambiguous binary in /usr/bin...${NC}"
+cat > /usr/bin/AI_MAL << EOF
+#!/bin/bash
+# Direct AI_MAL executor
+exec "/usr/local/bin/AI_MAL" "\$@"
+EOF
+chmod 755 /usr/bin/AI_MAL
+
+# If run with sudo, setup the environment for the actual user too
+if [ ! -z "$SUDO_USER" ]; then
+  REAL_USER="$SUDO_USER"
+  REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+  
+  echo -e "${YELLOW}>>> Setting up environment for user $REAL_USER...${NC}"
+  
+  # Ensure user has access to the AI_MAL directories
+  chown -R "$REAL_USER" "$INSTALL_DIR"
+  
+  # Add the AI_MAL alias to user's bash_profile or bashrc
+  if [ -f "$REAL_HOME/.bash_profile" ]; then
+    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bash_profile"; then
+      echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bash_profile"
+    fi
+  fi
+  
+  if [ -f "$REAL_HOME/.bashrc" ]; then
+    if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bashrc"; then
+      echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bashrc"
+    fi
+  fi
+  
+  # Create .bash_aliases if it doesn't exist
+  if [ ! -f "$REAL_HOME/.bash_aliases" ]; then
+    touch "$REAL_HOME/.bash_aliases"
+    chown "$REAL_USER" "$REAL_HOME/.bash_aliases"
+  fi
+  
+  # Add alias to .bash_aliases
+  if ! grep -q "alias AI_MAL=" "$REAL_HOME/.bash_aliases"; then
+    echo "alias AI_MAL='/usr/bin/AI_MAL'" >> "$REAL_HOME/.bash_aliases"
+  fi
+
+  # Make all changes owned by the real user
+  chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
+  chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
+  chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+fi
+
+# Create a global profile script to ensure AI_MAL is always available
+echo -e "${YELLOW}>>> Creating global profile to ensure AI_MAL is always available...${NC}"
+cat > /etc/profile.d/ai_mal.sh << EOL
+#!/bin/bash
+# Global profile for AI_MAL
+export PATH="/usr/bin:/usr/local/bin:\$PATH"
+# Make sure the AI_MAL command is always available
+if [ ! -x "/usr/bin/AI_MAL" ] && [ -x "/usr/local/bin/AI_MAL" ]; then
+  alias AI_MAL="/usr/local/bin/AI_MAL"
+fi
+EOL
+chmod 644 /etc/profile.d/ai_mal.sh
+
+# Create a symlink in /bin as a fallback for other shells
+echo -e "${YELLOW}>>> Creating symlink in /bin for maximum compatibility...${NC}"
+ln -sf /usr/bin/AI_MAL /bin/AI_MAL 2>/dev/null || true
+
+# Export current function to make it immediately available
+export -f AI_MAL 2>/dev/null || true
+
+# Define a shell function that will be immediately available in this shell
+echo -e "${YELLOW}>>> Creating shell function for immediate use...${NC}"
+# This is a trick that makes the function available in the current shell
+cat > /tmp/ai_mal_function << EOF
+function AI_MAL() {
+  /usr/bin/AI_MAL "\$@"
+}
+EOF
+# Source the function in the current shell
+. /tmp/ai_mal_function
+# If being run with sudo, try to make it available to the real user's shell too
+if [ ! -z "$SUDO_USER" ]; then
+  # Try using su to add the function to the user's shell
+  su - "$SUDO_USER" -c "cat > ~/.ai_mal_function << EOF
+function AI_MAL() {
+  /usr/bin/AI_MAL \"\\\$@\"
+}
+EOF
+  echo '. ~/.ai_mal_function' >> ~/.bashrc
+  . ~/.ai_mal_function" 2>/dev/null || true
+fi
+rm /tmp/ai_mal_function
 
 echo -e "${GREEN}>>> Installation complete!${NC}"
 echo -e "${GREEN}>>> You can now run AI_MAL from anywhere with: AI_MAL <target> [options]${NC}"
