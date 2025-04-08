@@ -17,8 +17,32 @@ logger = logging.getLogger(__name__)
 
 class ScriptGenerator:
     def __init__(self):
+        """Initialize the script generator"""
+        # Get scripts directory from environment variable or use default
         self.scripts_dir = os.getenv('GENERATED_SCRIPTS_DIR', 'generated_scripts')
-        os.makedirs(self.scripts_dir, exist_ok=True)
+        
+        # Ensure scripts_dir is an absolute path if possible
+        if not os.path.isabs(self.scripts_dir) and 'INSTALL_DIR' in os.environ:
+            self.scripts_dir = os.path.join(os.environ['INSTALL_DIR'], self.scripts_dir)
+        
+        # Create scripts directory if it doesn't exist
+        try:
+            os.makedirs(self.scripts_dir, exist_ok=True)
+            logger.info(f"Using scripts directory: {self.scripts_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create scripts directory: {str(e)}")
+            # Fall back to current directory/generated_scripts if we can't create the configured one
+            fallback_dir = os.path.join(os.getcwd(), 'generated_scripts')
+            try:
+                os.makedirs(fallback_dir, exist_ok=True)
+                self.scripts_dir = fallback_dir
+                logger.info(f"Using fallback scripts directory: {self.scripts_dir}")
+            except Exception as fallback_error:
+                logger.error(f"Failed to create fallback scripts directory: {str(fallback_error)}")
+                # Last resort, just use the current directory
+                self.scripts_dir = os.getcwd()
+                logger.warning(f"Using current directory for scripts: {self.scripts_dir}")
+        
         # Check for required tools
         self._check_dependencies()
         
@@ -40,11 +64,16 @@ class ScriptGenerator:
         self,
         scan_results: Dict[str, Any],
         script_type: str = 'python'
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
         Generate custom exploitation scripts based on scan results
+        Returns a dictionary where keys are script paths and values are script details
         """
         try:
+            print("\n" + "="*80)
+            print(f"Generating {script_type.upper()} scripts for target: {scan_results.get('scan_info', {}).get('target', 'unknown')}")
+            print("="*80)
+            
             scripts = []
             
             if script_type == 'python':
@@ -54,24 +83,80 @@ class ScriptGenerator:
             elif script_type == 'ruby':
                 scripts.extend(await self._generate_ruby_scripts(scan_results))
             
-            return scripts
+            # Display a summary of the generated scripts
+            print("\n" + "-"*40)
+            print(f"Generated {len(scripts)} {script_type.upper()} scripts:")
+            print("-"*40)
+            for script in scripts:
+                print(f"- {script['name']}: {script['description']}")
+                print(f"  Path: {script['path']}")
+                
+                # Display script contents with syntax highlighting if possible
+                try:
+                    from pygments import highlight
+                    from pygments.lexers import get_lexer_for_filename
+                    from pygments.formatters import TerminalFormatter
+                    
+                    with open(script['path'], 'r') as f:
+                        content = f.read()
+                    
+                    lexer = get_lexer_for_filename(script['path'])
+                    highlighted = highlight(content, lexer, TerminalFormatter())
+                    
+                    print("\nScript Contents:")
+                    print(highlighted)
+                except ImportError:
+                    # Fallback if pygments is not available
+                    with open(script['path'], 'r') as f:
+                        content = f.read()
+                    
+                    print("\nScript Contents:")
+                    print(content[:500] + "..." if len(content) > 500 else content)
+                except Exception as e:
+                    logger.error(f"Error displaying script contents: {str(e)}")
+                
+                print("-"*40)
+            
+            # Convert the list of scripts to a dictionary indexed by path
+            script_dict = {script['path']: script for script in scripts}
+            return script_dict
             
         except Exception as e:
             logger.error(f"Error generating scripts: {str(e)}")
-            return []
+            print(f"Error generating scripts: {str(e)}")
+            return {}
 
-    async def execute_scripts(self, scripts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def execute_scripts(self, scripts: Dict[str, Dict[str, Any]], script_type: str = None) -> List[Dict[str, Any]]:
         """
         Execute generated scripts
+        
+        Args:
+            scripts: Dictionary of scripts (path -> script details) from generate_scripts
+            script_type: Optional script type filter (python, bash, ruby)
+            
+        Returns:
+            List of execution results
         """
         try:
+            print("\n" + "="*80)
+            print("Executing Generated Scripts")
+            print("="*80)
+            
             results = []
             
-            for script in scripts:
+            # Convert dictionary to list of scripts for processing
+            script_list = list(scripts.values())
+            
+            # Filter by script type if specified
+            if script_type:
+                script_list = [s for s in script_list if s.get('type') == script_type]
+            
+            for script in script_list:
                 # Skip scripts with invalid paths
                 script_path = script.get('path')
                 if not script_path or not os.path.exists(script_path):
                     logger.warning(f"Script path not found: {script_path}")
+                    print(f"⚠️  Script path not found: {script_path}")
                     results.append({
                         "script": script,
                         "result": {
@@ -85,17 +170,100 @@ class ScriptGenerator:
                 os.chmod(script_path, 0o755)
                 
                 # Execute script
-                logger.info(f"Executing script: {script['name']} ({script['type']})")
-                result = await self._execute_script(script)
-                results.append({
-                    "script": script,
-                    "result": result
-                })
+                print("\n" + "-"*40)
+                print(f"🚀 Executing script: {script['name']} ({script['type']})")
+                print(f"📄 Path: {script['path']}")
+                print("-"*40)
+                
+                # Display animated "Running..." message
+                import threading
+                import time
+                
+                running = True
+                
+                def animation():
+                    animation_chars = "|/-\\"
+                    idx = 0
+                    while running:
+                        print(f"\rRunning {animation_chars[idx % len(animation_chars)]}", end="")
+                        idx += 1
+                        time.sleep(0.1)
+                
+                # Start animation in a separate thread
+                animation_thread = threading.Thread(target=animation)
+                animation_thread.daemon = True
+                animation_thread.start()
+                
+                try:
+                    # Execute script and capture result
+                    result = await self._execute_script(script)
+                    
+                    # Stop animation
+                    running = False
+                    animation_thread.join(0.5)
+                    
+                    # Clear the animation line
+                    print("\r" + " " * 20 + "\r", end="")
+                    
+                    # Print result status
+                    status = result.get('status', 'unknown')
+                    if status == 'success':
+                        print(f"✅ Script executed successfully (took {result.get('duration', 0):.2f} seconds)")
+                    else:
+                        print(f"❌ Script execution failed: {status}")
+                        if 'error' in result:
+                            print(f"Error: {result['error']}")
+                    
+                    # Print script output
+                    if 'output' in result and result['output']:
+                        print("\nScript Output:")
+                        print("-"*40)
+                        output = result['output']
+                        # Limit output to prevent flooding the terminal
+                        if len(output) > 2000:
+                            print(output[:2000] + "...\n(output truncated)")
+                        else:
+                            print(output)
+                    
+                    results.append({
+                        "script": script,
+                        "result": result
+                    })
+                    
+                except Exception as e:
+                    # Stop animation
+                    running = False
+                    animation_thread.join(0.5)
+                    
+                    print(f"\r❌ Error executing script: {str(e)}")
+                    results.append({
+                        "script": script,
+                        "result": {
+                            "status": "error",
+                            "error": str(e),
+                            "duration": 0
+                        }
+                    })
+            
+            # Print summary of all results
+            print("\n" + "="*40)
+            print("Script Execution Summary")
+            print("="*40)
+            for result in results:
+                script_name = result['script']['name']
+                status = result['result']['status']
+                duration = result.get('result', {}).get('duration', 0)
+                
+                if status == 'success':
+                    print(f"✅ {script_name}: Success ({duration:.2f}s)")
+                else:
+                    print(f"❌ {script_name}: {status.capitalize()}")
             
             return results
             
         except Exception as e:
             logger.error(f"Error executing scripts: {str(e)}")
+            print(f"Error executing scripts: {str(e)}")
             return []
 
     async def _generate_python_scripts(self, scan_results: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -676,6 +844,16 @@ end
                 logger.debug(f"Running command: {' '.join(cmd)}")
                 start_time = datetime.now()
                 
+                # Ensure script is executable
+                try:
+                    os.chmod(script['path'], 0o755)
+                    logger.debug(f"Set executable permissions on {script['path']}")
+                except Exception as e:
+                    logger.warning(f"Failed to set executable permissions on {script['path']}: {str(e)}")
+                
+                # Log more detailed info about the script execution
+                logger.info(f"Executing script: {script['name']} ({script['type']}) at {script['path']}")
+                
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -687,18 +865,29 @@ end
                 end_time = datetime.now()
                 duration = (end_time - start_time).total_seconds()
                 
+                stdout_text = stdout.decode('utf-8', errors='replace')
+                stderr_text = stderr.decode('utf-8', errors='replace')
+                
+                # Always log the output for debugging purposes
+                if stdout_text:
+                    logger.debug(f"Script stdout: {stdout_text}")
+                if stderr_text:
+                    logger.debug(f"Script stderr: {stderr_text}")
+                
                 if process.returncode != 0:
-                    logger.error(f"Script execution failed: {stderr.decode()}")
+                    logger.error(f"Script execution failed with exit code {process.returncode}: {stderr_text}")
                     return {
                         "status": "failed",
-                        "error": stderr.decode(),
-                        "output": stdout.decode(),
+                        "error": stderr_text,
+                        "output": stdout_text,
+                        "exit_code": process.returncode,
                         "duration": duration
                     }
                 
+                logger.info(f"Script execution completed successfully in {duration:.2f} seconds")
                 return {
                     "status": "success",
-                    "output": stdout.decode(),
+                    "output": stdout_text,
                     "duration": duration
                 }
                 
@@ -1312,7 +1501,7 @@ def scan_ports(target: str, ports: List[int]) -> Dict[int, str]:
                 results[port] = service
             sock.close()
         except Exception as e:
-            logger.error(f"Error scanning port {{port}}: {{e}}")
+            logger.error(f"Error scanning port {{{{port}}}}: {{{{e}}}}")
     return results
 
 if __name__ == "__main__":
@@ -1321,7 +1510,7 @@ if __name__ == "__main__":
     
     results = scan_ports(target, ports)
     for port, service in results.items():
-        print(f"Port {{port}}: {{service}}")
+        print(f"Port {{{{port}}}}: {{{{service}}}}")
 """
         except Exception as e:
             logger.error(f"Error generating Python port scanner: {str(e)}")
@@ -1363,13 +1552,13 @@ def enumerate_service(host: str, port: int) -> Dict[str, Any]:
                 response = sock.recv(1024)
                 results[probe.decode()] = response.decode()
             except Exception as e:
-                logger.error(f"Error with probe {{probe}}: {{e}}")
+                logger.error(f"Error with probe {{{{probe}}}}: {{{{e}}}}")
         
         sock.close()
         return results
         
     except Exception as e:
-        logger.error(f"Error enumerating service: {{e}}")
+        logger.error(f"Error enumerating service: {{{{e}}}}")
         return {{}}
 
 if __name__ == "__main__":
@@ -1377,11 +1566,11 @@ if __name__ == "__main__":
     ports = {port_list}
     
     for port in ports:
-        print(f"\\nEnumerating service on port {{port}}:")
+        print(f"\\nEnumerating service on port {{{{port}}}}:")
         results = enumerate_service(target, port)
         for probe, response in results.items():
-            print(f"\\nProbe: {{probe}}")
-            print(f"Response: {{response}}")
+            print(f"\\nProbe: {{{{probe}}}}")
+            print(f"Response: {{{{response}}}}")
 """
         except Exception as e:
             logger.error(f"Error generating Python service enumerator: {str(e)}")
@@ -1439,7 +1628,7 @@ def check_web_vulnerabilities(host: str, port: int) -> List[Dict[str, str]]:
         # ... implement directory traversal check
         
     except Exception as e:
-        logger.error(f"Error checking web vulnerabilities: {{e}}")
+        logger.error(f"Error checking web vulnerabilities: {{{{e}}}}")
     return vulns
 
 def check_ftp_vulnerabilities(host: str, port: int) -> List[Dict[str, str]]:
@@ -1452,7 +1641,7 @@ def check_ftp_vulnerabilities(host: str, port: int) -> List[Dict[str, str]]:
         # ... implement weak credentials check
         
     except Exception as e:
-        logger.error(f"Error checking FTP vulnerabilities: {{e}}")
+        logger.error(f"Error checking FTP vulnerabilities: {{{{e}}}}")
     return vulns
 
 def check_ssh_vulnerabilities(host: str, port: int) -> List[Dict[str, str]]:
@@ -1465,7 +1654,7 @@ def check_ssh_vulnerabilities(host: str, port: int) -> List[Dict[str, str]]:
         # ... implement known vulnerabilities check
         
     except Exception as e:
-        logger.error(f"Error checking SSH vulnerabilities: {{e}}")
+        logger.error(f"Error checking SSH vulnerabilities: {{{{e}}}}")
     return vulns
 
 if __name__ == "__main__":
@@ -1474,12 +1663,12 @@ if __name__ == "__main__":
     service = "{service_name}"
     
     for port in ports:
-        print(f"\\nChecking vulnerabilities for {{service}} on port {{port}}:")
+        print(f"\\nChecking vulnerabilities for {{{{service}}}} on port {{{{port}}}}:")
         vulns = check_vulnerabilities(target, port, service)
         for vuln in vulns:
-            print(f"\\nVulnerability: {{vuln.get('name')}}")
-            print(f"Description: {{vuln.get('description')}}")
-            print(f"Severity: {{vuln.get('severity')}}")
+            print(f"\\nVulnerability: {{{{vuln.get('name')}}}}")
+            print(f"Description: {{{{vuln.get('description')}}}}")
+            print(f"Severity: {{{{vuln.get('severity')}}}}")
 """
         except Exception as e:
             logger.error(f"Error generating Python vulnerability scanner: {str(e)}")

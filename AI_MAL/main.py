@@ -17,6 +17,15 @@ import aiohttp
 import io
 from urllib.parse import urljoin
 
+# Import Pygments for syntax highlighting
+try:
+    from pygments import highlight
+    from pygments.lexers import get_lexer_for_filename, get_lexer_by_name
+    from pygments.formatters import Terminal256Formatter
+    PYGMENTS_AVAILABLE = True
+except ImportError:
+    PYGMENTS_AVAILABLE = False
+
 # Suppress asyncio warnings about event loop being closed
 import warnings
 warnings.filterwarnings("ignore", 
@@ -89,15 +98,38 @@ class AI_MAL:
     def __init__(self, target: str, **kwargs):
         self.target = target
         self.kwargs = kwargs
+        
+        # Set up logging directory
+        log_dir = kwargs.get('log_dir', os.getenv('LOG_DIR', 'logs'))
+        if not os.path.isabs(log_dir) and 'INSTALL_DIR' in os.environ:
+            log_dir = os.path.join(os.environ['INSTALL_DIR'], log_dir)
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            logger.info(f"Using log directory: {log_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create log directory {log_dir}: {str(e)}")
+            # Fallback to current directory
+            log_dir = os.path.join(os.getcwd(), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            logger.info(f"Using fallback log directory: {log_dir}")
+        
+        # Initialize scanner
         self.scanner = AdaptiveScanner(target)
+        
+        # Initialize AI manager
         self.ai_manager = AIManager(
             model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
             fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
         )
+        
         # Create a workspace name based on target and timestamp
         workspace = f"AI_MAL_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
         self.msf_manager = MetasploitManager(workspace=workspace)
+        
+        # Initialize script generator
         self.script_generator = ScriptGenerator()
+        
+        # Set UI options
         self.quiet = kwargs.get('quiet', False)
         self.no_gui = kwargs.get('no_gui', False)
         
@@ -105,10 +137,19 @@ class AI_MAL:
         self.exfil_enabled = kwargs.get('exfil', False)
         if self.exfil_enabled:
             self.exfil_dir = Path(os.getenv('EXFIL_DIR', 'exfiltrated_data'))
-            self.exfil_dir.mkdir(exist_ok=True)
-            self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
-            self.exfil_target_dir.mkdir(exist_ok=True)
-            logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+            try:
+                self.exfil_dir.mkdir(exist_ok=True)
+                self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
+                self.exfil_target_dir.mkdir(exist_ok=True)
+                logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to create exfiltration directory: {str(e)}")
+                # Fallback to current directory
+                self.exfil_dir = Path(os.getcwd()) / 'exfiltrated_data'
+                self.exfil_dir.mkdir(exist_ok=True)
+                self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
+                self.exfil_target_dir.mkdir(exist_ok=True)
+                logger.info(f"Using fallback exfiltration directory: {self.exfil_target_dir}")
             
         # Setup for implant deployment
         self.implant_enabled = kwargs.get('implant') is not None
@@ -120,8 +161,15 @@ class AI_MAL:
             else:
                 logger.info(f"Implant enabled. Will attempt to deploy {self.implant_path} to target systems")
                 # Create directory for implant logs
-                self.implant_logs_dir = Path('implant_logs')
-                self.implant_logs_dir.mkdir(exist_ok=True)
+                self.implant_logs_dir = Path(os.getenv('IMPLANT_LOGS_DIR', 'implant_logs'))
+                try:
+                    self.implant_logs_dir.mkdir(exist_ok=True)
+                except Exception as e:
+                    logger.warning(f"Failed to create implant logs directory: {str(e)}")
+                    # Fallback to current directory
+                    self.implant_logs_dir = Path(os.getcwd()) / 'implant_logs'
+                    self.implant_logs_dir.mkdir(exist_ok=True)
+                    logger.info(f"Using fallback implant logs directory: {self.implant_logs_dir}")
         
     async def run(self):
         try:
@@ -602,6 +650,40 @@ class AI_MAL:
             table.add_row(name, script_type, description, path)
             
         console.print(table)
+        
+        # Show script content with syntax highlighting if Pygments is available
+        if PYGMENTS_AVAILABLE:
+            for script in scripts:
+                path = script.get('path')
+                if path and os.path.exists(path):
+                    try:
+                        with open(path, 'r') as f:
+                            content = f.read()
+                        
+                        # Get appropriate lexer based on file extension
+                        try:
+                            lexer = get_lexer_for_filename(path)
+                        except:
+                            # Fallback to Python if can't determine
+                            extension = os.path.splitext(path)[1].lower()
+                            if extension in ['.sh', '.bash']:
+                                lexer = get_lexer_by_name('bash')
+                            elif extension in ['.bat', '.cmd']:
+                                lexer = get_lexer_by_name('batch')
+                            elif extension in ['.ps1']:
+                                lexer = get_lexer_by_name('powershell')
+                            else:
+                                lexer = get_lexer_by_name('python')
+                        
+                        # Apply syntax highlighting
+                        formatted = highlight(content, lexer, Terminal256Formatter())
+                        
+                        # Display the script
+                        console.print(f"\n[bold cyan]Script: {os.path.basename(path)}[/bold cyan]")
+                        console.print(Panel(formatted, border_style="green"))
+                        
+                    except Exception as e:
+                        logger.debug(f"Error displaying script content: {str(e)}")
         
     def _display_exfil_results(self, results: Dict[str, Any]):
         """Display exfiltration results in a table"""
@@ -1342,6 +1424,10 @@ def configure_event_loop():
     return loop
 
 def main():
+    """Main entry point for AI_MAL"""
+    print("Starting AI_MAL...")
+    
+    # Set up argparse
     parser = argparse.ArgumentParser(
         description='AI_MAL - AI-Powered Penetration Testing Tool',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1361,7 +1447,10 @@ Examples:
   
   Full automation with AI analysis:
     AI_MAL 192.168.1.1 --full-auto --ai-analysis --output-format json
-""")
+"""
+    )
+    
+    print("Parsing command line arguments...")
     
     # Required arguments
     parser.add_argument('target', help='Target IP address or range to scan')
@@ -1371,24 +1460,14 @@ Examples:
     basic_group.add_argument('--msf', action='store_true', help='Enable Metasploit integration')
     basic_group.add_argument('--exploit', action='store_true', help='Attempt exploitation of vulnerabilities')
     basic_group.add_argument('--model', help='Ollama model to use (default: from .env or qwen2.5-coder:7b)')
-    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or mistral:7b)')
+    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or gemma:1b)')
     basic_group.add_argument('--full-auto', action='store_true', help='Enable full automation mode')
     basic_group.add_argument('--ai-analysis', action='store_true', default=True,
-                      help='Enable AI analysis of results')
+                       help='Enable AI analysis of results (default: enabled)')
     basic_group.add_argument('--no-ai', action='store_false', dest='ai_analysis',
-                      help='Disable AI analysis of results')
+                       help='Disable AI analysis of results')
     
-    # Script Generation Options
-    script_group = parser.add_argument_group('Script Generation Options')
-    script_group.add_argument('--custom-scripts', action='store_true', help='Enable AI-powered script generation')
-    script_group.add_argument('--script-type', choices=['python', 'bash', 'ruby'], default='python',
-                      help='Type of script to generate')
-    script_group.add_argument('--execute-scripts', action='store_true', help='Automatically execute generated scripts')
-    script_group.add_argument('--script-output', metavar='DIR', help='Directory to save generated scripts')
-    script_group.add_argument('--script-format', choices=['raw', 'base64'], default='raw',
-                      help='Format for generated scripts')
-    
-    # Scanning Options
+    # Scan Options
     scan_group = parser.add_argument_group('Scanning Options')
     scan_group.add_argument('--stealth', action='store_true', help='Enable stealth mode for minimal detection')
     scan_group.add_argument('--continuous', action='store_true', help='Run continuous scanning')
@@ -1402,6 +1481,16 @@ Examples:
     scan_group.add_argument('--implant', metavar='PATH', help='Path to a script to implant on target machines')
     scan_group.add_argument('--iterations', type=int, default=1, help='Number of scan iterations')
     scan_group.add_argument('--custom-vuln', help='Path to custom vulnerability definitions')
+    
+    # Script Generation Options
+    script_group = parser.add_argument_group('Script Generation Options')
+    script_group.add_argument('--custom-scripts', action='store_true', help='Enable AI-powered script generation')
+    script_group.add_argument('--script-type', choices=['python', 'bash', 'ruby'], default='python',
+                     help='Type of script to generate')
+    script_group.add_argument('--execute-scripts', action='store_true', help='Automatically execute generated scripts')
+    script_group.add_argument('--script-output', metavar='DIR', help='Directory to save generated scripts')
+    script_group.add_argument('--script-format', choices=['raw', 'base64'], default='raw',
+                     help='Format for generated scripts')
     
     # Output Options
     output_group = parser.add_argument_group('Output Options')
@@ -1442,7 +1531,7 @@ Examples:
     if args.ai_analysis and not args.quiet:
         try:
             primary_model = args.model or os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')
-            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'mistral:7b')
+            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b')
             
             print(f"Verifying AI models availability: {primary_model} (primary) and {fallback_model} (fallback)")
             
@@ -1507,18 +1596,23 @@ Examples:
     # Initialize and run AI_MAL
     args_dict = vars(args)
     target = args_dict.pop('target')  # Remove target from args dict to avoid duplicate argument
+    print(f"Initializing AI_MAL with target: {target}")
     ai_mal = AI_MAL(target, **args_dict)
 
     try:
+        print("Creating event loop...")
         # Create a new event loop instead of getting the current one
         # This fixes the deprecation warning
         loop = configure_event_loop()
+        print("Starting AI_MAL run...")
         scan_results = loop.run_until_complete(ai_mal.run())
         
         # Ensure proper cleanup of the event loop
+        print("Cleaning up event loop...")
         clean_up_loop(loop)
         
         # Save results or do any post-processing here
+        print("Saving scan results...")
         output_file = os.path.join(output_dir, f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         with open(output_file, 'w') as f:
             json.dump(scan_results, f, indent=2)
@@ -1533,9 +1627,8 @@ Examples:
     except Exception as e:
         print(f"Fatal error: {str(e)}")
         # Print traceback for debugging
-        if os.getenv('DEBUG'):
-            import traceback
-            traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return 1
     
 def clean_up_loop(loop):

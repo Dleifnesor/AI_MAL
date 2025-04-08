@@ -7,7 +7,87 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
 NC='\033[0m'
+
+# Set installation directory if not specified
+if [ -z "$INSTALL_DIR" ]; then
+    INSTALL_DIR="/opt/AI_MAL"
+    echo -e "${YELLOW}>>> Using default installation directory: $INSTALL_DIR${NC}"
+fi
+
+# Create the installation directory if it doesn't exist
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo -e "${YELLOW}>>> Creating installation directory: $INSTALL_DIR${NC}"
+    mkdir -p "$INSTALL_DIR"
+fi
+
+# Progress bar function
+progress_bar() {
+    local duration=$1
+    local prefix=$2
+    local size=40
+    local count=0
+    local progress=0
+    local step=$((100 / $size))
+    
+    printf "${prefix} ["
+    while [ $count -lt $size ]; do
+        printf "${BLUE}▓${NC}"
+        count=$((count + 1))
+        sleep $(echo "scale=4; ${duration}/${size}" | bc)
+    done
+    printf "] ${GREEN}100%%${NC}\n"
+}
+
+# Spinner function for operations without clear progress
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    printf "${2} "
+    
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf "${YELLOW}[%c]${NC}" "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b"
+    done
+    printf "${GREEN}[✓]${NC}\n"
+}
+
+# Animated progress for longer tasks
+animated_progress() {
+    local message="$1"
+    local duration="$2"
+    local size=40
+    local count=0
+    
+    echo -ne "${message} [${NC}"
+    while [ $count -lt $size ]; do
+        sleep $(echo "scale=4; ${duration}/${size}" | bc)
+        count=$((count + 1))
+        progress=$((count * 100 / size))
+        
+        # Different colors for different progress ranges
+        if [ $progress -lt 25 ]; then
+            color="${BLUE}"
+        elif [ $progress -lt 50 ]; then
+            color="${CYAN}"
+        elif [ $progress -lt 75 ]; then
+            color="${YELLOW}"
+        else
+            color="${GREEN}"
+        fi
+        
+        echo -ne "${color}▓${NC}"
+    done
+    echo -e "] ${GREEN}Done!${NC}"
+}
 
 # Parse command line arguments
 SKIP_MODELS=false
@@ -51,33 +131,80 @@ if [ -f /etc/os-release ]; then
         
         # Update system packages
         echo -e "${YELLOW}>>> Updating system packages...${NC}"
-        suppress_output apt-get update
-        suppress_output apt-get upgrade -y
+        apt-get update > /dev/null 2>&1 &
+        update_pid=$!
+        spinner $update_pid "${CYAN}Updating package lists"
+
+        apt-get upgrade -y > /dev/null 2>&1 &
+        upgrade_pid=$!
+        spinner $upgrade_pid "${CYAN}Upgrading installed packages"
         
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
-        suppress_output apt-get install -y \
-            python3 \
-            python3-pip \
-            python3-venv \
-            git \
-            nmap \
-            metasploit-framework \
-            curl \
-            wget \
-            build-essential \
-            libssl-dev \
-            libffi-dev \
-            python3-nmap \
-            smbclient \
-            libpcap-dev \
-            libnetfilter-queue-dev \
-            libnetfilter-queue1 \
-            libnetfilter-conntrack-dev \
-            libnetfilter-conntrack3 \
-            python3-dev \
-            python3-setuptools \
-            python3-wheel
+        echo -ne "${CYAN}Installing required packages ${NC}["
+        packages=(
+            "python3" "python3-pip" "python3-venv" "git" "nmap" "metasploit-framework" 
+            "curl" "wget" "build-essential" "libssl-dev" "libffi-dev" "python3-nmap" 
+            "smbclient" "libpcap-dev" "libnetfilter-queue-dev" "libnetfilter-queue1" 
+            "libnetfilter-conntrack-dev" "libnetfilter-conntrack3" "python3-dev" 
+            "python3-setuptools" "python3-wheel" "hping3" "apache2-utils"
+        )
+
+        total=${#packages[@]}
+        current=0
+        for package in "${packages[@]}"; do
+            apt-get install -y $package > /dev/null 2>&1
+            current=$((current + 1))
+            progress=$((current * 40 / total))
+            completed=$((current * 100 / total))
+            
+            # Different colors based on progress
+            if [ $completed -lt 25 ]; then
+                color="${BLUE}"
+            elif [ $completed -lt 50 ]; then
+                color="${CYAN}"
+            elif [ $completed -lt 75 ]; then
+                color="${YELLOW}"
+            else
+                color="${GREEN}"
+            fi
+            
+            # Print progress bar
+            printf "\r${CYAN}Installing required packages ${NC}["
+            for ((i=0; i<progress; i++)); do
+                printf "${color}▓${NC}"
+            done
+            for ((i=progress; i<40; i++)); do
+                printf " "
+            done
+            printf "] ${completed}%%"
+        done
+        printf "\n"
+
+        # Verify nmap installation
+        echo -e "${YELLOW}>>> Verifying nmap installation...${NC}"
+        nmap_version=$(nmap --version | head -n 1)
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}>>> Error: Nmap is not installed correctly${NC}"
+            echo -e "${YELLOW}>>> Attempting to reinstall nmap...${NC}"
+            suppress_output apt-get remove --purge -y nmap
+            suppress_output apt-get install -y nmap
+            nmap_version=$(nmap --version | head -n 1)
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}>>> Critical Error: Could not install nmap. Scanning functionality will not work.${NC}"
+            else
+                echo -e "${GREEN}>>> Successfully reinstalled nmap: ${nmap_version}${NC}"
+            fi
+        else
+            echo -e "${GREEN}>>> Nmap installed correctly: ${nmap_version}${NC}"
+        fi
+
+        # Ensure nmap has proper permissions for privileged operations
+        echo -e "${YELLOW}>>> Setting proper permissions for nmap...${NC}"
+        if [ -f /usr/bin/nmap ]; then
+            chmod +s /usr/bin/nmap
+            echo -e "${GREEN}>>> Set setuid bit on nmap to allow privileged operations${NC}"
+        fi
 
         # Install Ollama if not already installed
         if ! command_exists ollama; then
@@ -112,29 +239,77 @@ if [ -f /etc/os-release ]; then
                     local start_time=$(date +%s)
                     
                     echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
+                    echo -ne "${CYAN}Downloading model ${NC}["
                     
                     # Start the pull in background
-                    ollama pull $model &
+                    ollama pull $model > /dev/null 2>&1 &
                     local pull_pid=$!
+                    
+                    # Variables for progress tracking
+                    local progress=0
+                    local bar_size=40
+                    local elapsed=0
+                    local last_progress_time=$start_time
                     
                     # Monitor the process with progress updates
                     while kill -0 $pull_pid 2>/dev/null; do
                         local current_time=$(date +%s)
-                        local elapsed=$((current_time - start_time))
+                        elapsed=$((current_time - start_time))
                         
+                        # Calculate progress based on elapsed time and timeout
+                        # This is an approximation since we don't have actual download progress
+                        if [ $elapsed -lt $timeout ]; then
+                            progress=$((elapsed * 90 / timeout)) # Cap at 90% during download
+                        else
+                            progress=90 # Cap at 90% if timeout reached
+                        fi
+                        
+                        # Different colors based on progress
+                        if [ $progress -lt 25 ]; then
+                            color="${BLUE}"
+                        elif [ $progress -lt 50 ]; then
+                            color="${CYAN}"
+                        elif [ $progress -lt 75 ]; then
+                            color="${YELLOW}"
+                        else
+                            color="${GREEN}"
+                        fi
+                        
+                        # Only update the display every second to reduce flickering
+                        if [ $current_time -ne $last_progress_time ]; then
+                            last_progress_time=$current_time
+                            
+                            # Calculate how many blocks to show
+                            local blocks=$((progress * bar_size / 100))
+                            
+                            # Print progress bar
+                            printf "\r${CYAN}Downloading model ${NC}["
+                            for ((i=0; i<blocks; i++)); do
+                                printf "${color}▓${NC}"
+                            done
+                            for ((i=blocks; i<bar_size; i++)); do
+                                printf " "
+                            done
+                            printf "] ${progress}%% (${elapsed}s)"
+                        fi
+                        
+                        # Exit if timeout reached
                         if [ $elapsed -ge $timeout ]; then
-                            echo -e "${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
+                            echo -e "\n${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
                             kill -9 $pull_pid 2>/dev/null || true
                             wait $pull_pid 2>/dev/null || true
                             return 1
                         fi
                         
-                        if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
-                            echo -e "${YELLOW}>>> Still pulling $model... ($elapsed seconds elapsed)${NC}"
-                        fi
-                        
-                        sleep 2
+                        sleep 0.2
                     done
+                    
+                    # Complete the progress bar to 100%
+                    printf "\r${CYAN}Downloading model ${NC}["
+                    for ((i=0; i<bar_size; i++)); do
+                        printf "${GREEN}▓${NC}"
+                    done
+                    printf "] ${GREEN}100%%${NC} (${elapsed}s)\n"
                     
                     # Check if the model is now available
                     if ollama list | grep -q "$model"; then
@@ -186,29 +361,77 @@ if [ -f /etc/os-release ]; then
                     local start_time=$(date +%s)
                     
                     echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
+                    echo -ne "${CYAN}Downloading model ${NC}["
                     
                     # Start the pull in background
-                    ollama pull $model &
+                    ollama pull $model > /dev/null 2>&1 &
                     local pull_pid=$!
+                    
+                    # Variables for progress tracking
+                    local progress=0
+                    local bar_size=40
+                    local elapsed=0
+                    local last_progress_time=$start_time
                     
                     # Monitor the process with progress updates
                     while kill -0 $pull_pid 2>/dev/null; do
                         local current_time=$(date +%s)
-                        local elapsed=$((current_time - start_time))
+                        elapsed=$((current_time - start_time))
                         
+                        # Calculate progress based on elapsed time and timeout
+                        # This is an approximation since we don't have actual download progress
+                        if [ $elapsed -lt $timeout ]; then
+                            progress=$((elapsed * 90 / timeout)) # Cap at 90% during download
+                        else
+                            progress=90 # Cap at 90% if timeout reached
+                        fi
+                        
+                        # Different colors based on progress
+                        if [ $progress -lt 25 ]; then
+                            color="${BLUE}"
+                        elif [ $progress -lt 50 ]; then
+                            color="${CYAN}"
+                        elif [ $progress -lt 75 ]; then
+                            color="${YELLOW}"
+                        else
+                            color="${GREEN}"
+                        fi
+                        
+                        # Only update the display every second to reduce flickering
+                        if [ $current_time -ne $last_progress_time ]; then
+                            last_progress_time=$current_time
+                            
+                            # Calculate how many blocks to show
+                            local blocks=$((progress * bar_size / 100))
+                            
+                            # Print progress bar
+                            printf "\r${CYAN}Downloading model ${NC}["
+                            for ((i=0; i<blocks; i++)); do
+                                printf "${color}▓${NC}"
+                            done
+                            for ((i=blocks; i<bar_size; i++)); do
+                                printf " "
+                            done
+                            printf "] ${progress}%% (${elapsed}s)"
+                        fi
+                        
+                        # Exit if timeout reached
                         if [ $elapsed -ge $timeout ]; then
-                            echo -e "${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
+                            echo -e "\n${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
                             kill -9 $pull_pid 2>/dev/null || true
                             wait $pull_pid 2>/dev/null || true
                             return 1
                         fi
                         
-                        if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
-                            echo -e "${YELLOW}>>> Still pulling $model... ($elapsed seconds elapsed)${NC}"
-                        fi
-                        
-                        sleep 2
+                        sleep 0.2
                     done
+                    
+                    # Complete the progress bar to 100%
+                    printf "\r${CYAN}Downloading model ${NC}["
+                    for ((i=0; i<bar_size; i++)); do
+                        printf "${GREEN}▓${NC}"
+                    done
+                    printf "] ${GREEN}100%%${NC} (${elapsed}s)\n"
                     
                     # Check if the model is now available
                     if ollama list | grep -q "$model"; then
@@ -255,6 +478,26 @@ if [ -f /etc/os-release ]; then
             echo "WORKSPACE_DIR=workspaces" >> .env
         fi
         
+        # Check network interfaces
+        echo -e "${YELLOW}>>> Checking network interfaces...${NC}"
+        primary_interface=$(ip route get 8.8.8.8 2>/dev/null | grep -oP "dev \K\S+")
+        if [ -z "$primary_interface" ]; then
+            echo -e "${RED}>>> Warning: Could not determine primary network interface${NC}"
+            echo -e "${YELLOW}>>> Available interfaces:${NC}"
+            ip link show | grep -E '^[0-9]+: ' | cut -d: -f2 | tr -d ' '
+            echo -e "${YELLOW}>>> You may need to configure a network interface manually${NC}"
+        else
+            echo -e "${GREEN}>>> Primary network interface: ${primary_interface}${NC}"
+            ip_addr=$(ip -f inet addr show $primary_interface | grep -oP 'inet \K[\d.]+')
+            if [ -z "$ip_addr" ]; then
+                echo -e "${RED}>>> Warning: No IPv4 address found on primary interface${NC}"
+                echo -e "${YELLOW}>>> You may need to configure network settings manually${NC}"
+            else
+                echo -e "${GREEN}>>> Your primary IP address: ${ip_addr}${NC}"
+                echo -e "${GREEN}>>> Network is properly configured${NC}"
+            fi
+        fi
+        
         # Also set it in the current shell session
         export OLLAMA_MODEL=artifish/llama3.2-uncensored
     else
@@ -282,27 +525,92 @@ rm -rf "$INSTALL_DIR/AI_MAL.egg-info" || true
 
 # Create necessary directories
 echo -e "${YELLOW}>>> Creating necessary directories...${NC}"
-mkdir -p logs
-mkdir -p scan_results
-mkdir -p msf_resources
-mkdir -p generated_scripts
-mkdir -p workspaces
-mkdir -p exfiltrated_data
-mkdir -p implant_logs
+directories=(
+    "logs" "scan_results" "msf_resources" "generated_scripts" 
+    "workspaces" "exfiltrated_data" "implant_logs"
+)
+
+echo -ne "${CYAN}Setting up directories ${NC}["
+total=${#directories[@]}
+current=0
+for dir in "${directories[@]}"; do
+    mkdir -p $dir 2>/dev/null
+    current=$((current + 1))
+    progress=$((current * 40 / total))
+    
+    # Print progress bar
+    printf "\r${CYAN}Setting up directories ${NC}["
+    for ((i=0; i<progress; i++)); do
+        printf "${GREEN}▓${NC}"
+    done
+    for ((i=progress; i<40; i++)); do
+        printf " "
+    done
+    printf "] ${GREEN}%d/%d${NC}" $current $total
+done
+printf "\n"
 
 # Create virtual environment
 echo -e "${YELLOW}>>> Creating virtual environment...${NC}"
-python3 -m venv venv
+animated_progress "${CYAN}Setting up Python virtual environment" 3
+python3 -m venv venv > /dev/null 2>&1
+echo -e "${GREEN}>>> Virtual environment created${NC}"
 source venv/bin/activate
 
 # Install dependencies
 echo -e "${YELLOW}>>> Installing dependencies...${NC}"
-suppress_output pip3 install --upgrade pip
-suppress_output pip3 install -r requirements.txt
+echo -e "${CYAN}Upgrading pip...${NC}"
+pip3 install --upgrade pip > /dev/null 2>&1 &
+pip_pid=$!
+spinner $pip_pid "${CYAN}Upgrading pip"
+
+echo -e "${CYAN}Installing project dependencies...${NC}"
+# Count the number of packages in requirements.txt
+req_count=$(grep -v '^\s*$\|^\s*\#' requirements.txt | wc -l)
+echo -ne "${CYAN}Installing packages ${NC}["
+
+count=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    # Skip empty lines and comments
+    [[ -z "$line" || "$line" =~ ^#.* ]] && continue
+    
+    # Install the package silently
+    pip3 install $line > /dev/null 2>&1
+    
+    # Update progress
+    count=$((count + 1))
+    progress=$((count * 40 / req_count))
+    percent=$((count * 100 / req_count))
+    
+    # Different colors based on progress
+    if [ $percent -lt 25 ]; then
+        color="${BLUE}"
+    elif [ $percent -lt 50 ]; then
+        color="${CYAN}"
+    elif [ $percent -lt 75 ]; then
+        color="${YELLOW}"
+    else
+        color="${GREEN}"
+    fi
+    
+    # Update progress bar
+    printf "\r${CYAN}Installing packages ${NC}["
+    for ((i=0; i<progress; i++)); do
+        printf "${color}▓${NC}"
+    done
+    for ((i=progress; i<40; i++)); do
+        printf " "
+    done
+    printf "] ${percent}%%"
+    
+done < requirements.txt
+printf "\n"
 
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
-suppress_output pip3 install -e .
+animated_progress "${CYAN}Installing AI_MAL" 2
+pip3 install -e . > /dev/null 2>&1
+echo -e "${GREEN}>>> AI_MAL package installed${NC}"
 
 # Set permissions
 echo -e "${YELLOW}>>> Setting permissions...${NC}"
@@ -562,7 +870,71 @@ if [ ! -z "$SUDO_USER" ]; then
   chown "$REAL_USER" "$REAL_HOME/.bash_aliases" 2>/dev/null || true
   chown "$REAL_USER" "$REAL_HOME/.bashrc" 2>/dev/null || true
   chown "$REAL_USER" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+
+# Export current function to make it immediately available
+export -f AI_MAL 2>/dev/null || true
+
+# Test the nmap functionality
+echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
+echo -e "${YELLOW}>>> Running a quick scan of localhost to verify nmap works...${NC}"
+echo -ne "${CYAN}Running test scan ${NC}["
+( nmap -sT -p 22,80 -T4 --privileged -Pn 127.0.0.1 > /tmp/nmap_test.log 2>&1 ) &
+scan_pid=$!
+
+# Show animated progress bar while scan is running
+bar_size=40
+count=0
+while kill -0 $scan_pid 2>/dev/null; do
+    # Calculate progress - this is just visual, not actual progress
+    count=$((count + 1))
+    if [ $count -gt $bar_size ]; then
+        count=0
+        # Clear bar and start again
+        printf "\r${CYAN}Running test scan ${NC}["
+        for ((i=0; i<bar_size; i++)); do
+            printf " "
+        done
+        printf "]"
+    fi
+    
+    # Print the progress bar with "filling" effect
+    printf "\r${CYAN}Running test scan ${NC}["
+    for ((i=0; i<count; i++)); do
+        printf "${BLUE}▓${NC}"
+    done
+    for ((i=count; i<bar_size; i++)); do
+        printf " "
+    done
+    printf "]"
+    
+    sleep 0.1
+done
+
+# Wait for scan to complete
+wait $scan_pid
+scan_status=$?
+
+# Print complete progress bar
+printf "\r${CYAN}Running test scan ${NC}["
+for ((i=0; i<bar_size; i++)); do
+    printf "${GREEN}▓${NC}"
+done
+printf "] ${GREEN}Done!${NC}\n"
+
+if [ $scan_status -eq 0 ]; then
+    echo -e "${GREEN}>>> Nmap test scan completed successfully${NC}"
+    # Check if scan output contains expected elements
+    if grep -q "scan report" /tmp/nmap_test.log && grep -q "Host is up" /tmp/nmap_test.log; then
+        echo -e "${GREEN}>>> Nmap scan output looks valid${NC}"
+    else
+        echo -e "${YELLOW}>>> Nmap ran but output may not be complete. Check permissions.${NC}"
+    fi
+else
+    echo -e "${RED}>>> Nmap test scan failed. Scanning may not work properly.${NC}"
+    echo -e "${YELLOW}>>> Error details:${NC}"
+    cat /tmp/nmap_test.log
 fi
+rm -f /tmp/nmap_test.log
 
 # Create a global profile script to ensure AI_MAL is always available
 echo -e "${YELLOW}>>> Creating global profile to ensure AI_MAL is always available...${NC}"
@@ -622,3 +994,24 @@ fi
 # Suggestion to use when install completes
 echo -e "${YELLOW}>>> TIP: To test AI_MAL, try running:${NC}"
 echo -e "${GREEN}>>>   AI_MAL 127.0.0.1 --vuln --os --services${NC}" 
+
+# Display a fancy completion animation
+echo ""
+echo -ne "${YELLOW}▄${NC}"
+sleep 0.05
+for i in {1..40}; do
+  echo -ne "${YELLOW}▄${NC}"
+  sleep 0.01
+done
+echo ""
+
+echo -e "${GREEN} ✓ Installation Complete! ${NC}"
+echo -e "${CYAN} AI_MAL is now ready to use ${NC}"
+
+echo -ne "${YELLOW}▀${NC}"
+sleep 0.05
+for i in {1..40}; do
+  echo -ne "${YELLOW}▀${NC}"
+  sleep 0.01
+done
+echo "" 

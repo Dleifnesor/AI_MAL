@@ -12,7 +12,7 @@ async def main():
     
     # Initialize components
     scanner = AdaptiveScanner(target)
-    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
     metasploit = MetasploitManager()
     script_generator = ScriptGenerator()
     

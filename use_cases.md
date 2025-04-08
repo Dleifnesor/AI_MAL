@@ -36,7 +36,7 @@ This document outlines the various use cases and scenarios for the AI_MAL (AI-Po
 | `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
 | `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
 | `--model` | str | artifish/llama3.2-uncensored | Primary AI model | Custom AI model selection |
-| `--fallback-model` | str | mistral:7b | Fallback AI model | Backup AI model selection |
+| `--fallback-model` | str | gemma:1b | Fallback AI model | Backup AI model selection |
 | `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
 | `--implant` | str | None | Path to implant script | Custom payload deployment |
 | `--output-dir` | str | ./results | Output directory for results | Result management |
@@ -114,7 +114,7 @@ Enables AI analysis of scan results.
 
 ### Custom AI Models
 ```bash
-AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model mistral:7b
+AI_MAL 192.168.1.1 --model qwen2.5-coder:7b --fallback-model gemma:1b
 ```
 - `--model`: Specifies primary AI model
 - `--fallback-model`: Specifies fallback AI model
@@ -231,7 +231,7 @@ To troubleshoot issues, you can add the following environment variables:
 export DEBUG=1
 export OLLAMA_HOST=http://localhost:11434
 export OLLAMA_MODEL=qwen2.5-coder:7b
-export OLLAMA_FALLBACK_MODEL=gemma:7b
+export OLLAMA_FALLBACK_MODEL=gemma:1b
 ```
 
 ### Recovery Procedures

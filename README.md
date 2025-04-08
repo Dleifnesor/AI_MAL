@@ -52,7 +52,7 @@ pip install -e .
 | `--script-format` | str | raw | Script format (raw/base64) | Script encoding options |
 | `--ai-analysis` | flag | True | Enable AI analysis of results | Enhanced result interpretation |
 | `--model` | str | qwen2.5-coder:7b | Primary AI model | Custom AI model selection |
-| `--fallback-model` | str | mistral:7b | Fallback AI model | Backup AI model selection |
+| `--fallback-model` | str | gemma:1b | Fallback AI model | Backup AI model selection |
 | `--exfil` | flag | False | Enable data exfiltration | Data extraction operations |
 | `--implant` | str | None | Path to implant script | Custom payload deployment |
 | `--output-dir` | str | ./results | Output directory for results | Result management |

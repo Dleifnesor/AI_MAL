@@ -16,7 +16,7 @@ async def test_basic_example():
     
     # Initialize components
     scanner = AdaptiveScanner(target)
-    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
     metasploit = MetasploitManager()
     script_generator = ScriptGenerator()
     
@@ -52,7 +52,7 @@ async def test_advanced_example():
     
     # Initialize components
     scanner = AdaptiveScanner(target)
-    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
     metasploit = MetasploitManager()
     script_generator = ScriptGenerator()
     
@@ -134,8 +134,7 @@ async def test_advanced_example():
         
         # Execute generated scripts
         execution_results = await script_generator.execute_scripts(
-            scan_results,
-            script_type="python"
+            python_scripts
         )
         assert isinstance(execution_results, list)
         
@@ -150,7 +149,7 @@ async def test_example_output_files():
     
     # Initialize components
     scanner = AdaptiveScanner(target)
-    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
     metasploit = MetasploitManager()
     script_generator = ScriptGenerator()
     
@@ -172,8 +171,7 @@ async def test_example_output_files():
     
     # Execute scripts
     execution_results = await script_generator.execute_scripts(
-        scan_results,
-        script_type="python"
+        scripts
     )
     
     # Check that output files were created

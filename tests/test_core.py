@@ -17,7 +17,7 @@ def scanner(target):
 
 @pytest.fixture
 def ai_manager():
-    return AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    return AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
 
 @pytest.fixture
 def metasploit():
@@ -151,7 +151,7 @@ async def test_full_workflow(target):
     """Test full workflow integration"""
     # Initialize components
     scanner = AdaptiveScanner(target)
-    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="mistral:7b")
+    ai_manager = AIManager(model="qwen2.5-coder:7b", fallback_model="gemma:1b")
     metasploit = MetasploitManager()
     script_generator = ScriptGenerator()
     
@@ -182,7 +182,6 @@ async def test_full_workflow(target):
     
     # Execute scripts
     execution_results = await script_generator.execute_scripts(
-        scan_results,
-        script_type="python"
+        scripts
     )
     assert isinstance(execution_results, list) 

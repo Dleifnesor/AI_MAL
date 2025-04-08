@@ -19,7 +19,7 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
 def test_env():
     """Set up test environment variables."""
     os.environ["AI_MAL_MODEL"] = "qwen2.5-coder:7b"
-    os.environ["AI_MAL_FALLBACK_MODEL"] = "mistral:7b"
+    os.environ["AI_MAL_FALLBACK_MODEL"] = "gemma:1b"
     os.environ["AI_MAL_MSF_WORKSPACE"] = "test_workspace"
     os.environ["AI_MAL_RESOURCE_DIR"] = "test_resources"
     os.environ["AI_MAL_SCRIPT_DIR"] = "test_scripts"

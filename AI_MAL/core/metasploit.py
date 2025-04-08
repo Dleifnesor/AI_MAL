@@ -17,10 +17,36 @@ logger = logging.getLogger(__name__)
 
 class MetasploitManager:
     def __init__(self, workspace: str = None):
-        self.msf_resources_dir = os.getenv('MSF_RESOURCES_DIR', 'msf_resources')
-        os.makedirs(self.msf_resources_dir, exist_ok=True)
+        """Initialize the Metasploit manager"""
+        # Set workspace name
         self.workspace = workspace or "AI_MAL_workspace"
-        logger.info(f"Initializing Metasploit Manager with workspace: {self.workspace}")
+        
+        # Get MSF resources directory from environment variable or use default
+        self.msf_resources_dir = os.getenv('MSF_RESOURCES_DIR', 'msf_resources')
+        
+        # Ensure msf_resources_dir is an absolute path if possible
+        if not os.path.isabs(self.msf_resources_dir) and 'INSTALL_DIR' in os.environ:
+            self.msf_resources_dir = os.path.join(os.environ['INSTALL_DIR'], self.msf_resources_dir)
+        
+        # Create MSF resources directory if it doesn't exist
+        try:
+            os.makedirs(self.msf_resources_dir, exist_ok=True)
+            logger.info(f"Using MSF resources directory: {self.msf_resources_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create MSF resources directory: {str(e)}")
+            # Fall back to current directory/msf_resources if we can't create the configured one
+            fallback_dir = os.path.join(os.getcwd(), 'msf_resources')
+            try:
+                os.makedirs(fallback_dir, exist_ok=True)
+                self.msf_resources_dir = fallback_dir
+                logger.info(f"Using fallback MSF resources directory: {self.msf_resources_dir}")
+            except Exception as fallback_error:
+                logger.error(f"Failed to create fallback MSF resources directory: {str(fallback_error)}")
+                # Last resort, just use the current directory
+                self.msf_resources_dir = os.getcwd()
+                logger.warning(f"Using current directory for MSF resources: {self.msf_resources_dir}")
+        
+        # Check if Metasploit is installed
         self._check_metasploit()
         
         # Define payload types based on target OS

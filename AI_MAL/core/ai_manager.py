@@ -507,4 +507,61 @@ Recommendations:
         if current_line:
             lines.append(current_line)
             
-        return lines 
+        return lines
+
+    async def _query_ollama(self, prompt: str, model: str) -> str:
+        """
+        Query the Ollama API
+        """
+        try:
+            logger.info(f"Querying Ollama API with model: {model}")
+            
+            # Build request payload
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 2048,
+                }
+            }
+            
+            max_retries = 3
+            retry_count = 0
+            backoff_time = 2  # seconds
+            
+            while retry_count < max_retries:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(self.ollama_host, json=payload, timeout=60) as response:
+                            if response.status == 200:
+                                result = await response.json()
+                                return result.get('response', '')
+                            else:
+                                error_text = await response.text()
+                                logger.warning(f"Ollama API returned status {response.status}: {error_text}")
+                                if retry_count + 1 < max_retries:
+                                    retry_count += 1
+                                    logger.info(f"Retrying in {backoff_time} seconds (attempt {retry_count}/{max_retries})...")
+                                    await asyncio.sleep(backoff_time)
+                                    backoff_time *= 2  # Exponential backoff
+                                else:
+                                    logger.error(f"Failed to query Ollama API after {max_retries} attempts")
+                                    raise Exception(f"Ollama API error: {response.status} - {error_text}")
+                except aiohttp.ClientError as client_error:
+                    if retry_count + 1 < max_retries:
+                        retry_count += 1
+                        logger.warning(f"Connection error: {str(client_error)}. Retrying ({retry_count}/{max_retries})...")
+                        await asyncio.sleep(backoff_time)
+                        backoff_time *= 2  # Exponential backoff
+                    else:
+                        logger.error(f"Connection failed after {max_retries} attempts: {str(client_error)}")
+                        raise Exception(f"Connection to Ollama API failed: {str(client_error)}")
+            
+            # If we get here, we've exhausted retries
+            raise Exception(f"Failed to get a valid response from Ollama API after {max_retries} attempts")
+            
+        except Exception as e:
+            logger.error(f"Error querying Ollama API: {str(e)}")
+            return f"API Error: {str(e)}" 
