@@ -18,17 +18,28 @@ AI_MAL is an advanced penetration testing tool that combines traditional scannin
 
 ## Installation
 
+1. Clone the repository:
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/AI_MAL.git
 cd AI_MAL
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the package
-pip install -e .
 ```
+
+2. Make the installation script executable:
+```bash
+chmod +x install.sh
+```
+
+3. Run the installation script:
+```bash
+./install.sh
+```
+
+The installation script will:
+- Install required system packages
+- Set up Python virtual environment
+- Install Python dependencies
+- Configure AI models
+- Set up necessary services
 
 ## Command-Line Arguments
 
