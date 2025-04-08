@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import aiohttp
 import io
 from urllib.parse import urljoin
+import subprocess
 
 # Import Pygments for syntax highlighting
 try:
@@ -484,99 +485,26 @@ class AI_MAL:
         console.print(table)
         
     def _display_ai_results(self, analysis: Dict[str, Any]):
-        """Display AI analysis results in a formatted panel"""
-        if not RICH_AVAILABLE or self.quiet or not analysis:
-            return
+        """Display AI analysis results in a formatted box"""
+        try:
+            # Create a custom box for AI results
+            custom_box = box.Box(
+                title="AI Analysis Results",
+                title_align="center",
+                padding=1,
+                box_style="rounded"
+            )
             
-        # Create a table for the analysis results
-        model_used = analysis.get('model_used', 'Unknown')
-        model_style = {
-            'fallback': 'red',
-            'Unknown': 'dim red'
-        }.get(model_used, 'cyan')
-        
-        from rich.box import Box
-        
-        # Create a custom box style with divisions between rows
-        custom_box = Box(
-            "┏━━┳━━┓",  # top
-            "┃  ┃  ┃",  # head
-            "┣━━╋━━┫",  # head_row
-            "┃  ┃  ┃",  # mid
-            "┣━━┻━━┫",  # row
-            "┃     ┃",  # mid_section
-            "┣━━━━━┫",  # section
-            "┃     ┃",  # bottom
-            "┗━━━━━┛",  # bottom_section
-        )
-        
-        table = Table(
-            title=f"AI Analysis Results [using {model_used}]",
-            box=custom_box,
-            show_header=True,
-            show_lines=True,
-            padding=(1, 2)
-        )
-        
-        table.add_column("Category", style="cyan")
-        table.add_column("Details", style="green")
-        
-        # Risk level
-        risk_level = analysis.get('risk_level', 'UNKNOWN')
-        risk_style = {
-            'LOW': 'green',
-            'MEDIUM': 'yellow',
-            'HIGH': 'red',
-            'CRITICAL': 'red bold',
-            'UNKNOWN': 'dim'
-        }.get(risk_level, 'white')
-        
-        table.add_row("Risk Level", f"[{risk_style}]{risk_level}[/{risk_style}]")
-        
-        # Add empty row for spacing
-        table.add_row("")
-        
-        # Summary
-        summary = analysis.get('summary', 'No summary available')
-        table.add_row("Summary", summary)
-        
-        # Add empty row for spacing
-        table.add_row("")
-        
-        # Vulnerabilities
-        vulns = analysis.get('vulnerabilities', [])
-        vulns_str = "\n".join([f"• {v}" for v in vulns[:5]])
-        if len(vulns) > 5:
-            vulns_str += f"\n• (+{len(vulns) - 5} more)"
-        if not vulns:
-            vulns_str = "None detected"
-        table.add_row("Vulnerabilities", vulns_str)
-        
-        # Add empty row for spacing
-        table.add_row("")
-        
-        # Attack vectors
-        vectors = analysis.get('attack_vectors', [])
-        vectors_str = "\n".join([f"• {v}" for v in vectors[:5]])
-        if len(vectors) > 5:
-            vectors_str += f"\n• (+{len(vectors) - 5} more)"
-        if not vectors:
-            vectors_str = "None detected"
-        table.add_row("Attack Vectors", vectors_str)
-        
-        # Add empty row for spacing
-        table.add_row("")
-        
-        # Recommendations
-        recommendations = analysis.get('recommendations', [])
-        recommendations_str = "\n".join([f"• {r}" for r in recommendations[:5]])
-        if len(recommendations) > 5:
-            recommendations_str += f"\n• (+{len(recommendations) - 5} more)"
-        if not recommendations:
-            recommendations_str = "None provided"
-        table.add_row("Recommendations", recommendations_str)
-        
-        console.print(table)
+            # Add analysis content
+            custom_box.add_row("Target Analysis", analysis.get('target_analysis', 'No analysis available'))
+            custom_box.add_row("Vulnerabilities", analysis.get('vulnerabilities', 'No vulnerabilities found'))
+            custom_box.add_row("Recommendations", analysis.get('recommendations', 'No recommendations available'))
+            
+            # Print the box
+            console.print(custom_box)
+        except Exception as e:
+            self.logger.error(f"Error displaying AI results: {str(e)}")
+            console.print(f"Error displaying AI results: {str(e)}")
         
     def _display_exploits(self, exploits: List[Dict[str, Any]]):
         """Display found Metasploit exploits in a table"""
@@ -1330,6 +1258,69 @@ class AI_MAL:
                             logger.debug(f"Error with upload endpoint {path}: {str(e)}")
         
         return success
+
+    def _initialize_ai_models(self):
+        """Initialize AI models for analysis"""
+        try:
+            # Check Ollama service
+            if not self._check_ollama_service():
+                self.logger.error("Ollama service is not running")
+                return False
+
+            # Get available models
+            available_models = self._get_available_models()
+            self.logger.info(f"Available models: {available_models}")
+
+            # Try to use primary model
+            if "artifish/llama3.2-uncensored" in available_models:
+                self.primary_model = "artifish/llama3.2-uncensored"
+                self.logger.info(f"Using primary model: {self.primary_model}")
+                return True
+
+            # Try to use fallback model
+            if "gemma:1b" in available_models:
+                self.primary_model = "gemma:1b"
+                self.logger.info(f"Using fallback model: {self.primary_model}")
+                return True
+
+            # If no models are available, try to pull them
+            self.logger.warning("No models available, attempting to pull them...")
+            
+            # Try to pull primary model
+            if self._pull_model("artifish/llama3.2-uncensored"):
+                self.primary_model = "artifish/llama3.2-uncensored"
+                return True
+
+            # Try to pull fallback model
+            if self._pull_model("gemma:1b"):
+                self.primary_model = "gemma:1b"
+                return True
+
+            self.logger.error("Failed to initialize any AI models")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error initializing AI models: {str(e)}")
+            return False
+
+    def _pull_model(self, model_name: str) -> bool:
+        """Pull a model from Ollama"""
+        try:
+            self.logger.info(f"Pulling model: {model_name}")
+            result = subprocess.run(
+                ["ollama", "pull", model_name],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                self.logger.info(f"Successfully pulled model: {model_name}")
+                return True
+            else:
+                self.logger.error(f"Failed to pull model {model_name}: {result.stderr}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error pulling model {model_name}: {str(e)}")
+            return False
 
 async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
     """
