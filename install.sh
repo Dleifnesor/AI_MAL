@@ -754,14 +754,26 @@ EOF
 # Make AI_MAL immediately available in current session
 echo -e "${YELLOW}>>> Making AI_MAL immediately available in current session...${NC}"
 
-# Create a simple executable in /usr/bin
+# Create system-wide environment setup
+echo -e "${YELLOW}>>> Creating system-wide environment setup...${NC}"
+cat > /etc/profile.d/ai_mal_env.sh << 'EOF'
+#!/bin/bash
+# AI_MAL system-wide environment setup
+export PATH="/home/kali/AI_MAL/venv/bin:$PATH"
+export AI_MAL_HOME="/home/kali/AI_MAL"
+alias AI_MAL='cd $AI_MAL_HOME && source venv/bin/activate && python -m AI_MAL.main'
+EOF
+
+chmod 644 /etc/profile.d/ai_mal_env.sh
+
+# Create a system-wide executable
 echo -e "${YELLOW}>>> Creating system-wide executable...${NC}"
 cat > /usr/bin/AI_MAL << 'EOF'
 #!/bin/bash
-# Simple AI_MAL executor
+# AI_MAL system-wide executable
 cd /home/kali/AI_MAL
 source venv/bin/activate
-python -m AI_MAL.main "$@"
+exec python -m AI_MAL.main "$@"
 EOF
 
 chmod +x /usr/bin/AI_MAL
@@ -770,28 +782,54 @@ chmod +x /usr/bin/AI_MAL
 echo -e "${YELLOW}>>> Creating backup executable...${NC}"
 cat > /usr/local/bin/AI_MAL << 'EOF'
 #!/bin/bash
-# Backup AI_MAL executor
+# Backup AI_MAL executable
 cd /home/kali/AI_MAL
 source venv/bin/activate
-python -m AI_MAL.main "$@"
+exec python -m AI_MAL.main "$@"
 EOF
 
 chmod +x /usr/local/bin/AI_MAL
 
-# Create a direct executable in the installation directory
-echo -e "${YELLOW}>>> Creating local executable...${NC}"
-cat > "$INSTALL_DIR/AI_MAL" << 'EOF'
-#!/bin/bash
-# Local AI_MAL executor
-cd "$(dirname "$0")"
-source venv/bin/activate
-python -m AI_MAL.main "$@"
+# Create a systemd service to ensure environment is set up at boot
+echo -e "${YELLOW}>>> Creating systemd service for environment setup...${NC}"
+cat > /etc/systemd/system/ai_mal_env.service << 'EOF'
+[Unit]
+Description=AI_MAL Environment Setup
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'source /etc/profile.d/ai_mal_env.sh'
+ExecStop=/bin/true
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-chmod +x "$INSTALL_DIR/AI_MAL"
+systemctl daemon-reload
+systemctl enable ai_mal_env.service
+
+# Create a shell function that will be immediately available
+echo -e "${YELLOW}>>> Creating shell function for immediate use...${NC}"
+cat > /etc/profile.d/ai_mal_function.sh << 'EOF'
+#!/bin/bash
+function AI_MAL() {
+    cd /home/kali/AI_MAL
+    source venv/bin/activate
+    python -m AI_MAL.main "$@"
+}
+export -f AI_MAL
+EOF
+
+chmod 644 /etc/profile.d/ai_mal_function.sh
+
+# Source the environment and function in the current shell
+source /etc/profile.d/ai_mal_env.sh
+source /etc/profile.d/ai_mal_function.sh
 
 # Add to PATH for current session
-export PATH="$INSTALL_DIR:$PATH"
+export PATH="/home/kali/AI_MAL/venv/bin:$PATH"
 
 # Test the nmap functionality
 echo -e "${YELLOW}>>> Testing nmap functionality...${NC}"
