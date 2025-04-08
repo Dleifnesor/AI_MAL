@@ -575,8 +575,16 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     # Skip empty lines and comments
     [[ -z "$line" || "$line" =~ ^#.* ]] && continue
     
-    # Install the package silently
-    pip3 install $line > /dev/null 2>&1
+    # Install the package with error handling
+    if ! pip3 install $line > /dev/null 2>&1; then
+        echo -e "\n${RED}>>> Error installing package: $line${NC}"
+        echo -e "${YELLOW}>>> Attempting to install with verbose output...${NC}"
+        pip3 install $line
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}>>> Failed to install package: $line${NC}"
+            echo -e "${YELLOW}>>> Continuing with remaining packages...${NC}"
+        fi
+    fi
     
     # Update progress
     count=$((count + 1))
@@ -607,10 +615,41 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < requirements.txt
 printf "\n"
 
+# Verify all packages were installed
+echo -e "${YELLOW}>>> Verifying package installation...${NC}"
+missing_packages=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" =~ ^#.* ]] && continue
+    package_name=$(echo "$line" | cut -d'=' -f1 | cut -d'>' -f1 | cut -d'<' -f1)
+    if ! pip3 show "$package_name" > /dev/null 2>&1; then
+        echo -e "${RED}>>> Package not installed: $package_name${NC}"
+        missing_packages=$((missing_packages + 1))
+    fi
+done < requirements.txt
+
+if [ $missing_packages -gt 0 ]; then
+    echo -e "${YELLOW}>>> $missing_packages packages failed to install. Attempting to install them individually...${NC}"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" =~ ^#.* ]] && continue
+        package_name=$(echo "$line" | cut -d'=' -f1 | cut -d'>' -f1 | cut -d'<' -f1)
+        if ! pip3 show "$package_name" > /dev/null 2>&1; then
+            echo -e "${YELLOW}>>> Retrying installation of $package_name...${NC}"
+            pip3 install "$line" --no-cache-dir
+        fi
+    done < requirements.txt
+fi
+
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
 animated_progress "${CYAN}Installing AI_MAL" 2
-pip3 install -e . > /dev/null 2>&1
+if ! pip3 install -e . > /dev/null 2>&1; then
+    echo -e "${RED}>>> Error installing AI_MAL package. Retrying with verbose output...${NC}"
+    pip3 install -e .
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}>>> Failed to install AI_MAL package. Please check the error messages above.${NC}"
+        exit 1
+    fi
+fi
 echo -e "${GREEN}>>> AI_MAL package installed${NC}"
 
 # Set permissions
