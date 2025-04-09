@@ -1,5 +1,5 @@
 """
-AI_MAL - AI-Powered Penetration Testing Tool
+AI_MAL - AI-Powered Penetration Testing Framework
 """
 
 __version__ = "0.1.0"

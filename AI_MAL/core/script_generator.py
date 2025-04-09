@@ -178,7 +178,6 @@ class ScriptGenerator:
                 
                 # Make script executable
                 os.chmod(script_path, 0o755)
-                
                 # Execute script
                 print("\n" + "-"*40)
                 print(f"🚀 Executing script: {script['name']} ({script['type']})")
@@ -473,62 +472,73 @@ import argparse
 import concurrent.futures
 from datetime import datetime
 
-def enumerate_service(target, port):
+def get_service_info(target, port):
     try:
-        # Try to get service name
-        try:
-            service = socket.getservbyport(int(port))
-        except:
-            service = "unknown"
-            
-        # Try to connect and get banner
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2)
-            s.connect((target, int(port)))
-            banner = s.recv(1024).decode('utf-8', errors='ignore').strip()
-            s.close()
-        except:
-            banner = ""
-            
-        return port, service, banner
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect((target, port))
+        
+        # Try to get banner
+        banner = s.recv(1024).decode('utf-8', errors='ignore').strip()
+        s.close()
+        
+        return {
+            'port': port,
+            'service': socket.getservbyport(port),
+            'banner': banner
+        }
     except Exception as e:
-        return port, "error", str(e)
+        return {
+            'port': port,
+            'service': 'unknown',
+            'error': str(e)
+        }
 
-def enumerate_services(target, ports, threads=10):
-    print(f"[*] Starting service enumeration on {{target}} for ports: {{ports}}")
+def enumerate_services(target, ports, threads=5):
+    print(f"[*] Starting service enumeration on {target}")
     start_time = datetime.now()
     
-    port_list = [p.strip() for p in ports.split(',')]
     results = []
-    
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
         futures = []
-        for port in port_list:
-            futures.append(executor.submit(enumerate_service, target, port))
+        for port in ports:
+            futures.append(executor.submit(get_service_info, target, port))
         
         for future in concurrent.futures.as_completed(futures):
-            port, service, banner = future.result()
-            results.append((port, service, banner))
-            print(f"[+] Port {{port}} - {{service}}")
-            if banner:
-                print(f"    Banner: {{banner}}")
+            result = future.result()
+            results.append(result)
+            if 'error' not in result:
+                print(f"[+] Port {result['port']}: {result['service']}")
+                if result.get('banner'):
+                    print(f"    Banner: {result['banner']}")
+            else:
+                print(f"[-] Port {result['port']}: Error - {result['error']}")
     
     end_time = datetime.now()
     duration = (end_time - start_time).total_seconds()
     
-    print(f"\\n[*] Enumeration completed in {{duration:.2f}} seconds")
+    print(f"\n[*] Enumeration completed in {duration:.2f} seconds")
+    print(f"[*] Found {len([r for r in results if 'error' not in r])} services on {target}")
+    
     return results
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Service enumeration script')
     parser.add_argument('target', nargs='?', default='{target}', help='Target IP address')
-    parser.add_argument('-p', '--ports', default='{port_list}', help='Ports to scan (comma-separated)')
-    parser.add_argument('-t', '--threads', type=int, default=10, help='Number of threads to use')
+    parser.add_argument('-p', '--ports', default='{port_list}', 
+                        help='Comma-separated list of ports to scan')
+    parser.add_argument('-t', '--threads', type=int, default=5, help='Number of threads to use')
     
     args = parser.parse_args()
     
-    enumerate_services(args.target, args.ports, args.threads)
+    # Parse ports
+    try:
+        ports = [int(p) for p in args.ports.split(',')]
+    except ValueError:
+        print("Invalid port list. Use comma-separated numbers (e.g. 22,80,443)")
+        sys.exit(1)
+    
+    enumerate_services(args.target, ports, args.threads)
 """
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             script_path = os.path.join(self.scripts_dir, f'service_enum_{timestamp}.py')
@@ -919,7 +929,7 @@ end
                 
                 if exit_code != 0:
                     logger.warning(f"Script returned non-zero exit code: {exit_code}")
-                    
+                
                 return {
                     "status": "success" if exit_code == 0 else "error",
                     "exit_code": exit_code,
@@ -935,7 +945,7 @@ end
                     "error": f"Execution timed out after {timeout} seconds",
                     "duration": timeout
                 }
-                
+            
         except Exception as e:
             logger.error(f"Error executing script {script.get('path', 'unknown')}: {str(e)}")
             import traceback
@@ -981,6 +991,7 @@ for PORT in $(seq $START_PORT $END_PORT); do
     echo "[+] Port $PORT/tcp is open - $SERVICE"
   fi
 done 2>/dev/null
+
 echo "[*] Port scan completed"
 """
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1034,47 +1045,31 @@ else
 fi
 
 echo "[*] Starting service enumeration on $TARGET"
-echo "[*] Target ports: $PORTS"
+echo "[*] Scanning ports: $PORTS"
 
 for PORT in $PORTS; do
   echo "[*] Checking port $PORT..."
   
-  # Try banner grabbing with netcat
-  BANNER=$(timeout 3 nc -w 3 -zv $TARGET $PORT 2>&1)
-  STATUS=$?
+  # Try to get service name
+  SERVICE=$(grep -w "$PORT/tcp" /etc/services | head -1 | awk '{{print $1}}')
+  if [ -z "$SERVICE" ]; then
+    SERVICE="unknown"
+  fi
   
-  if [ $STATUS -eq 0 ]; then
-    echo "[+] Port $PORT is open"
-    
-    # Get service from /etc/services
-    SERVICE=$(grep -w "$PORT/tcp" /etc/services | head -1 | awk '{{print $1}}')
-    if [ -z "$SERVICE" ]; then
-      SERVICE="unknown"
-    fi
-    
-    echo "    Service: $SERVICE"
-    
-    # Try to get banner
-    if [[ "$BANNER" == *"open"* ]]; then
+  # Try to get banner
+  BANNER=$(timeout 2 bash -c "echo '' | nc -w 2 $TARGET $PORT 2>/dev/null")
+  
+  if [ $? -eq 0 ]; then
+    echo "[+] Port $PORT/tcp is open - $SERVICE"
+    if [ ! -z "$BANNER" ]; then
       echo "    Banner: $BANNER"
     fi
-    
-    # HTTP specific checks
-    if [ "$PORT" == "80" ] || [ "$PORT" == "443" ] || [ "$SERVICE" == "http" ] || [ "$SERVICE" == "https" ]; then
-      PROTOCOL="http"
-      if [ "$PORT" == "443" ] || [ "$SERVICE" == "https" ]; then
-        PROTOCOL="https"
-      fi
-      
-      echo "    Checking HTTP headers..."
-      timeout 5 curl -s -I "$PROTOCOL://$TARGET:$PORT" | grep -E "Server:|X-Powered-By:" || echo "    No server headers found"
-    fi
   else
-    echo "[-] Port $PORT is closed or filtered"
+    echo "[-] Port $PORT/tcp: Error connecting"
   fi
 done
 
-echo "[*] Enumeration completed"
+echo "[*] Service enumeration completed"
 """
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             script_path = os.path.join(self.scripts_dir, f'service_enum_{timestamp}.sh')
@@ -1253,22 +1248,22 @@ class PortScanner
     start_time = Time.now
     
     (@start_port..@end_port).each do |port|
-      begin
-        Timeout.timeout(1) do
+  begin
+    Timeout.timeout(1) do
           socket = TCPSocket.new(@target, port)
-          socket.close
+      socket.close
           service = get_service_name(port)
           @open_ports << { port: port, service: service }
           puts "[+] Port \#{port}/tcp is open - \#{service}"
-        end
-      rescue Timeout::Error
+    end
+  rescue Timeout::Error
         # Port is closed or filtered
       rescue Errno::ECONNREFUSED
         # Port is closed
-      rescue => e
+  rescue => e
         puts "[!] Error scanning port \#{port}: \#{e.message}"
-      end
-    end
+  end
+end
     
     end_time = Time.now
     duration = end_time - start_time
@@ -1488,7 +1483,7 @@ class VulnerabilityScanner
   
   def check_web_vulnerabilities(port, service)
     protocol = (service == 'https' || port == 443 || port == 8443) ? 'https' : 'http'
-    
+  
     begin
       # Check for robots.txt
       uri = URI.parse("\#{protocol}://\#{@target}:\#{port}/robots.txt")
@@ -1517,7 +1512,6 @@ class VulnerabilityScanner
           }
         end
       end
-      
     rescue => e
       puts "Error checking web vulnerabilities: \#{e.message}"
     end
@@ -1640,7 +1634,6 @@ end
                 "path": script_path,
                 "description": f"Vulnerability scanning script for {target}"
             }
-            
         except Exception as e:
             logger.error(f"Error generating Ruby vulnerability scanner: {str(e)}")
             return self._generate_fallback_script("vuln_scanner", "ruby") 

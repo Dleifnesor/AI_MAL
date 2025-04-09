@@ -209,7 +209,28 @@ install_libssl_dev() {
 
 # Create necessary directories
 echo -e "${YELLOW}>>> Creating necessary directories...${NC}"
-mkdir -p logs scan_results msf_resources generated_scripts workspaces
+# More robust directory creation
+# Create required directories
+echo -e "${YELLOW}>>> Creating required directories...${NC}"
+required_dirs=(
+    "logs"
+    "scan_results"
+    "msf_resources"
+    "generated_scripts"
+    "workspaces"
+    "exfiltrated_data"
+    "implant_logs"
+    "scripts"
+)
+
+for dir in "${required_dirs[@]}"; do
+    if [ ! -d "$dir" ]; then
+        mkdir -p "$dir"
+        echo -e "${GREEN}>>> Created directory: $dir${NC}"
+    else
+        echo -e "${GREEN}>>> Directory already exists: $dir${NC}"
+    fi
+done
 
 # Make sure sources.list is properly configured
 echo -e "${YELLOW}>>> Checking package sources...${NC}"
@@ -386,7 +407,7 @@ source venv/bin/activate
 
 # Install Python dependencies
 echo -e "${YELLOW}>>> Installing Python dependencies...${NC}"
-pip install --upgrade pip wheel setuptools
+pip install --quiet --upgrade pip wheel setuptools
 
 # Install core Python dependencies individually for reliability
 core_packages=(
@@ -397,10 +418,10 @@ core_packages=(
 
 for package in "${core_packages[@]}"; do
     echo -e "${CYAN}Installing $package...${NC}"
-    pip install $package
+    pip install --quiet $package
     if [ $? -ne 0 ]; then
         echo -e "${YELLOW}>>> Warning: Failed to install $package. Trying alternative installation...${NC}"
-        pip install --no-deps $package
+        pip install --quiet --no-deps $package
         if [ $? -ne 0 ]; then
             echo -e "${YELLOW}>>> Warning: Alternative installation failed. Some functionality may be limited.${NC}"
         fi
@@ -409,7 +430,22 @@ done
 
 # Install package in development mode
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
-pip install -e .
+pip install --quiet -e .
+
+# Create a symbolic link to ensure the module is in Python's path
+echo -e "${YELLOW}>>> Creating Python module symlink...${NC}"
+SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+if [ -d "$SITE_PACKAGES" ]; then
+    # Check if we already have a symlink or the actual package there
+    if [ ! -e "$SITE_PACKAGES/AI_MAL" ]; then
+        ln -sf "$(pwd)/AI_MAL" "$SITE_PACKAGES/AI_MAL"
+        echo -e "${GREEN}>>> Created symlink for AI_MAL module${NC}"
+    else
+        echo -e "${GREEN}>>> AI_MAL module already in Python path${NC}"
+    fi
+else
+    echo -e "${YELLOW}>>> Warning: Could not find site-packages directory${NC}"
+fi
 
 # Install Ollama if not already installed
 if ! command -v ollama &> /dev/null; then
@@ -463,6 +499,7 @@ if [ "$SKIP_MODELS" = false ]; then
             elapsed=0
             check_interval=10
             success=false
+            start_time=$(date +%s)
             
             while [ $elapsed -lt $timeout_seconds ]; do
                 # Check if process is still running
@@ -478,8 +515,12 @@ if [ "$SKIP_MODELS" = false ]; then
                     fi
                 fi
                 
+                # Calculate elapsed time based on current time
+                current_time=$(date +%s)
+                elapsed=$((current_time - start_time))
+                
                 # Display progress (if log contains percentage)
-                if [ $((elapsed % 30)) -eq 0 ]; then
+                if [ $((elapsed % 30)) -eq 0 ] || [ $elapsed -eq 0 ]; then
                     if grep -q "%" /tmp/ollama_pull_${model_name//\//_}.log; then
                         progress=$(grep "%" /tmp/ollama_pull_${model_name//\//_}.log | tail -1)
                         echo -e "${CYAN}>>> Progress: ${progress}${NC}"
@@ -496,7 +537,6 @@ if [ "$SKIP_MODELS" = false ]; then
                 fi
                 
                 sleep $check_interval
-                elapsed=$((elapsed + check_interval))
             done
             
             # If we timed out or the process is hanging, kill it
@@ -569,9 +609,45 @@ fi
 echo -e "${YELLOW}>>> Creating system-wide executable...${NC}"
 cat > /usr/local/bin/AI_MAL << 'EOF'
 #!/bin/bash
-cd $(dirname $(readlink -f $(which AI_MAL)))/../..
-source venv/bin/activate 2>/dev/null || true
-python -m AI_MAL.main "$@"
+
+# Find the AI_MAL installation directory
+if [ -d "/home/kali/AI_MAL" ]; then
+    AI_MAL_DIR="/home/kali/AI_MAL"
+elif [ -h "$0" ]; then
+    # If this script is a symlink, find the original location
+    SCRIPT_DIR=$(dirname $(readlink -f "$0"))
+    AI_MAL_DIR=$(readlink -f "${SCRIPT_DIR}/../..")
+else
+    # Try to find it in standard locations
+    for dir in "/opt/AI_MAL" "/usr/local/share/AI_MAL" "/usr/share/AI_MAL"; do
+        if [ -d "$dir" ]; then
+            AI_MAL_DIR="$dir"
+            break
+        fi
+    done
+fi
+
+# If we couldn't find it, use the current directory as a fallback
+if [ -z "$AI_MAL_DIR" ]; then
+    AI_MAL_DIR="$PWD"
+    echo "Warning: Could not locate AI_MAL installation directory. Using current directory." >&2
+fi
+
+# Change to the AI_MAL directory
+cd "$AI_MAL_DIR" || { echo "Error: Failed to change to AI_MAL directory." >&2; exit 1; }
+
+# Activate virtual environment if it exists
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+fi
+
+# Run the main module with all arguments
+if ! python -m AI_MAL.main "$@" 2>/dev/null; then
+    if ! python3 -m AI_MAL.main "$@"; then
+        echo "Error: Failed to run AI_MAL. Check installation and try again." >&2
+        exit 1
+    fi
+fi
 EOF
 
 chmod +x /usr/local/bin/AI_MAL
@@ -654,5 +730,13 @@ echo -e "${GREEN}>>> You can now run AI_MAL with: AI_MAL <target> [options]${NC}
 echo -e "${GREEN}>>> Example: AI_MAL 192.168.1.1 --vuln --os --services${NC}"
 echo -e "${GREEN}>>> For a local test, try: AI_MAL 127.0.0.1 --vuln --os${NC}"
 echo ""
+
+# Reset terminal to fix any formatting issues
+if command -v tput &>/dev/null; then
+    tput sgr0  # Reset all attributes
+    tput cnorm # Show cursor
+    tput cup 0 0 # Move cursor to home position
+    echo -e "\r" # Explicit carriage return
+fi
 
 exit 0 
