@@ -166,11 +166,12 @@ if [ -f /etc/os-release ]; then
         # Function to install a single package with direct output and timeout
         install_package() {
             local package=$1
-            local timeout_seconds=120
+            local timeout_seconds=${2:-120}  # Default timeout 120 seconds, but can be overridden
             
             log_message "${CYAN}Installing $package...${NC}"
             
             # Use timeout command to prevent hanging
+            echo -e "${CYAN}Running: apt-get install -y $package (timeout: ${timeout_seconds}s)${NC}"
             timeout $timeout_seconds apt-get install -y $package
             
             if [ $? -eq 0 ]; then
@@ -190,11 +191,17 @@ if [ -f /etc/os-release ]; then
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
         
-        # Install base packages one by one
+        # Install base packages one by one with specific timeouts for problematic packages
         echo -e "${YELLOW}>>> Installing base packages...${NC}"
+        
+        # Install problematic packages with longer timeouts
+        echo -e "${YELLOW}>>> Installing libssl-dev with extended timeout...${NC}"
+        DEBIAN_FRONTEND=noninteractive install_package "libssl-dev" 300
+        
+        # Install other base packages
         base_packages=(
             "python3" "python3-pip" "python3-venv" "git" "curl" "wget" 
-            "build-essential" "libssl-dev" "libffi-dev"
+            "build-essential" "libffi-dev"
         )
         for package in "${base_packages[@]}"; do
             install_package "$package"
