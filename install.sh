@@ -15,32 +15,35 @@ NC='\033[0m'
 
 # Trap for cleanup on interruption - more aggressive handling
 cleanup() {
-    echo -e "\n${RED}>>> EMERGENCY EXIT: Terminating all child processes and exiting immediately...${NC}"
-    
-    # Force kill all child processes
-    pkill -P $$
-    
-    # Kill any hanging apt/dpkg processes
-    for pid in $(pgrep -f "apt|dpkg"); do
-        kill -9 $pid 2>/dev/null || true
-    done
-    
-    # Remove any lock files
-    rm -f /var/lib/dpkg/lock-frontend 2>/dev/null || true
-    rm -f /var/lib/dpkg/lock 2>/dev/null || true
-    rm -f /var/cache/apt/archives/lock 2>/dev/null || true
-    
-    # Exit immediately with an error status
-    echo -e "${RED}>>> Installation was interrupted by user. System may need cleanup.${NC}"
-    echo -e "${RED}>>> Run 'dpkg --configure -a' if you experience package issues.${NC}"
-    
-    # Terminate with extreme prejudice - will exit regardless of what's happening
-    kill -9 $$ 2>/dev/null || true
-    exit 1
+    # Only execute if this is a direct Ctrl+C or termination signal
+    if [ "$1" = "INT" ] || [ "$1" = "TERM" ]; then
+        echo -e "\n${RED}>>> EMERGENCY EXIT: Terminating all child processes and exiting immediately...${NC}"
+        
+        # Force kill all child processes
+        pkill -P $$ 2>/dev/null || true
+        
+        # Kill any hanging apt/dpkg processes
+        for pid in $(pgrep -f "apt|dpkg" 2>/dev/null || echo ""); do
+            kill -9 $pid 2>/dev/null || true
+        done
+        
+        # Remove any lock files
+        rm -f /var/lib/dpkg/lock-frontend 2>/dev/null || true
+        rm -f /var/lib/dpkg/lock 2>/dev/null || true
+        rm -f /var/cache/apt/archives/lock 2>/dev/null || true
+        
+        # Exit immediately with an error status
+        echo -e "${RED}>>> Installation was interrupted. System may need cleanup.${NC}"
+        echo -e "${RED}>>> Run 'dpkg --configure -a' if you experience package issues.${NC}"
+        
+        # Terminate script
+        exit 1
+    fi
 }
 
-# Set up more aggressive trap for SIGINT (Ctrl+C) and SIGTERM
-trap cleanup SIGINT SIGTERM
+# Set up trap for SIGINT (Ctrl+C) and SIGTERM
+trap 'cleanup INT' INT
+trap 'cleanup TERM' TERM
 
 # Show message about Ctrl+C handling
 echo -e "${YELLOW}>>> Press Ctrl+C at any time for emergency exit${NC}"
@@ -213,15 +216,17 @@ usage() {
     echo "Options:"
     echo "  --no-models      Skip downloading AI models"
     echo "  --skip-libssl    Skip installing libssl-dev"
+    echo "  --no-update      Skip system update and upgrade"
     echo "  --help           Show this help message"
     echo ""
-    echo "Example: ./install.sh --no-models --skip-libssl"
+    echo "Example: ./install.sh --no-models --skip-libssl --no-update"
     exit 0
 }
 
 # Parse command line arguments
 SKIP_MODELS=false
 SKIP_LIBSSL=false
+SKIP_UPDATE=false
 for arg in "$@"; do
   case $arg in
     --no-models)
@@ -230,6 +235,10 @@ for arg in "$@"; do
       ;;
     --skip-libssl)
       SKIP_LIBSSL=true
+      shift
+      ;;
+    --no-update)
+      SKIP_UPDATE=true
       shift
       ;;
     --help)
@@ -267,38 +276,42 @@ if [ -f /etc/os-release ]; then
     if [ "$ID" = "kali" ]; then
         echo -e "${YELLOW}>>> Detected Kali Linux${NC}"
         
-        # Update system packages
-        echo -e "${YELLOW}>>> Updating system packages...${NC}"
-        echo -e "${CYAN}Running: apt-get update (timeout: 300s)${NC}"
-        APT_START_TIME=$(date +%s)
-        timeout 300 apt-get update > /dev/null 2>&1
-        update_status=$?
-        unset APT_START_TIME
-
-        if [ $update_status -eq 124 ]; then
-            echo -e "${RED}>>> Package update timed out. Killing hanging processes...${NC}"
-            kill_hanging_apt
-            echo -e "${YELLOW}>>> Continuing with installation${NC}"
-        elif [ $update_status -ne 0 ]; then
-            echo -e "${RED}>>> Package update failed with status $update_status. Continuing...${NC}"
+        # Update system packages (only if not skipped)
+        if [ "$SKIP_UPDATE" = true ]; then
+            echo -e "${YELLOW}>>> Skipping system update and upgrade (--no-update flag detected)${NC}"
         else
-            echo -e "${GREEN}>>> Package lists updated successfully${NC}"
-        fi
+            echo -e "${YELLOW}>>> Updating system packages...${NC}"
+            echo -e "${CYAN}Running: apt-get update (timeout: 300s)${NC}"
+            APT_START_TIME=$(date +%s)
+            timeout 300 apt-get update > /dev/null 2>&1
+            update_status=$?
+            unset APT_START_TIME
 
-        echo -e "${CYAN}Running: apt-get upgrade -y (timeout: 600s)${NC}"
-        APT_START_TIME=$(date +%s)
-        timeout 600 apt-get upgrade -y > /dev/null 2>&1
-        upgrade_status=$?
-        unset APT_START_TIME
+            if [ $update_status -eq 124 ]; then
+                echo -e "${RED}>>> Package update timed out. Killing hanging processes...${NC}"
+                kill_hanging_apt
+                echo -e "${YELLOW}>>> Continuing with installation${NC}"
+            elif [ $update_status -ne 0 ]; then
+                echo -e "${RED}>>> Package update failed with status $update_status. Continuing...${NC}"
+            else
+                echo -e "${GREEN}>>> Package lists updated successfully${NC}"
+            fi
 
-        if [ $upgrade_status -eq 124 ]; then
-            echo -e "${RED}>>> Package upgrade timed out. Killing hanging processes...${NC}"
-            kill_hanging_apt
-            echo -e "${YELLOW}>>> Continuing with installation${NC}"
-        elif [ $upgrade_status -ne 0 ]; then
-            echo -e "${RED}>>> Package upgrade failed with status $upgrade_status. Continuing...${NC}"
-        else
-            echo -e "${GREEN}>>> System packages upgraded successfully${NC}"
+            echo -e "${CYAN}Running: apt-get upgrade -y (timeout: 600s)${NC}"
+            APT_START_TIME=$(date +%s)
+            timeout 600 apt-get upgrade -y > /dev/null 2>&1
+            upgrade_status=$?
+            unset APT_START_TIME
+
+            if [ $upgrade_status -eq 124 ]; then
+                echo -e "${RED}>>> Package upgrade timed out. Killing hanging processes...${NC}"
+                kill_hanging_apt
+                echo -e "${YELLOW}>>> Continuing with installation${NC}"
+            elif [ $upgrade_status -ne 0 ]; then
+                echo -e "${RED}>>> Package upgrade failed with status $upgrade_status. Continuing...${NC}"
+            else
+                echo -e "${GREEN}>>> System packages upgraded successfully${NC}"
+            fi
         fi
         
         # Install required system packages
