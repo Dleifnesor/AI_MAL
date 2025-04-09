@@ -12,7 +12,7 @@ echo -e "${YELLOW}>>> This script will install the essential components with min
 
 # Parse command line arguments
 SKIP_MODELS=false
-SKIP_LIBSSL=true # Skip libssl-dev by default due to known issues
+SKIP_LIBSSL=false # Include libssl-dev by default
 SKIP_UPDATE=true # Skip system update by default to avoid hanging
 SKIP_MSF=false
 
@@ -22,8 +22,8 @@ for arg in "$@"; do
       SKIP_MODELS=true
       shift
       ;;
-    --install-libssl)
-      SKIP_LIBSSL=false
+    --skip-libssl)
+      SKIP_LIBSSL=true
       shift
       ;;
     --with-update)
@@ -38,7 +38,7 @@ for arg in "$@"; do
       echo "Usage: ./install.sh [OPTIONS]"
       echo "Options:"
       echo "  --no-models      Skip downloading AI models"
-      echo "  --install-libssl Install libssl-dev (may hang, use with caution)"
+      echo "  --skip-libssl    Skip installing libssl-dev (use if installation hangs)"
       echo "  --with-update    Update system packages (may be slow)"
       echo "  --no-msf         Skip Metasploit installation"
       echo "  --help           Show this help message"
@@ -135,6 +135,78 @@ safe_install_package() {
     return 0
 }
 
+# Function to safely install libssl-dev
+install_libssl_dev() {
+    if [ "$SKIP_LIBSSL" = true ]; then
+        echo -e "${YELLOW}>>> Skipping libssl-dev installation (--skip-libssl flag detected)${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}>>> Installing OpenSSL development libraries...${NC}"
+    
+    # First attempt: direct apt installation
+    echo -e "${CYAN}Attempting standard installation of libssl-dev...${NC}"
+    if timeout 120 apt-get install -y libssl-dev; then
+        echo -e "${GREEN}>>> Successfully installed libssl-dev${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}>>> Standard installation failed. Trying alternative approaches...${NC}"
+    
+    # Second attempt: try specific version
+    if command -v apt-cache &>/dev/null; then
+        # Find available versions
+        AVAILABLE_VERSIONS=$(apt-cache madison libssl-dev | awk '{print $3}')
+        if [ -n "$AVAILABLE_VERSIONS" ]; then
+            FIRST_VERSION=$(echo "$AVAILABLE_VERSIONS" | head -n 1)
+            echo -e "${CYAN}Attempting to install specific version: libssl-dev=$FIRST_VERSION${NC}"
+            if timeout 120 apt-get install -y libssl-dev=$FIRST_VERSION; then
+                echo -e "${GREEN}>>> Successfully installed libssl-dev version $FIRST_VERSION${NC}"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Third attempt: try to download and install directly
+    echo -e "${CYAN}Attempting manual download and installation...${NC}"
+    TEMP_DIR="$TMP_DIR/libssl"
+    mkdir -p "$TEMP_DIR"
+    cd "$TEMP_DIR"
+    
+    apt-get download libssl-dev &>/dev/null
+    if [ $? -eq 0 ] && [ -f *.deb ]; then
+        echo -e "${CYAN}Downloaded package. Attempting installation...${NC}"
+        if dpkg -i *.deb; then
+            echo -e "${GREEN}>>> Successfully installed libssl-dev using dpkg${NC}"
+            cd - &>/dev/null
+            return 0
+        fi
+    fi
+    cd - &>/dev/null
+    
+    # Fourth attempt: try alternative packages
+    for alt_pkg in "libssl1.1-dev" "libssl3-dev" "libssl1.0-dev"; do
+        echo -e "${CYAN}Trying alternative package: $alt_pkg${NC}"
+        if timeout 120 apt-get install -y $alt_pkg; then
+            echo -e "${GREEN}>>> Successfully installed $alt_pkg as an alternative${NC}"
+            echo -e "${YELLOW}>>> Note: Using $alt_pkg instead of libssl-dev${NC}"
+            return 0
+        fi
+    done
+    
+    # Final fallback: try to install openssl binary and headers
+    echo -e "${CYAN}Trying to install openssl package...${NC}"
+    if timeout 120 apt-get install -y openssl; then
+        echo -e "${YELLOW}>>> Installed openssl binary, but development headers may be missing${NC}"
+        echo -e "${YELLOW}>>> Some features requiring OpenSSL development headers may not work${NC}"
+        return 1
+    fi
+    
+    echo -e "${RED}>>> Failed to install OpenSSL development libraries${NC}"
+    echo -e "${YELLOW}>>> Some cryptographic features may not work correctly${NC}"
+    return 1
+}
+
 # Create necessary directories
 echo -e "${YELLOW}>>> Creating necessary directories...${NC}"
 mkdir -p logs scan_results msf_resources generated_scripts workspaces
@@ -175,32 +247,8 @@ for package in "${essential_packages[@]}"; do
     fi
 done
 
-# Install OpenSSL development libraries (with support for multiple package names)
-if [ "$SKIP_LIBSSL" = false ]; then
-    echo -e "${YELLOW}>>> Installing OpenSSL development libraries...${NC}"
-    
-    # Try different package names from most recent to oldest
-    ssl_packages=("libssl-dev" "libssl1.1-dev" "libssl1.0.2-dev" "libssl1.0-dev")
-    ssl_installed=false
-    
-    for ssl_package in "${ssl_packages[@]}"; do
-        echo -e "${CYAN}Trying to install $ssl_package...${NC}"
-        apt-get install -y --no-install-recommends "$ssl_package" 2>/dev/null
-        
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}>>> Successfully installed $ssl_package${NC}"
-            ssl_installed=true
-            break
-        fi
-    done
-    
-    if [ "$ssl_installed" = false ]; then
-        echo -e "${YELLOW}>>> Warning: Failed to install OpenSSL development libraries${NC}"
-        echo -e "${YELLOW}>>> Some cryptographic features may not work correctly${NC}"
-    fi
-else
-    echo -e "${YELLOW}>>> Skipping OpenSSL development libraries installation${NC}"
-fi
+# Install OpenSSL development libraries
+install_libssl_dev
 
 # Additional important libraries that might be needed
 additional_libs=(
@@ -212,26 +260,115 @@ for lib in "${additional_libs[@]}"; do
     safe_install_package "$lib"
 done
 
+# Trap to handle script interruptions
+trap_script_interruption() {
+    echo -e "\n${RED}>>> Installation interrupted. Cleaning up...${NC}"
+    
+    # Kill any running processes
+    pkill -P $$ 2>/dev/null || true
+    
+    # Remove temporary directories
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+
+    # Clean up package management locks if needed
+    if [ -f /var/lib/dpkg/lock-frontend ]; then
+        rm -f /var/lib/dpkg/lock-frontend
+        rm -f /var/lib/dpkg/lock
+        rm -f /var/cache/apt/archives/lock
+    fi
+    
+    echo -e "${YELLOW}>>> Installation was interrupted. Some components may not be installed properly.${NC}"
+    exit 1
+}
+
+# Set trap for interruptions
+trap trap_script_interruption INT TERM
+
+# Global temporary directory
+TMP_DIR=$(mktemp -d)
+
 # Install Metasploit Framework only if not skipped
 if [ "$SKIP_MSF" = false ]; then
     echo -e "${YELLOW}>>> Installing Metasploit Framework (this may take some time)...${NC}"
     
-    if ! safe_install_package "metasploit-framework"; then
-        echo -e "${YELLOW}>>> Warning: Failed to install Metasploit Framework${NC}"
-        echo -e "${YELLOW}>>> Metasploit features will not be available${NC}"
-    else
-        # Make sure PostgreSQL is installed and running for Metasploit
-        safe_install_package "postgresql"
+    # First make sure PostgreSQL is installed
+    safe_install_package "postgresql" false
+    
+    if ! dpkg -s "metasploit-framework" &>/dev/null; then
+        # Try repository installation first
+        echo -e "${CYAN}Attempting to install metasploit-framework from repositories...${NC}"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends metasploit-framework
         
-        # Initialize Metasploit database
-        echo -e "${YELLOW}>>> Initializing Metasploit database...${NC}"
+        if [ $? -ne 0 ]; then
+            echo -e "${YELLOW}>>> Repository installation failed. Trying alternative installation...${NC}"
+            
+            # Make sure we have the prerequisites
+            prerequisites=("curl" "gnupg2" "ruby" "ruby-dev" "build-essential" "patch")
+            for prereq in "${prerequisites[@]}"; do
+                safe_install_package "$prereq" false
+            done
+            
+            # Try downloading and installing from Rapid7
+            echo -e "${CYAN}Adding Metasploit Framework repository...${NC}"
+            curl -fsSL https://apt.metasploit.com/metasploit-framework.gpg.key | apt-key add -
+            echo "deb https://apt.metasploit.com/ kali main" > /etc/apt/sources.list.d/metasploit.list
+            apt-get update
+            
+            DEBIAN_FRONTEND=noninteractive apt-get install -y metasploit-framework
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}>>> Failed to install Metasploit Framework${NC}"
+                echo -e "${YELLOW}>>> Some penetration testing features will not be available${NC}"
+            else
+                echo -e "${GREEN}>>> Successfully installed Metasploit Framework from Rapid7 repository${NC}"
+            fi
+        else
+            echo -e "${GREEN}>>> Successfully installed Metasploit Framework from repository${NC}"
+        fi
+    else
+        echo -e "${GREEN}>>> Metasploit Framework is already installed${NC}"
+    fi
+    
+    # Initialize Metasploit database
+    if dpkg -s "metasploit-framework" &>/dev/null; then
+        echo -e "${YELLOW}>>> Configuring Metasploit database...${NC}"
+        
+        # Ensure PostgreSQL is running
+        if ! systemctl is-active --quiet postgresql; then
+            echo -e "${YELLOW}>>> Starting PostgreSQL service...${NC}"
+            systemctl start postgresql
+            systemctl enable postgresql
+        fi
+        
+        # Initialize msfdb
         if command -v msfdb &>/dev/null; then
+            echo -e "${CYAN}Initializing Metasploit database...${NC}"
             msfdb init || echo -e "${YELLOW}>>> Warning: msfdb initialization failed. Some features may not work correctly.${NC}"
         fi
     fi
 else
-    echo -e "${YELLOW}>>> Skipping Metasploit Framework installation${NC}"
+    echo -e "${YELLOW}>>> Skipping Metasploit Framework installation (--no-msf flag detected)${NC}"
 fi
+
+# Clean up at the end of the script
+cleanup() {
+    echo -e "${YELLOW}>>> Cleaning up temporary files...${NC}"
+    
+    # Remove temporary directory
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+    
+    # Fix any broken packages
+    echo -e "${YELLOW}>>> Fixing any broken packages...${NC}"
+    apt-get -f install -y || true
+    
+    echo -e "${GREEN}>>> Cleanup completed${NC}"
+}
+
+# Register cleanup function to run at script exit
+trap cleanup EXIT
 
 # Ensure nmap has proper permissions
 echo -e "${YELLOW}>>> Setting proper permissions for nmap...${NC}"
@@ -422,7 +559,7 @@ fi
 # Final summary
 echo ""
 echo -e "${GREEN}╔═════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║           AI_MAL Installation Complete           ║${NC}"
+echo -e "${GREEN}║           AI_MAL Installation Complete          ║${NC}"
 echo -e "${GREEN}╚═════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${GREEN}>>> You can now run AI_MAL with: AI_MAL <target> [options]${NC}"

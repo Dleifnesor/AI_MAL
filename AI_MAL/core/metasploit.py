@@ -12,6 +12,9 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import subprocess
 from pathlib import Path
+import sys
+import time
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -701,4 +704,380 @@ exploit -j
         else:
             table.append(separator)
             
-        return "\n".join(table) 
+        return "\n".join(table)
+
+    def is_msf_available(self) -> bool:
+        """
+        Check if Metasploit Framework is available and properly configured.
+        
+        Returns:
+            bool: True if MSF is available, False otherwise.
+        """
+        try:
+            # Check if the msf executables exist
+            msf_paths = [
+                '/usr/bin/msfconsole',
+                '/usr/share/metasploit-framework/msfconsole',
+                '/opt/metasploit-framework/bin/msfconsole'
+            ]
+            
+            msf_exists = False
+            for path in msf_paths:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    msf_exists = True
+                    break
+                    
+            if not msf_exists:
+                logger.warning("Metasploit Framework executables not found.")
+                return False
+                
+            # Check if PostgreSQL service is running (required for MSF database)
+            try:
+                postgresql_running = False
+                if sys.platform.startswith('linux'):
+                    # Try systemctl first
+                    result = subprocess.run(['systemctl', 'is-active', 'postgresql'], 
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    postgresql_running = result.returncode == 0
+                    
+                    # If systemctl failed, try ps
+                    if not postgresql_running:
+                        result = subprocess.run(['ps', '-A'], stdout=subprocess.PIPE)
+                        postgresql_running = b'postgres' in result.stdout
+                elif sys.platform.startswith('win'):
+                    # Check for PostgreSQL service on Windows
+                    result = subprocess.run(['sc', 'query', 'postgresql'], 
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    postgresql_running = b'RUNNING' in result.stdout
+                
+                if not postgresql_running:
+                    logger.warning("PostgreSQL service is not running. MSF database may not work properly.")
+                    # Return True anyway since MSF can work without database
+            except Exception as e:
+                logger.warning(f"Error checking PostgreSQL service: {str(e)}")
+                # Continue even if we can't check PostgreSQL
+                
+            # Try to run a simple MSF command to verify it works
+            try:
+                result = subprocess.run(['msfconsole', '-q', '-x', 'version; exit'], 
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      timeout=10)
+                if result.returncode != 0:
+                    logger.warning("Failed to run Metasploit command.")
+                    return False
+                
+                logger.info("Metasploit Framework is available and properly configured.")
+                return True
+                
+            except subprocess.TimeoutExpired:
+                logger.warning("Timeout while trying to run Metasploit command.")
+                return False
+            except Exception as e:
+                logger.warning(f"Error checking Metasploit: {str(e)}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking Metasploit availability: {str(e)}")
+            return False
+
+    def find_exploits_for_service(self, service_name: str, version: str = None) -> List[Dict[str, Any]]:
+        """
+        Find Metasploit exploits for a specific service and optional version.
+        
+        Args:
+            service_name: The name of the service to find exploits for.
+            version: Optional version string to refine search.
+            
+        Returns:
+            A list of exploit information dictionaries.
+        """
+        logger.info(f"Searching for exploits for {service_name} {version or ''}")
+        
+        # Create resource script
+        script_content = f"""
+        workspace -a {self.workspace}
+        use auxiliary/scanner/smb/smb_version
+        search {service_name} type:exploit
+        """
+        
+        if version:
+            script_content += f"\nsearch {service_name} {version} type:exploit\n"
+        
+        script_content += "exit\n"
+        
+        # Save resource script
+        script_path = Path(self.msf_resources_dir) / f"search_{service_name.replace('/', '_')}.rc"
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Run Metasploit with resource script
+        try:
+            result = subprocess.run(
+                ['msfconsole', '-q', '-r', str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Error running Metasploit search: {result.stderr}")
+                return []
+            
+            # Parse output to extract exploits
+            exploits = self._parse_msf_search_output(result.stdout)
+            logger.info(f"Found {len(exploits)} potential exploits for {service_name}")
+            
+            return exploits
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Metasploit search timed out")
+            return []
+        except Exception as e:
+            logger.error(f"Error searching for exploits: {str(e)}")
+            return []
+
+    def _parse_msf_search_output(self, output: str) -> List[Dict[str, Any]]:
+        """
+        Parse the output of a Metasploit search command.
+        
+        Args:
+            output: The stdout from msfconsole.
+            
+        Returns:
+            A list of exploit information dictionaries.
+        """
+        exploits = []
+        
+        # Extract the search results table
+        if "Matching Modules" in output:
+            lines = output.split("\n")
+            table_start = False
+            
+            for line in lines:
+                if "===" in line and "Matching Modules" in line:
+                    table_start = True
+                    continue
+                
+                if table_start and line.strip() and not line.startswith("="):
+                    # Parse the line to extract exploit info
+                    try:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            exploit_path = parts[-1]
+                            exploit_name = exploit_path.split('/')[-1]
+                            exploit_rank = parts[0] if parts[0] != "#" else parts[1]
+                            
+                            exploits.append({
+                                "name": exploit_name,
+                                "path": exploit_path,
+                                "rank": exploit_rank,
+                                "full_line": line.strip()
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error parsing exploit line: {line} - {str(e)}")
+        
+        return exploits
+
+    def run_exploit(self, exploit_path: str, target_ip: str, target_port: int) -> Dict[str, Any]:
+        """
+        Run a Metasploit exploit against a target.
+        
+        Args:
+            exploit_path: The path to the exploit module.
+            target_ip: The IP address of the target.
+            target_port: The port to target.
+            
+        Returns:
+            A dictionary with the results of the exploit attempt.
+        """
+        logger.info(f"Attempting to run exploit {exploit_path} against {target_ip}:{target_port}")
+        
+        # Create resource script
+        script_content = f"""
+        workspace -a {self.workspace}
+        use {exploit_path}
+        set RHOSTS {target_ip}
+        set RPORT {target_port}
+        show options
+        check
+        run
+        exit
+        """
+        
+        # Save resource script
+        script_path = Path(self.msf_resources_dir) / f"exploit_{exploit_path.replace('/', '_')}_{target_ip}_{target_port}.rc"
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Run Metasploit with resource script
+        try:
+            result = subprocess.run(
+                ['msfconsole', '-q', '-r', str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=300  # 5 minutes timeout
+            )
+            
+            output = result.stdout
+            
+            # Parse output to determine success or failure
+            exploit_result = {
+                "success": "SUCCESS" in output or "session" in output.lower(),
+                "output": output,
+                "exploit": exploit_path,
+                "target": f"{target_ip}:{target_port}"
+            }
+            
+            if exploit_result["success"]:
+                logger.info(f"Exploit {exploit_path} appears to have succeeded against {target_ip}:{target_port}")
+            else:
+                logger.info(f"Exploit {exploit_path} did not succeed against {target_ip}:{target_port}")
+            
+            return exploit_result
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"Exploit {exploit_path} timed out")
+            return {
+                "success": False,
+                "output": "Timed out after 5 minutes",
+                "exploit": exploit_path,
+                "target": f"{target_ip}:{target_port}"
+            }
+        except Exception as e:
+            logger.error(f"Error running exploit: {str(e)}")
+            return {
+                "success": False,
+                "output": f"Error: {str(e)}",
+                "exploit": exploit_path,
+                "target": f"{target_ip}:{target_port}"
+            }
+
+    def scan_for_vulnerabilities(self, target_ip: str, ports: List[int] = None) -> Dict[str, Any]:
+        """
+        Run Metasploit vulnerability scanners against a target.
+        
+        Args:
+            target_ip: The IP address of the target.
+            ports: Optional list of ports to scan.
+            
+        Returns:
+            A dictionary with the vulnerability scan results.
+        """
+        logger.info(f"Running vulnerability scan against {target_ip}")
+        
+        # Create resource script
+        script_content = f"""
+        workspace -a {self.workspace}
+        db_nmap -sV {target_ip}
+        """
+        
+        if ports:
+            port_str = ",".join(map(str, ports))
+            script_content = f"""
+            workspace -a {self.workspace}
+            db_nmap -sV -p {port_str} {target_ip}
+            """
+        
+        script_content += """
+        use auxiliary/scanner/smb/smb_version
+        set RHOSTS %s
+        run
+        use auxiliary/scanner/http/http_version
+        set RHOSTS %s
+        run
+        use auxiliary/scanner/ssh/ssh_version
+        set RHOSTS %s
+        run
+        use auxiliary/scanner/ftp/ftp_version
+        set RHOSTS %s
+        run
+        vulns
+        exit
+        """ % (target_ip, target_ip, target_ip, target_ip)
+        
+        # Save resource script
+        script_path = Path(self.msf_resources_dir) / f"vuln_scan_{target_ip.replace('.', '_')}.rc"
+        with open(script_path, 'w') as f:
+            f.write(script_content)
+        
+        # Run Metasploit with resource script
+        try:
+            result = subprocess.run(
+                ['msfconsole', '-q', '-r', str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=600  # 10 minutes timeout
+            )
+            
+            output = result.stdout
+            
+            # Parse vulnerability output
+            vulns = self._parse_vulnerability_output(output)
+            
+            scan_result = {
+                "target": target_ip,
+                "vulnerabilities": vulns,
+                "raw_output": output
+            }
+            
+            logger.info(f"Vulnerability scan complete for {target_ip}. Found {len(vulns)} potential vulnerabilities.")
+            
+            return scan_result
+            
+        except subprocess.TimeoutExpired:
+            logger.error(f"Vulnerability scan for {target_ip} timed out")
+            return {
+                "target": target_ip,
+                "vulnerabilities": [],
+                "raw_output": "Timed out after 10 minutes",
+                "error": "Scan timed out"
+            }
+        except Exception as e:
+            logger.error(f"Error running vulnerability scan: {str(e)}")
+            return {
+                "target": target_ip,
+                "vulnerabilities": [],
+                "raw_output": f"Error: {str(e)}",
+                "error": str(e)
+            }
+
+    def _parse_vulnerability_output(self, output: str) -> List[Dict[str, Any]]:
+        """
+        Parse the output of a Metasploit vulnerability scan.
+        
+        Args:
+            output: The stdout from msfconsole.
+            
+        Returns:
+            A list of vulnerability information dictionaries.
+        """
+        vulnerabilities = []
+        
+        # Extract vulnerability table
+        if "Vulnerabilities" in output:
+            lines = output.split("\n")
+            table_start = False
+            
+            for line in lines:
+                if "===" in line and "Vulnerabilities" in line:
+                    table_start = True
+                    continue
+                
+                if table_start and line.strip() and not line.startswith("="):
+                    # Parse the line to extract vulnerability info
+                    try:
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            vuln_info = {
+                                "name": " ".join(parts[1:-1]),
+                                "reference": parts[-1],
+                                "full_line": line.strip()
+                            }
+                            vulnerabilities.append(vuln_info)
+                    except Exception as e:
+                        logger.warning(f"Error parsing vulnerability line: {line} - {str(e)}")
+        
+        return vulnerabilities 

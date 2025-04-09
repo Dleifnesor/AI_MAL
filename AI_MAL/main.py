@@ -77,6 +77,7 @@ from AI_MAL.core.adaptive import AdaptiveScanner
 from AI_MAL.core.ai_manager import AIManager
 from AI_MAL.core.metasploit import MetasploitManager
 from AI_MAL.core.script_generator import ScriptGenerator
+from AI_MAL.core.network_scanner import NetworkScanner
 
 # Load environment variables
 load_dotenv()
@@ -103,11 +104,32 @@ else:
     console = None
 
 class AI_MAL:
-    def __init__(self, target: str, **kwargs):
-        """Initialize AI_MAL with target and optional parameters."""
-        self.target = target
-        self.logger = logging.getLogger(__name__)
-        self.kwargs = kwargs
+    def __init__(self, config: Dict[str, Any] = None, **kwargs) -> None:
+        """
+        Initialize the AI_MAL penetration testing framework.
+        
+        Args:
+            config: Configuration dictionary with scan parameters.
+            **kwargs: Additional parameters for customization.
+        """
+        self.config = config or {}
+        self.logger = logging.getLogger("ai_mal")
+        
+        # Initialize managers
+        self._initialize_managers()
+        
+        # Verify Ollama availability before initializing AI models
+        if self.ai_manager.is_ollama_available():
+            self.logger.info("Ollama service is available")
+            self._initialize_ai_models()
+        else:
+            self.logger.warning("Ollama service is not available - AI analysis will be limited")
+        
+        # Parse arguments
+        self.verbose = kwargs.get("verbose", False)
+        self.ai_analysis = kwargs.get("ai_analysis", False)
+        self.exploit_generation = kwargs.get("generate_exploits", False)
+        self.msf_execution = kwargs.get("run_msf", False)
         
         # Set up logging directory
         log_dir = kwargs.get('log_dir', os.getenv('LOG_DIR', 'logs'))
@@ -124,20 +146,7 @@ class AI_MAL:
             logger.info(f"Using fallback log directory: {log_dir}")
         
         # Initialize scanner
-        self.scanner = AdaptiveScanner(target)
-        
-        # Initialize AI manager
-        self.ai_manager = AIManager(
-            model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
-            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
-        )
-        
-        # Create a workspace name based on target and timestamp
-        workspace = f"AI_MAL_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
-        self.msf_manager = MetasploitManager(workspace=workspace)
-        
-        # Initialize script generator
-        self.script_generator = ScriptGenerator()
+        self.scanner = AdaptiveScanner(kwargs.get('target', ''))
         
         # Set UI options
         self.quiet = kwargs.get('quiet', False)
@@ -148,16 +157,16 @@ class AI_MAL:
         if self.exfil_enabled:
             self.exfil_dir = Path(os.getenv('EXFIL_DIR', 'exfiltrated_data'))
             try:
-            self.exfil_dir.mkdir(exist_ok=True)
-            self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
-            self.exfil_target_dir.mkdir(exist_ok=True)
-            logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+                self.exfil_dir.mkdir(exist_ok=True)
+                self.exfil_target_dir = self.exfil_dir / kwargs.get('target', '').replace('.', '_')
+                self.exfil_target_dir.mkdir(exist_ok=True)
+                logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
             except Exception as e:
                 logger.warning(f"Failed to create exfiltration directory: {str(e)}")
                 # Fallback to current directory
                 self.exfil_dir = Path(os.getcwd()) / 'exfiltrated_data'
                 self.exfil_dir.mkdir(exist_ok=True)
-                self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
+                self.exfil_target_dir = self.exfil_dir / kwargs.get('target', '').replace('.', '_')
                 self.exfil_target_dir.mkdir(exist_ok=True)
                 logger.info(f"Using fallback exfiltration directory: {self.exfil_target_dir}")
             
@@ -173,7 +182,7 @@ class AI_MAL:
                 # Create directory for implant logs
                 self.implant_logs_dir = Path(os.getenv('IMPLANT_LOGS_DIR', 'implant_logs'))
                 try:
-                self.implant_logs_dir.mkdir(exist_ok=True)
+                    self.implant_logs_dir.mkdir(exist_ok=True)
                 except Exception as e:
                     logger.warning(f"Failed to create implant logs directory: {str(e)}")
                     # Fallback to current directory
@@ -181,167 +190,79 @@ class AI_MAL:
                     self.implant_logs_dir.mkdir(exist_ok=True)
                     logger.info(f"Using fallback implant logs directory: {self.implant_logs_dir}")
         
-    async def run(self) -> Dict[str, Any]:
-        """Run the AI_MAL scan and analysis."""
+    def run(self, target: str = None, scan_type: str = "basic", **kwargs) -> Dict[str, Any]:
+        """
+        Run the AI_MAL scan and analysis.
+        
+        Args:
+            target: Target IP address, network range, or hostname.
+            scan_type: Type of scan to perform ('basic', 'stealth', 'aggressive').
+            **kwargs: Additional scan parameters.
+            
+        Returns:
+            Dict containing scan results and analysis information.
+        """
+        if not target:
+            if "target" in self.config:
+                target = self.config["target"]
+            else:
+                error_msg = "No target specified for scan"
+                self.logger.error(error_msg)
+                return {"error": error_msg}
+        
+        # Update arguments from kwargs
+        self.verbose = kwargs.get("verbose", self.verbose)
+        self.ai_analysis = kwargs.get("ai_analysis", self.ai_analysis)
+        self.exploit_generation = kwargs.get("generate_exploits", self.exploit_generation)
+        self.msf_execution = kwargs.get("run_msf", self.msf_execution)
+        
+        # Log enabled features
+        if self.verbose:
+            self.logger.setLevel(logging.DEBUG)
+            self.logger.debug("Verbose logging enabled")
+        
+        self.logger.info(f"Starting scan on target: {target}")
+        if self.ai_analysis:
+            self.logger.info("AI analysis enabled")
+            
+            # Verify Ollama availability again before starting scan
+            if not self.ai_manager.is_ollama_available():
+                self.logger.warning("Ollama service is not available - AI analysis will be skipped")
+                self.ai_analysis = False
+        
+        if self.exploit_generation:
+            self.logger.info("Exploit generation enabled")
+        
+        if self.msf_execution:
+            self.logger.info("Metasploit execution enabled")
+            if not self.msf_manager.is_msf_available():
+                self.logger.warning("Metasploit is not available - MSF functions will be skipped")
+                self.msf_execution = False
+        
+        # Build scan configuration
+        scan_config = self._build_scan_config(target, scan_type, **kwargs)
+        
+        # Initialize network scanner with configuration
+        self.logger.info(f"Initializing network scanner with {scan_type} scan configuration")
+        self.scanner = NetworkScanner(scan_config)
+        
+        # Run the scan
         try:
-            # Get available network interfaces
-            interfaces = self._get_network_interfaces()
-            if not interfaces:
-                self.logger.error("No network interfaces found")
-                return {"error": "No network interfaces found"}
+            self.logger.info("Starting network scan")
+            scan_results = self.scanner.scan()
+            self.logger.info(f"Scan completed: found {len(scan_results.get('hosts', []))} hosts")
             
-            # Create scan configuration
-            scan_config = {
-                "target": self.target,
-                "interface": interfaces[0],  # Use first available interface
-                "scan_type": "aggressive",
-                "ports": "1-65535",
-                "services": True,
-                "version_detection": True,
-                "os_detection": True,
-                "vulnerability_scan": True,
-                "timeout": 300,  # 5 minutes timeout
-                "retries": 3,
-                "host_timeout": "5m",
-                "min_rate": 1000,
-                "max_retries": 3,
-                "min_parallelism": 10,
-                "max_parallelism": 100,
-                "min_hostgroup": 1,
-                "max_hostgroup": 100,
-                "scan_delay": 0,
-                "max_scan_delay": 0,
-                "initial_rtt_timeout": 1000,
-                "min_rtt_timeout": 100,
-                "max_rtt_timeout": 10000,
-                "max_retries": 3,
-                "host_timeout": "5m",
-                "script_timeout": "5m",
-                "scanflags": "SYN",
-                "ip_options": "",
-                "ttl": 0,
-                "spoof_mac": "",
-                "badsum": False,
-                "adler32": False,
-                "version_intensity": 9,
-                "light": False,
-                "version_all": True,
-                "version_trace": False,
-                "sC": True,  # Default scripts
-                "sV": True,  # Version detection
-                "O": True,   # OS detection
-                "A": True,   # Aggressive scan
-                "T4": True,  # Timing template (aggressive)
-                "n": False,  # No DNS resolution
-                "R": False,  # Never do DNS resolution
-                "PE": True,  # ICMP echo
-                "PP": True,  # ICMP timestamp
-                "PM": True,  # ICMP netmask
-                "PS": True,  # TCP SYN ping
-                "PA": True,  # TCP ACK ping
-                "PU": True,  # UDP ping
-                "PY": True,  # SCTP INIT ping
-                "PO": True,  # IP protocol ping
-                "PR": True,  # ARP ping
-                "disable_arp_ping": False,
-                "traceroute": True,
-                "reason": True,
-                "stats_every": "10s",
-                "packet_trace": True,
-                "iflist": True,
-                "append_output": True,
-                "resume": False,
-                "stylesheet": "",
-                "webxml": "",
-                "no_stylesheet": True,
-                "privileged": True,
-                "unprivileged": False,
-                "send_eth": True,
-                "send_ip": False,
-                "nmap_path": "nmap",
-                "datadir": "",
-                "servicedb": "",
-                "versiondb": "",
-                "min_hostgroup": 1,
-                "max_hostgroup": 100,
-                "min_parallelism": 10,
-                "max_parallelism": 100,
-                "min_rtt_timeout": 100,
-                "max_rtt_timeout": 10000,
-                "initial_rtt_timeout": 1000,
-                "max_retries": 3,
-                "host_timeout": "5m",
-                "scan_delay": 0,
-                "max_scan_delay": 0,
-                "min_rate": 1000,
-                "max_rate": 0,
-                "defeat_rst_ratelimit": True,
-                "defeat_icmp_ratelimit": True,
-                "nsock_engine": "epoll",
-                "proxies": "",
-                "badsum": False,
-                "adler32": False,
-                "version_intensity": 9,
-                "light": False,
-                "version_all": True,
-                "version_trace": False,
-                "sC": True,
-                "sV": True,
-                "O": True,
-                "A": True,
-                "T4": True,
-                "n": False,
-                "R": False,
-                "PE": True,
-                "PP": True,
-                "PM": True,
-                "PS": True,
-                "PA": True,
-                "PU": True,
-                "PY": True,
-                "PO": True,
-                "PR": True,
-                "disable_arp_ping": False,
-                "traceroute": True,
-                "reason": True,
-                "stats_every": "10s",
-                "packet_trace": True,
-                "iflist": True,
-                "append_output": True,
-                "resume": False,
-                "stylesheet": "",
-                "webxml": "",
-                "no_stylesheet": True,
-                "privileged": True,
-                "unprivileged": False,
-                "send_eth": True,
-                "send_ip": False,
-                "nmap_path": "nmap",
-                "datadir": "",
-                "servicedb": "",
-                "versiondb": ""
-            }
+            # Process results
+            results = self._process_scan_results(scan_results)
             
-            # Initialize scanner
-            scanner = AdaptiveScanner(self.target)
-            
-            # Run scan
-            self.logger.info(f"Starting scan of {self.target} using interface {interfaces[0]}")
-            scan_results = await scanner.scan(**scan_config)
-            
-            # Analyze results
-            if scan_results:
-                analysis = await self._analyze_results(scan_results)
-                        self._display_ai_results(analysis)
-                return scan_results
-                        else:
-                self.logger.error("Scan failed to return results")
-                return {"error": "Scan failed to return results"}
-                
+            return results
         except Exception as e:
-            self.logger.error(f"Error during scan: {str(e)}")
-            return {"error": str(e)}
-            
+            error_msg = f"Error during scan execution: {str(e)}"
+            self.logger.error(error_msg)
+            if self.verbose:
+                self.logger.exception("Full exception:")
+            return {"error": error_msg}
+
     def _get_network_interfaces(self) -> List[str]:
         """Get available network interfaces."""
         try:
@@ -370,10 +291,10 @@ class AI_MAL:
    AI-Powered Penetration Testing Tool
         """
         console.print(Panel(banner, border_style="green"))
-        console.print(f"Target: [bold red]{self.target}[/bold red]")
+        console.print(f"Target: [bold red]{self.config.get('target', 'Unknown')}[/bold red]")
         
         # Display primary and fallback models
-        primary_model = self.ai_manager.primary_model
+        primary_model = self.ai_manager.model
         fallback_model = self.ai_manager.fallback_model
         console.print(f"Primary AI: [bold cyan]{primary_model}[/bold cyan]")
         
@@ -386,13 +307,13 @@ class AI_MAL:
             console.print(f"Available models: [green]{model_count}[/green] Ollama models detected")
             
         # Display additional scan information
-        scan_type = "Aggressive" if self.kwargs.get('vuln', False) else "Stealth" if self.kwargs.get('stealth', False) else "Standard"
+        scan_type = "Aggressive" if self.config.get('vuln', False) else "Stealth" if self.config.get('stealth', False) else "Standard"
         console.print(f"Scan type: [yellow]{scan_type}[/yellow]")
         
-        if self.kwargs.get('msf', False):
+        if self.config.get('msf', False):
             console.print(f"[red]Metasploit integration: Enabled[/red]")
             
-        if self.kwargs.get('full_auto', False):
+        if self.config.get('full_auto', False):
             console.print(f"[red bold]Full auto mode: Enabled[/red bold]")
             
         console.print()
@@ -402,7 +323,7 @@ class AI_MAL:
         if not RICH_AVAILABLE or self.quiet:
             return
             
-        table = Table(title=f"Scan Summary for {self.target}")
+        table = Table(title=f"Scan Summary for {self.config.get('target', 'Unknown')}")
         table.add_column("Host", style="cyan")
         table.add_column("Status", style="green")
         table.add_column("Open Ports", style="yellow")
@@ -442,7 +363,7 @@ class AI_MAL:
             
             # Create a table for the results
             table = Table(show_header=True, header_style="bold magenta", box=ROUNDED)
-        table.add_column("Category", style="cyan")
+            table.add_column("Category", style="cyan")
             table.add_column("Details", style="white")
 
             # Add rows based on analysis content
@@ -469,7 +390,7 @@ class AI_MAL:
             
         # Define a consistent fixed-width table layout
         table = Table(
-            title=f"Potential Exploits for {self.target}",
+            title=f"Potential Exploits for {self.config.get('target', 'Unknown')}",
             box=box.MINIMAL_HEAVY_HEAD,
             show_header=True,
             header_style="bold",
@@ -675,7 +596,7 @@ class AI_MAL:
         if not self.implant_enabled or not self.implant_path:
             return {'success': False}
             
-        logger.info(f"Starting implant deployment to {self.target}")
+        logger.info(f"Starting implant deployment to {self.config.get('target', 'Unknown')}")
         results = {
             'success': False,
             'successful_targets': [],
@@ -707,7 +628,7 @@ class AI_MAL:
         # Log the deployment attempt
         with open(implant_log_file, 'w') as log:
             log.write(f"Implant deployment at {timestamp}\n")
-            log.write(f"Target: {self.target}\n")
+            log.write(f"Target: {self.config.get('target', 'Unknown')}\n")
             log.write(f"Implant: {self.implant_path}\n\n")
         
         for host in hosts:
@@ -1218,95 +1139,582 @@ class AI_MAL:
         
         return success
 
-    def _initialize_ai_models(self):
-        """Initialize AI models for analysis"""
+    def _initialize_ai_models(self) -> None:
+        """Initialize AI models for analysis."""
         try:
-            # First check if Ollama service is running
-            if not self._check_ollama_service():
-                logger.error("Ollama service not running. AI analysis will not be available.")
-                rprint("[bold red]Ollama service not running. AI analysis will not be available.[/]")
-                return False
-
-            # Get available models
-            available_models = self._get_available_models()
-            logger.info(f"Available models: {available_models}")
+            # Try to pull models if needed
+            llama3_available = self.ai_manager.pull_model(self.ai_manager.model)
+            gemma_available = self.ai_manager.pull_model(self.ai_manager.fallback_model)
             
-            if not available_models:
-                logger.warning("No Ollama models available")
-                rprint("[bold yellow]No Ollama models available. Will attempt to pull required models.[/]")
-                
-                # Try to pull primary model
-                if self._pull_model("artifish/llama3.2-uncensored"):
-                    self.primary_model = "artifish/llama3.2-uncensored"
-                    logger.info(f"Primary model set to {self.primary_model}")
-                    rprint(f"[bold green]Successfully pulled model: {self.primary_model}[/]")
-                # Try smaller model if primary fails
-                elif self._pull_model("gemma:1b"):
-                    self.primary_model = "gemma:1b"
-                    logger.info(f"Primary model set to {self.primary_model}")
-                    rprint(f"[bold green]Successfully pulled fallback model: {self.primary_model}[/]")
-                else:
-                    logger.error("Failed to pull any AI models")
-                    rprint("[bold red]Failed to pull any AI models. AI analysis will not be available.[/]")
-                    return False
+            if not llama3_available and not gemma_available:
+                self.logger.error("Failed to initialize AI models - check Ollama installation")
             else:
-                # Prioritize models in order of preference
-                if "artifish/llama3.2-uncensored" in available_models:
-                    self.primary_model = "artifish/llama3.2-uncensored"
-                elif "gemma:1b" in available_models:
-                    self.primary_model = "gemma:1b"
-                else:
-                    # Use first available model
-                    self.primary_model = available_models[0]
-                
-                logger.info(f"Using model: {self.primary_model}")
-                rprint(f"[bold green]Using AI model: {self.primary_model}[/]")
-            
-            return True
-            
+                self.logger.info(f"AI models initialized successfully: {self.ai_manager.model} and/or {self.ai_manager.fallback_model}")
         except Exception as e:
-            logger.error(f"Error initializing AI models: {str(e)}")
-            if self.kwargs.get('debug', False):
-                import traceback
-                traceback.print_exc()
-            return False
+            self.logger.error(f"Error initializing AI models: {str(e)}")
 
-    def _check_ollama_service(self) -> bool:
-        """Check if Ollama service is running"""
+    def _initialize_managers(self) -> None:
+        """Initialize various managers for AI_MAL components."""
         try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags")
-            return response.status_code == 200
-        except Exception as e:
-            self.logger.error(f"Error checking Ollama service: {str(e)}")
-            return False
-
-    def _get_available_models(self) -> List[str]:
-        """Get list of available Ollama models"""
-        try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags")
-            if response.status_code == 200:
-                models = response.json().get("models", [])
-                return [model["name"] for model in models]
-            return []
-        except Exception as e:
-            self.logger.error(f"Error getting available models: {str(e)}")
-            return []
-
-    def _pull_model(self, model_name: str) -> bool:
-        """Pull a model from Ollama"""
-        try:
-            import requests
-            self.logger.info(f"Pulling model: {model_name}")
-            response = requests.post(
-                "http://localhost:11434/api/pull",
-                json={"name": model_name}
+            # Initialize AI manager
+            self.ai_manager = AIManager(
+                model=self.config.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
+                fallback_model=self.config.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
             )
-            return response.status_code == 200
+            
+            # Create a workspace name based on target and timestamp
+            target = self.config.get('target', 'unknown')
+            workspace = f"AI_MAL_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d')}"
+            self.msf_manager = MetasploitManager(workspace=workspace)
+            
+            # Initialize script generator
+            self.script_generator = ScriptGenerator()
+            
+            self.logger.debug("All managers initialized successfully")
         except Exception as e:
-            self.logger.error(f"Error pulling model {model_name}: {str(e)}")
-            return False
+            self.logger.error(f"Error initializing managers: {str(e)}")
+            if self.config.get('verbose', False):
+                self.logger.exception("Manager initialization exception:")
+
+    def _build_scan_config(self, target: str, scan_type: str, **kwargs) -> Dict[str, Any]:
+        """
+        Build a scan configuration based on the given parameters.
+        
+        Args:
+            target: Target IP address, network range, or hostname.
+            scan_type: Type of scan to perform ('basic', 'stealth', 'aggressive').
+            **kwargs: Additional scan parameters.
+            
+        Returns:
+            Dict containing scan configuration parameters.
+        """
+        # Update target in config
+        self.config['target'] = target
+        
+        # Get network interfaces
+        network_interfaces = self._get_network_interfaces()
+        interface = kwargs.get('interface', None)
+        
+        if not interface and network_interfaces:
+            interface = network_interfaces[0]
+            self.logger.info(f"No interface specified, using: {interface}")
+        
+        # Base configuration
+        scan_config = {
+            "target": target,
+            "interface": interface,
+            "scan_type": scan_type,
+            "ports": kwargs.get("ports", "1-1024" if scan_type == "basic" else "1-65535"),
+            "timeout": kwargs.get("timeout", 120 if scan_type == "basic" else 300),
+            "max_retries": kwargs.get("max_retries", 2 if scan_type == "basic" else 3),
+            "service_detection": True,
+            "os_detection": scan_type != "basic",
+            "results_dir": "scan_results"
+        }
+        
+        # Add advanced options based on scan type
+        if scan_type == "aggressive":
+            scan_config.update({
+                "min_parallelism": 10,
+                "max_parallelism": 100,
+                "min_hostgroup": 64,
+                "max_hostgroup": 256,
+                "min_rate": 1000,
+                "max_rate": 5000,
+                "scanflags": "SYN",
+                "ping_types": ["ICMP", "TCP", "UDP", "SCTP"],
+                "timing_template": 4,
+                "script_scan": True,
+                "vuln_detection": True,
+                "packet_trace": self.verbose,
+                "stats_every": 10,  # Show stats every 10 seconds
+            })
+        elif scan_type == "stealth":
+            scan_config.update({
+                "min_parallelism": 1,
+                "max_parallelism": 10,
+                "min_hostgroup": 1,
+                "max_hostgroup": 32,
+                "min_rate": 10,
+                "max_rate": 100,
+                "timing_template": 2,
+                "ping_types": ["TCP"],
+                "script_scan": False,
+                "vuln_detection": False,
+                "packet_trace": False,
+            })
+        
+        # Override with any additional kwargs
+        scan_config.update({k: v for k, v in kwargs.items() if k not in ["target", "scan_type"]})
+        
+        return scan_config
+
+    def _process_scan_results(self, scan_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process scan results and perform analysis.
+        
+        Args:
+            scan_results: Raw scan results from the network scanner.
+            
+        Returns:
+            Dict containing processed results and analysis information.
+        """
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "target": self.config.get("target", "unknown"),
+            "hosts": [],
+            "summary": {
+                "hosts_total": 0,
+                "hosts_up": 0,
+                "ports_open": 0,
+                "vulnerabilities": 0
+            }
+        }
+        
+        if "error" in scan_results:
+            results["error"] = scan_results["error"]
+            self.logger.error(f"Scan error: {scan_results['error']}")
+            return results
+        
+        # Extract host information
+        hosts = scan_results.get("hosts", [])
+        results["summary"]["hosts_total"] = len(hosts)
+        
+        for host in hosts:
+            if host.get("status") != "up":
+                continue
+            
+            results["summary"]["hosts_up"] += 1
+            self.logger.info(f"Processing host: {host['ip']}")
+            
+            # Extract host information
+            host_info = {
+                "ip": host["ip"],
+                "hostname": host.get("hostname", ""),
+                "os": host.get("os", {}),
+                "ports": [],
+                "services": {}
+            }
+            
+            # Process ports and services
+            for port in host.get("ports", []):
+                if port.get("state") == "open":
+                    results["summary"]["ports_open"] += 1
+                    host_info["ports"].append(port)
+                    
+                    # Extract service information
+                    service_name = port.get("service", {}).get("name", "unknown")
+                    if service_name not in host_info["services"]:
+                        host_info["services"][service_name] = []
+                    
+                    host_info["services"][service_name].append(port)
+            
+            # Analyze with AI if enabled
+            if self.ai_analysis:
+                try:
+                    self.logger.info(f"Starting AI analysis for host {host['ip']}")
+                    host_info["ai_analysis"] = self._analyze_with_ai(host_info)
+                    
+                    # Display AI results
+                    self._display_ai_results(host_info["ai_analysis"])
+                    
+                    # Count vulnerabilities identified by AI
+                    if "vulnerabilities" in host_info["ai_analysis"]:
+                        vuln_count = len(host_info["ai_analysis"]["vulnerabilities"].split('\n'))
+                        results["summary"]["vulnerabilities"] += vuln_count
+                except Exception as e:
+                    self.logger.error(f"Error during AI analysis: {str(e)}")
+                    if self.verbose:
+                        self.logger.exception("AI analysis exception:")
+                    host_info["ai_analysis"] = {"error": str(e)}
+            
+            # Generate exploit scripts if enabled
+            if self.exploit_generation:
+                try:
+                    self.logger.info(f"Generating exploit scripts for host {host['ip']}")
+                    scripts = self._generate_exploit_scripts(host_info)
+                    host_info["exploit_scripts"] = scripts
+                except Exception as e:
+                    self.logger.error(f"Error generating exploit scripts: {str(e)}")
+                    if self.verbose:
+                        self.logger.exception("Script generation exception:")
+                    host_info["exploit_scripts"] = {"error": str(e)}
+            
+            # Run MSF modules if enabled
+            if self.msf_execution:
+                try:
+                    self.logger.info(f"Running Metasploit modules for host {host['ip']}")
+                    msf_results = self._run_msf_modules(host_info)
+                    host_info["msf_results"] = msf_results
+                except Exception as e:
+                    self.logger.error(f"Error running MSF modules: {str(e)}")
+                    if self.verbose:
+                        self.logger.exception("MSF execution exception:")
+                    host_info["msf_results"] = {"error": str(e)}
+            
+            # Add processed host info to results
+            results["hosts"].append(host_info)
+        
+        # Log summary
+        self.logger.info(f"Scan summary: {results['summary']['hosts_up']} hosts up, "
+                         f"{results['summary']['ports_open']} open ports, "
+                         f"{results['summary']['vulnerabilities']} potential vulnerabilities")
+        
+        return results
+
+    def _analyze_with_ai(self, host_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze host information with AI models.
+        
+        Args:
+            host_info: Dictionary containing host information from the scan.
+            
+        Returns:
+            Dictionary containing AI analysis results.
+        """
+        self.logger.info(f"Analyzing host {host_info['ip']} with AI")
+        
+        # Prepare the prompt for the AI
+        prompt = f"""
+You are an expert penetration tester analyzing a network scan.
+Analyze the following scan results and provide:
+1. A general assessment of the target
+2. Potential vulnerabilities
+3. Recommended next steps for penetration testing
+
+Target Information:
+IP: {host_info['ip']}
+Hostname: {host_info.get('hostname', 'Unknown')}
+OS: {host_info.get('os', {}).get('name', 'Unknown')}
+
+Open Ports:
+"""
+
+        # Add port information to the prompt
+        for port in host_info.get('ports', []):
+            service = port.get('service', {})
+            service_name = service.get('name', 'unknown')
+            service_version = service.get('version', 'unknown version')
+            prompt += f"- Port {port.get('port')}/{port.get('protocol', 'tcp')}: {service_name} {service_version}\n"
+        
+        try:
+            # Attempt analysis with the AI model
+            analysis_result = self.ai_manager.analyze_text(prompt)
+            
+            # Parse the result into structured categories
+            analysis = {}
+            
+            # Look for sections in the response
+            if "Target Assessment" in analysis_result or "Target Analysis" in analysis_result:
+                sections = analysis_result.split("\n\n")
+                for section in sections:
+                    if section.startswith("Target Assessment") or section.startswith("Target Analysis"):
+                        analysis["target_analysis"] = section.split("\n", 1)[1] if "\n" in section else ""
+                    elif section.startswith("Potential Vulnerabilities") or section.startswith("Vulnerabilities"):
+                        analysis["vulnerabilities"] = section.split("\n", 1)[1] if "\n" in section else ""
+                    elif section.startswith("Recommended") or section.startswith("Next Steps"):
+                        analysis["recommendations"] = section.split("\n", 1)[1] if "\n" in section else ""
+            else:
+                # Simple parsing if the AI didn't use clear sections
+                parts = analysis_result.split("\n\n")
+                if len(parts) >= 3:
+                    analysis["target_analysis"] = parts[0]
+                    analysis["vulnerabilities"] = parts[1] 
+                    analysis["recommendations"] = parts[2]
+                else:
+                    analysis["target_analysis"] = analysis_result
+            
+            # Add the model used for the analysis
+            analysis["model_used"] = self.ai_manager.model
+            
+            return analysis
+        except Exception as e:
+            self.logger.error(f"Error during AI analysis: {str(e)}")
+            return {"error": f"AI analysis failed: {str(e)}"}
+
+    def _generate_exploit_scripts(self, host_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate exploit scripts for identified vulnerabilities.
+        
+        Args:
+            host_info: Dictionary containing host information from the scan.
+            
+        Returns:
+            Dictionary containing generated scripts.
+        """
+        if not self.script_generator:
+            self.logger.error("Script generator not initialized")
+            return {"error": "Script generator not initialized"}
+        
+        results = {"scripts": []}
+        
+        try:
+            # Process each open port
+            for port in host_info.get('ports', []):
+                if port.get('state') != 'open':
+                    continue
+                    
+                port_num = port.get('port')
+                protocol = port.get('protocol', 'tcp')
+                service = port.get('service', {})
+                service_name = service.get('name', 'unknown')
+                service_version = service.get('version', '')
+                
+                # Skip ports without useful service information
+                if service_name == 'unknown':
+                    continue
+                    
+                self.logger.info(f"Generating exploit script for {service_name} {service_version} on port {port_num}")
+                
+                # Generate script based on service
+                script_info = {
+                    "port": port_num,
+                    "service": service_name,
+                    "version": service_version,
+                    "scripts": []
+                }
+                
+                # Check for common vulnerability patterns
+                if service_name in ['http', 'https']:
+                    # Web server exploits
+                    web_script = self.script_generator.generate_web_exploit(
+                        host_info['ip'], 
+                        port_num, 
+                        service_name,
+                        service_version
+                    )
+                    if web_script:
+                        script_info["scripts"].append({
+                            "type": "web",
+                            "filename": f"web_exploit_{host_info['ip']}_{port_num}.py",
+                            "content": web_script
+                        })
+                
+                elif service_name in ['ssh', 'telnet', 'ftp', 'smtp', 'smb', 'samba']:
+                    # Service enumeration
+                    enum_script = self.script_generator.generate_service_enum(
+                        host_info['ip'],
+                        port_num,
+                        service_name
+                    )
+                    if enum_script:
+                        script_info["scripts"].append({
+                            "type": "enumeration",
+                            "filename": f"{service_name}_enum_{host_info['ip']}_{port_num}.py",
+                            "content": enum_script
+                        })
+                
+                # Add to results if we generated any scripts
+                if script_info["scripts"]:
+                    results["scripts"].append(script_info)
+                    
+                    # Save scripts to files
+                    scripts_dir = os.path.join("generated_scripts", host_info['ip'].replace('.', '_'))
+                    os.makedirs(scripts_dir, exist_ok=True)
+                    
+                    for script in script_info["scripts"]:
+                        script_path = os.path.join(scripts_dir, script["filename"])
+                        with open(script_path, 'w') as f:
+                            f.write(script["content"])
+                        
+                        self.logger.info(f"Saved script to {script_path}")
+                        # Update script info with the path
+                        script["path"] = script_path
+            
+            # Add AI-powered general exploitation script
+            if self.ai_analysis:
+                try:
+                    general_script = self._generate_ai_exploit_script(host_info)
+                    if general_script:
+                        # Save the AI-generated script
+                        scripts_dir = os.path.join("generated_scripts", host_info['ip'].replace('.', '_'))
+                        os.makedirs(scripts_dir, exist_ok=True)
+                        
+                        script_path = os.path.join(scripts_dir, f"ai_exploit_{host_info['ip']}.py")
+                        with open(script_path, 'w') as f:
+                            f.write(general_script)
+                        
+                        results["ai_exploit"] = {
+                            "filename": f"ai_exploit_{host_info['ip']}.py",
+                            "path": script_path
+                        }
+                        
+                        self.logger.info(f"Generated and saved AI exploit script to {script_path}")
+                except Exception as e:
+                    self.logger.error(f"Error generating AI exploit script: {str(e)}")
+                
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error generating exploit scripts: {str(e)}")
+            return {"error": f"Script generation failed: {str(e)}"}
+
+    def _generate_ai_exploit_script(self, host_info: Dict[str, Any]) -> str:
+        """
+        Generate an exploit script using AI based on host information.
+        
+        Args:
+            host_info: Dictionary containing host information from the scan.
+            
+        Returns:
+            String containing the generated script.
+        """
+        prompt = f"""
+Generate a Python reconnaissance and potential exploitation script for a penetration test target with the following specifications:
+
+Target IP: {host_info['ip']}
+Hostname: {host_info.get('hostname', 'Unknown')}
+OS: {host_info.get('os', {}).get('name', 'Unknown')}
+
+Open ports and services:
+"""
+
+        # Add port information
+        for port in host_info.get('ports', []):
+            if port.get('state') == 'open':
+                service = port.get('service', {})
+                prompt += f"- Port {port.get('port')}/{port.get('protocol', 'tcp')}: {service.get('name', 'unknown')} {service.get('version', '')}\n"
+        
+        prompt += """
+Create a Python script that:
+1. Performs basic reconnaissance on these services
+2. Checks for common vulnerabilities
+3. Implements safe probing techniques
+4. Logs all findings in a structured format
+
+IMPORTANT: The script should be non-destructive and suitable for authorized penetration testing.
+Include clear comments and error handling.
+"""
+
+        try:
+            script = self.ai_manager.generate_code(prompt)
+            
+            # Add header with disclaimer
+            header = """#!/usr/bin/env python3
+# AI-MAL Generated Reconnaissance Script
+# DISCLAIMER: This script is for authorized penetration testing only.
+# Using this against systems without permission is illegal.
+
+"""
+            # Add imports if they're not already there
+            imports = """
+import sys
+import socket
+import requests
+import logging
+from datetime import datetime
+import argparse
+import time
+from concurrent.futures import ThreadPoolExecutor
+"""
+
+            # Check if the script already has imports
+            if "import" not in script[:200]:
+                script = header + imports + script
+            else:
+                script = header + script
+            
+            return script
+        except Exception as e:
+            self.logger.error(f"Error generating AI exploit script: {str(e)}")
+            return ""
+
+    def _run_msf_modules(self, host_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run Metasploit modules against vulnerable services.
+        
+        Args:
+            host_info: Dictionary containing host information from the scan.
+            
+        Returns:
+            Dictionary containing MSF execution results.
+        """
+        if not self.msf_manager:
+            self.logger.error("Metasploit manager not initialized")
+            return {"error": "Metasploit manager not initialized"}
+        
+        results = {
+            "host": host_info['ip'],
+            "exploits_run": [],
+            "successful_exploits": []
+        }
+        
+        try:
+            # Process each open port
+            for port in host_info.get('ports', []):
+                if port.get('state') != 'open':
+                    continue
+                    
+                port_num = port.get('port')
+                protocol = port.get('protocol', 'tcp')
+                service = port.get('service', {})
+                service_name = service.get('name', 'unknown')
+                service_version = service.get('version', '')
+                
+                # Skip ports without useful service information
+                if service_name == 'unknown':
+                    continue
+                    
+                self.logger.info(f"Searching exploits for {service_name} {service_version} on port {port_num}")
+                
+                # Find exploits for the service
+                exploits = self.msf_manager.find_exploits_for_service(service_name, service_version)
+                
+                if not exploits:
+                    self.logger.info(f"No exploits found for {service_name} {service_version}")
+                    continue
+                    
+                self.logger.info(f"Found {len(exploits)} potential exploits for {service_name}")
+                
+                # Run only the first exploit for each service to avoid overwhelming the system
+                if exploits:
+                    exploit_path = exploits[0]["path"]
+                    
+                    self.logger.info(f"Running exploit {exploit_path} against {host_info['ip']}:{port_num}")
+                    
+                    # Run the exploit
+                    exploit_result = self.msf_manager.run_exploit(
+                        exploit_path,
+                        host_info['ip'],
+                        port_num
+                    )
+                    
+                    results["exploits_run"].append({
+                        "port": port_num,
+                        "service": service_name,
+                        "exploit": exploit_path,
+                        "result": exploit_result
+                    })
+                    
+                    if exploit_result.get("success"):
+                        self.logger.info(f"Exploit {exploit_path} succeeded against {host_info['ip']}:{port_num}")
+                        results["successful_exploits"].append({
+                            "port": port_num,
+                            "service": service_name,
+                            "exploit": exploit_path
+                        })
+            
+            # Run vulnerability scan if no specific exploits were run
+            if not results["exploits_run"]:
+                self.logger.info(f"Running general vulnerability scan against {host_info['ip']}")
+                
+                # Get all port numbers
+                port_list = [port.get('port') for port in host_info.get('ports', []) 
+                             if port.get('state') == 'open' and port.get('port')]
+                
+                # Run vulnerability scan
+                vuln_scan_result = self.msf_manager.scan_for_vulnerabilities(
+                    host_info['ip'],
+                    port_list
+                )
+                
+                results["vulnerability_scan"] = vuln_scan_result
+                
+            return results
+        
+        except Exception as e:
+            self.logger.error(f"Error running MSF modules: {str(e)}")
+            return {"error": f"MSF execution failed: {str(e)}"}
 
 async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
     """
@@ -1574,7 +1982,7 @@ Examples:
     args_dict = vars(args)
     target = args_dict.pop('target')  # Remove target from args dict to avoid duplicate argument
     print(f"Initializing AI_MAL with target: {target}")
-    ai_mal = AI_MAL(target, **args_dict)
+    ai_mal = AI_MAL(config={"target": target}, **args_dict)
 
     try:
         print("Creating event loop...")
@@ -1582,7 +1990,7 @@ Examples:
         # This fixes the deprecation warning
         loop = configure_event_loop()
         print("Starting AI_MAL run...")
-        scan_results = loop.run_until_complete(ai_mal.run())
+        results = ai_mal.run(target=target)
         
         # Ensure proper cleanup of the event loop
         print("Cleaning up event loop...")
@@ -1592,7 +2000,7 @@ Examples:
         print("Saving scan results...")
         output_file = os.path.join(output_dir, f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         with open(output_file, 'w') as f:
-            json.dump(scan_results, f, indent=2)
+            json.dump(results, f, indent=2)
         
         print(f"Scan results saved to: ")
         print(output_file)
@@ -1604,8 +2012,8 @@ Examples:
     except Exception as e:
         print(f"Fatal error: {str(e)}")
         # Print traceback for debugging
-            import traceback
-            traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return 1
     
 def clean_up_loop(loop):

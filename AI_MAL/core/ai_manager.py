@@ -11,23 +11,50 @@ from typing import Dict, List, Optional, Any
 import aiohttp
 from dotenv import load_dotenv
 import re
+import requests
 
-logger = logging.getLogger(__name__)
+# Configure logging
+logger = logging.getLogger("AI_MAL.ai_manager")
 
 # Load environment variables
 load_dotenv()
 
 class AIManager:
     def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'gemma:1b'):
-        """Initialize the AI Manager with specified or default model."""
-        self.model = model if model else 'artifish/llama3.2-uncensored'
-        self.fallback_model = fallback_model if fallback_model else 'gemma:1b'
-        self.active_model = None
-        self.ollama_url = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')
-        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma:1b']
+        """
+        Initialize the AI manager.
         
-        # Track available models
+        Args:
+            model: The primary Ollama model to use.
+            fallback_model: The fallback Ollama model to use if primary fails.
+        """
+        self.model = model
+        self.fallback_model = fallback_model
+        self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        
+        # Initialize session for API requests
+        self.session = requests.Session()
         self.available_models = []
+        
+        # Try to get available models
+        try:
+            self.available_models = self._get_available_models()
+            if self.available_models:
+                logger.info(f"Available Ollama models: {', '.join(self.available_models)}")
+        except Exception as e:
+            logger.warning(f"Could not retrieve available models: {str(e)}")
+
+    def _get_available_models(self) -> List[str]:
+        """Get list of available models from Ollama."""
+        try:
+            response = self.session.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return [model["name"] for model in data.get("models", [])]
+            return []
+        except Exception as e:
+            logger.error(f"Error getting available models: {str(e)}")
+            return []
 
     async def list_available_models(self) -> List[str]:
         """List all available models in Ollama"""
@@ -197,7 +224,7 @@ Format your response clearly using these exact headings.
             logger.warning(f"Error with fallback model: {str(e)}")
         
         # Backup models attempt
-        for backup_model in self.backup_models:
+        for backup_model in self.available_models:
             try:
                 # Check using case-insensitive comparison
                 is_available = backup_model in available_models or backup_model.lower() in available_models_lower
@@ -559,4 +586,225 @@ Recommendations:
             
         except Exception as e:
             logger.error(f"Error querying Ollama API: {str(e)}")
-            return f"API Error: {str(e)}" 
+            return f"API Error: {str(e)}"
+
+    def is_ollama_available(self) -> bool:
+        """
+        Check if Ollama service is available and configured properly.
+        
+        Returns:
+            bool: True if Ollama is available, False otherwise.
+        """
+        try:
+            # Check if Ollama API is responsive
+            response = self.session.get(f"{self.ollama_url}/api/tags", timeout=5)
+            
+            if response.status_code == 200:
+                # Get available models
+                models = response.json().get("models", [])
+                logger.info(f"Ollama service is available with {len(models)} models")
+                
+                # Check if our models are available
+                primary_available = any(model.get("name") == self.model for model in models)
+                fallback_available = any(model.get("name") == self.fallback_model for model in models)
+                
+                if primary_available:
+                    logger.info(f"Primary model '{self.model}' is available")
+                else:
+                    logger.warning(f"Primary model '{self.model}' is not available")
+                    
+                if fallback_available:
+                    logger.info(f"Fallback model '{self.fallback_model}' is available")
+                else:
+                    logger.warning(f"Fallback model '{self.fallback_model}' is not available")
+                    
+                # Return True if at least one model is available
+                return primary_available or fallback_available
+            else:
+                logger.warning(f"Ollama API returned status code {response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"Error checking Ollama availability: {str(e)}")
+            return False
+        
+    def pull_model(self, model_name: str) -> bool:
+        """
+        Pull a model from Ollama if it's not already available.
+        
+        Args:
+            model_name: The name of the model to pull.
+            
+        Returns:
+            bool: True if the model was pulled successfully or already exists, False otherwise.
+        """
+        try:
+            # Check if model already exists
+            response = self.session.get(f"{self.ollama_url}/api/tags", timeout=5)
+            
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                if any(model.get("name") == model_name for model in models):
+                    logger.info(f"Model '{model_name}' is already available")
+                    return True
+                    
+            # Model doesn't exist, pull it
+            logger.info(f"Pulling model '{model_name}' from Ollama")
+            
+            pull_data = {"name": model_name}
+            response = self.session.post(f"{self.ollama_url}/api/pull", json=pull_data, timeout=600)  # 10 minute timeout
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully pulled model '{model_name}'")
+                return True
+            else:
+                logger.error(f"Failed to pull model '{model_name}': {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error pulling model '{model_name}': {str(e)}")
+            return False
+
+    def analyze_text(self, prompt: str) -> str:
+        """
+        Analyze text using the selected Ollama model.
+        
+        Args:
+            prompt: The prompt to send to the AI model.
+            
+        Returns:
+            String containing the AI's response.
+        """
+        try:
+            # First try the primary model
+            logger.info(f"Analyzing text with model {self.model}")
+            
+            # Set up the request payload
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,  # Low temperature for more analytical responses
+                    "top_p": 0.9
+                }
+            }
+            
+            # Make the API request
+            response = self.session.post(f"{self.ollama_url}/api/generate", json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("response", "No response from AI")
+            else:
+                logger.warning(f"Primary model failed with status {response.status_code}: {response.text}")
+                
+                # Try fallback model
+                logger.info(f"Trying fallback model {self.fallback_model}")
+                payload["model"] = self.fallback_model
+                
+                response = self.session.post(f"{self.ollama_url}/api/generate", json=payload, timeout=60)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result.get("response", "No response from AI")
+                else:
+                    logger.error(f"Both models failed. Fallback error: {response.status_code}: {response.text}")
+                    return "AI analysis failed. Please check Ollama service."
+        except Exception as e:
+            logger.error(f"Error querying Ollama API: {str(e)}")
+            return f"API Error: {str(e)}"
+
+    def generate_code(self, prompt: str) -> str:
+        """
+        Generate code using the selected Ollama model.
+        
+        Args:
+            prompt: The prompt describing the code to generate.
+            
+        Returns:
+            String containing the generated code.
+        """
+        try:
+            # Enhance the prompt for code generation
+            enhanced_prompt = f"""
+You are an expert security programmer. Write clean, secure Python code based on the following request.
+Focus on creating well-structured code with proper error handling. Do not include explanations - just code.
+
+REQUEST:
+{prompt}
+
+IMPORTANT: 
+- Return ONLY the code, no explanations
+- Include proper imports
+- Use appropriate security best practices
+- Include descriptive comments
+"""
+            
+            # Set up the request payload with parameters optimized for code generation
+            payload = {
+                "model": self.model,
+                "prompt": enhanced_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.2,  # Lower temperature for more deterministic code
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "num_predict": 2048  # Allow for longer outputs
+                }
+            }
+            
+            # Make the API request
+            response = self.session.post(f"{self.ollama_url}/api/generate", json=payload, timeout=120)
+            
+            if response.status_code == 200:
+                result = response.json()
+                code = result.get("response", "")
+                
+                # Clean up the code: remove markdown code blocks if present
+                if code.startswith("```python"):
+                    code = code.replace("```python", "", 1)
+                    if code.endswith("```"):
+                        code = code[:-3]
+                elif code.startswith("```"):
+                    code = code.replace("```", "", 1)
+                    if code.endswith("```"):
+                        code = code[:-3]
+                    
+                # Ensure code has proper shebang if it's a complete script
+                if "import" in code and not code.startswith("#!/usr/bin/env python3"):
+                    code = "#!/usr/bin/env python3\n" + code
+                    
+                return code.strip()
+            else:
+                logger.warning(f"Code generation failed: {response.status_code}: {response.text}")
+                
+                # Try fallback model
+                logger.info(f"Trying fallback model {self.fallback_model} for code generation")
+                payload["model"] = self.fallback_model
+                
+                response = self.session.post(f"{self.ollama_url}/api/generate", json=payload, timeout=120)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    code = result.get("response", "")
+                    
+                    # Clean up the code: remove markdown code blocks if present
+                    if code.startswith("```python"):
+                        code = code.replace("```python", "", 1)
+                        if code.endswith("```"):
+                            code = code[:-3]
+                    elif code.startswith("```"):
+                        code = code.replace("```", "", 1)
+                        if code.endswith("```"):
+                            code = code[:-3]
+                        
+                    # Ensure code has proper shebang if it's a complete script
+                    if "import" in code and not code.startswith("#!/usr/bin/env python3"):
+                        code = "#!/usr/bin/env python3\n" + code
+                        
+                    return code.strip()
+                else:
+                    logger.error(f"Both models failed for code generation. Fallback error: {response.status_code}")
+                    return "# Code generation failed. Please check Ollama service."
+        except Exception as e:
+            logger.error(f"Error generating code: {str(e)}")
+            return f"# Error: {str(e)}" 
