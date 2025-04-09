@@ -16,13 +16,87 @@ NC='\033[0m'
 # Trap for cleanup on interruption
 cleanup() {
     echo -e "\n${YELLOW}>>> Installation interrupted. Cleaning up...${NC}"
-    # Kill any running processes
+    # Kill any hanging processes
+    kill_hanging_apt
     jobs -p | xargs -r kill
     exit 1
 }
 
+# Function to safely kill a possibly hanging apt process
+kill_hanging_apt() {
+    echo -e "${YELLOW}>>> Detected potential hanging apt process. Attempting to resolve...${NC}"
+    
+    # Find all apt/dpkg processes
+    apt_pids=$(pgrep -f "apt|dpkg" || echo "")
+    
+    if [ -n "$apt_pids" ]; then
+        echo -e "${YELLOW}>>> Found apt/dpkg processes: $apt_pids${NC}"
+        echo -e "${YELLOW}>>> Sending SIGTERM to processes...${NC}"
+        
+        # Try gentle termination first
+        for pid in $apt_pids; do
+            kill -15 $pid 2>/dev/null
+        done
+        
+        # Wait a bit and check if they're still running
+        sleep 5
+        
+        # Get remaining processes
+        remaining_pids=$(pgrep -f "apt|dpkg" || echo "")
+        
+        if [ -n "$remaining_pids" ]; then
+            echo -e "${YELLOW}>>> Some processes still running. Sending SIGKILL...${NC}"
+            for pid in $remaining_pids; do
+                kill -9 $pid 2>/dev/null
+            done
+        fi
+    fi
+    
+    # Wait for locks to clear
+    echo -e "${YELLOW}>>> Waiting for apt/dpkg locks to clear...${NC}"
+    sleep 10
+    
+    # Check for and remove lock files
+    if [ -f /var/lib/dpkg/lock-frontend ]; then
+        echo -e "${YELLOW}>>> Removing dpkg lock files...${NC}"
+        rm -f /var/lib/dpkg/lock-frontend
+        rm -f /var/lib/dpkg/lock
+        rm -f /var/cache/apt/archives/lock
+    fi
+    
+    # Repair potentially broken dpkg
+    echo -e "${YELLOW}>>> Attempting to configure any unconfigured packages...${NC}"
+    dpkg --configure -a
+    
+    echo -e "${GREEN}>>> Package management system should now be usable again${NC}"
+}
+
 # Set up trap for SIGINT (Ctrl+C) and SIGTERM
 trap cleanup SIGINT SIGTERM
+
+# Add a trap for long-running apt processes
+trap_apt_hang() {
+    # This function is called periodically during the script execution
+    if [ -n "$APT_START_TIME" ]; then
+        current_time=$(date +%s)
+        elapsed=$((current_time - APT_START_TIME))
+        
+        # If an apt process has been running for more than 15 minutes (900 seconds)
+        if [ $elapsed -gt 900 ]; then
+            echo -e "${RED}>>> APT process has been running for $elapsed seconds, which is too long${NC}"
+            kill_hanging_apt
+            unset APT_START_TIME
+        fi
+    fi
+}
+
+# Set up trap for SIGALRM to check for hanging apt processes every minute
+(while true; do sleep 60; kill -ALRM $$ 2>/dev/null || exit 0; done) &
+WATCHDOG_PID=$!
+trap "trap_apt_hang" ALRM
+
+# Clean up the watchdog process on exit
+trap "kill $WATCHDOG_PID 2>/dev/null || true; cleanup" EXIT
 
 # Log file for detailed output
 LOG_FILE="install_log_$(date +%Y%m%d_%H%M%S).txt"
@@ -115,10 +189,15 @@ animated_progress() {
 
 # Parse command line arguments
 SKIP_MODELS=false
+SKIP_LIBSSL=false
 for arg in "$@"; do
   case $arg in
     --no-models)
       SKIP_MODELS=true
+      shift
+      ;;
+    --skip-libssl)
+      SKIP_LIBSSL=true
       shift
       ;;
   esac
@@ -163,31 +242,6 @@ if [ -f /etc/os-release ]; then
         upgrade_pid=$!
         spinner $upgrade_pid "${CYAN}Upgrading installed packages"
         
-        # Function to install a single package with direct output and timeout
-        install_package() {
-            local package=$1
-            local timeout_seconds=${2:-120}  # Default timeout 120 seconds, but can be overridden
-            
-            log_message "${CYAN}Installing $package...${NC}"
-            
-            # Use timeout command to prevent hanging
-            echo -e "${CYAN}Running: apt-get install -y $package (timeout: ${timeout_seconds}s)${NC}"
-            timeout $timeout_seconds apt-get install -y $package
-            
-            if [ $? -eq 0 ]; then
-                log_message "${GREEN}>>> Successfully installed $package${NC}"
-                return 0
-            elif [ $? -eq 124 ]; then
-                log_message "${RED}>>> Installation of $package timed out after $timeout_seconds seconds${NC}"
-                log_message "${YELLOW}>>> Continuing with remaining packages...${NC}"
-                return 1
-            else
-                log_message "${RED}>>> Failed to install $package${NC}"
-                log_message "${YELLOW}>>> Continuing with remaining packages...${NC}"
-                return 1
-            fi
-        }
-
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
         
@@ -195,9 +249,61 @@ if [ -f /etc/os-release ]; then
         echo -e "${YELLOW}>>> Installing base packages...${NC}"
         
         # Install problematic packages with longer timeouts and noninteractive mode for all
-        echo -e "${YELLOW}>>> Installing libssl-dev with extended timeout...${NC}"
-        export DEBIAN_FRONTEND=noninteractive
-        install_package "libssl-dev" 600
+        echo -e "${YELLOW}>>> Checking for libssl-dev package...${NC}"
+
+        # Check if we should skip libssl-dev installation
+        if [ "$SKIP_LIBSSL" = true ]; then
+            echo -e "${YELLOW}>>> Skipping libssl-dev installation (--skip-libssl flag detected)${NC}"
+            echo -e "${YELLOW}>>> Note: Some features requiring SSL/TLS might not work${NC}"
+        else
+            # Check if libssl-dev is already installed
+            if dpkg -s libssl-dev &> /dev/null; then
+                echo -e "${GREEN}>>> libssl-dev is already installed. Skipping installation.${NC}"
+            else
+                echo -e "${YELLOW}>>> Installing libssl-dev with extended timeout...${NC}"
+                export DEBIAN_FRONTEND=noninteractive
+                
+                # Set the start time for apt watchdog
+                APT_START_TIME=$(date +%s)
+                
+                # Try installing libssl-dev with an even longer timeout
+                echo -e "${YELLOW}>>> Attempting to install libssl-dev (timeout: 600s)...${NC}"
+                timeout 600 apt-get install -y libssl-dev
+                libssl_result=$?
+                
+                # Clear the APT start time
+                unset APT_START_TIME
+                
+                if [ $libssl_result -eq 124 ]; then
+                    echo -e "${RED}>>> libssl-dev installation timed out after 600 seconds${NC}"
+                    # Kill any hanging processes
+                    kill_hanging_apt
+                    
+                    echo -e "${YELLOW}>>> Checking if libssl-dev is actually installed despite the timeout...${NC}"
+                    if dpkg -s libssl-dev &> /dev/null; then
+                        echo -e "${GREEN}>>> libssl-dev appears to be installed correctly despite timeout${NC}"
+                    else
+                        echo -e "${YELLOW}>>> Will attempt installation one more time with --no-install-recommends...${NC}"
+                        APT_START_TIME=$(date +%s)
+                        timeout 300 apt-get install -y --no-install-recommends libssl-dev
+                        unset APT_START_TIME
+                        
+                        if dpkg -s libssl-dev &> /dev/null; then
+                            echo -e "${GREEN}>>> libssl-dev installed successfully on second attempt${NC}"
+                        else
+                            echo -e "${RED}>>> Will continue without libssl-dev. Some features may not work.${NC}"
+                            echo -e "${YELLOW}>>> You can retry later with: apt-get install -y libssl-dev${NC}"
+                            echo -e "${YELLOW}>>> Or run this script with --skip-libssl to skip this package${NC}"
+                        fi
+                    fi
+                elif [ $libssl_result -ne 0 ]; then
+                    echo -e "${RED}>>> Failed to install libssl-dev. Will continue without it.${NC}"
+                    echo -e "${YELLOW}>>> You may need to install it manually later with: apt-get install -y libssl-dev${NC}"
+                else
+                    echo -e "${GREEN}>>> Successfully installed libssl-dev${NC}"
+                fi
+            fi
+        fi
         
         # Install other base packages with noninteractive mode
         base_packages=(
