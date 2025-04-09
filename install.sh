@@ -47,6 +47,16 @@ for arg in "$@"; do
   esac
 done
 
+# Function to reset terminal
+reset_terminal() {
+    if command -v tput &>/dev/null; then
+        tput sgr0  # Reset all attributes
+        tput cnorm # Show cursor
+        tput cup 0 0 # Move cursor to home position
+        echo -e "\r" # Explicit carriage return
+    fi
+}
+
 # Function to handle errors
 handle_error() {
     echo -e "${RED}Error: $1${NC}"
@@ -96,7 +106,9 @@ safe_install_package() {
         for alt in "${alternatives[@]}"; do
             if check_package_availability "$alt"; then
                 echo -e "${YELLOW}>>> Found alternative package: $alt${NC}"
-                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$alt"
+                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$alt" 2>&1 | while read line; do
+                    echo -e "${CYAN}>>> $line${NC}"
+                done
                 if [ $? -eq 0 ]; then
                     echo -e "${GREEN}>>> Successfully installed alternative package: $alt${NC}"
                     return 0
@@ -115,10 +127,15 @@ safe_install_package() {
     fi
     
     # Install the package
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$package"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$package" 2>&1 | while read line; do
+        echo -e "${CYAN}>>> $line${NC}"
+    done
+    
     if [ $? -ne 0 ]; then
         echo -e "${YELLOW}>>> Failed to install $package. Trying with --fix-missing...${NC}"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing --no-install-recommends "$package"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-missing --no-install-recommends "$package" 2>&1 | while read line; do
+            echo -e "${CYAN}>>> $line${NC}"
+        done
         
         if [ $? -ne 0 ]; then
             if [ "$is_essential" = true ]; then
@@ -132,6 +149,7 @@ safe_install_package() {
     fi
     
     echo -e "${GREEN}>>> Successfully installed $package${NC}"
+    reset_terminal
     return 0
 }
 
@@ -732,11 +750,5 @@ echo -e "${GREEN}>>> For a local test, try: AI_MAL 127.0.0.1 --vuln --os${NC}"
 echo ""
 
 # Reset terminal to fix any formatting issues
-if command -v tput &>/dev/null; then
-    tput sgr0  # Reset all attributes
-    tput cnorm # Show cursor
-    tput cup 0 0 # Move cursor to home position
-    echo -e "\r" # Explicit carriage return
-fi
-
+reset_terminal
 exit 0 
