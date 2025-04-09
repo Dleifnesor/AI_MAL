@@ -13,14 +13,37 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
-# Trap for cleanup on interruption
+# Trap for cleanup on interruption - more aggressive handling
 cleanup() {
-    echo -e "\n${YELLOW}>>> Installation interrupted. Cleaning up...${NC}"
-    # Kill any hanging processes
-    kill_hanging_apt
-    jobs -p | xargs -r kill
+    echo -e "\n${RED}>>> EMERGENCY EXIT: Terminating all child processes and exiting immediately...${NC}"
+    
+    # Force kill all child processes
+    pkill -P $$
+    
+    # Kill any hanging apt/dpkg processes
+    for pid in $(pgrep -f "apt|dpkg"); do
+        kill -9 $pid 2>/dev/null || true
+    done
+    
+    # Remove any lock files
+    rm -f /var/lib/dpkg/lock-frontend 2>/dev/null || true
+    rm -f /var/lib/dpkg/lock 2>/dev/null || true
+    rm -f /var/cache/apt/archives/lock 2>/dev/null || true
+    
+    # Exit immediately with an error status
+    echo -e "${RED}>>> Installation was interrupted by user. System may need cleanup.${NC}"
+    echo -e "${RED}>>> Run 'dpkg --configure -a' if you experience package issues.${NC}"
+    
+    # Terminate with extreme prejudice - will exit regardless of what's happening
+    kill -9 $$ 2>/dev/null || true
     exit 1
 }
+
+# Set up more aggressive trap for SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM
+
+# Show message about Ctrl+C handling
+echo -e "${YELLOW}>>> Press Ctrl+C at any time for emergency exit${NC}"
 
 # Function to safely kill a possibly hanging apt process
 kill_hanging_apt() {
@@ -70,9 +93,6 @@ kill_hanging_apt() {
     
     echo -e "${GREEN}>>> Package management system should now be usable again${NC}"
 }
-
-# Set up trap for SIGINT (Ctrl+C) and SIGTERM
-trap cleanup SIGINT SIGTERM
 
 # Add a trap for long-running apt processes
 trap_apt_hang() {
@@ -187,6 +207,18 @@ animated_progress() {
     echo -e "] ${GREEN}Done!${NC}"
 }
 
+# Add to help message
+usage() {
+    echo "Usage: ./install.sh [OPTIONS]"
+    echo "Options:"
+    echo "  --no-models      Skip downloading AI models"
+    echo "  --skip-libssl    Skip installing libssl-dev"
+    echo "  --help           Show this help message"
+    echo ""
+    echo "Example: ./install.sh --no-models --skip-libssl"
+    exit 0
+}
+
 # Parse command line arguments
 SKIP_MODELS=false
 SKIP_LIBSSL=false
@@ -199,6 +231,9 @@ for arg in "$@"; do
     --skip-libssl)
       SKIP_LIBSSL=true
       shift
+      ;;
+    --help)
+      usage
       ;;
   esac
 done
@@ -234,13 +269,37 @@ if [ -f /etc/os-release ]; then
         
         # Update system packages
         echo -e "${YELLOW}>>> Updating system packages...${NC}"
-        apt-get update > /dev/null 2>&1 &
-        update_pid=$!
-        spinner $update_pid "${CYAN}Updating package lists"
+        echo -e "${CYAN}Running: apt-get update (timeout: 300s)${NC}"
+        APT_START_TIME=$(date +%s)
+        timeout 300 apt-get update > /dev/null 2>&1
+        update_status=$?
+        unset APT_START_TIME
 
-        apt-get upgrade -y > /dev/null 2>&1 &
-        upgrade_pid=$!
-        spinner $upgrade_pid "${CYAN}Upgrading installed packages"
+        if [ $update_status -eq 124 ]; then
+            echo -e "${RED}>>> Package update timed out. Killing hanging processes...${NC}"
+            kill_hanging_apt
+            echo -e "${YELLOW}>>> Continuing with installation${NC}"
+        elif [ $update_status -ne 0 ]; then
+            echo -e "${RED}>>> Package update failed with status $update_status. Continuing...${NC}"
+        else
+            echo -e "${GREEN}>>> Package lists updated successfully${NC}"
+        fi
+
+        echo -e "${CYAN}Running: apt-get upgrade -y (timeout: 600s)${NC}"
+        APT_START_TIME=$(date +%s)
+        timeout 600 apt-get upgrade -y > /dev/null 2>&1
+        upgrade_status=$?
+        unset APT_START_TIME
+
+        if [ $upgrade_status -eq 124 ]; then
+            echo -e "${RED}>>> Package upgrade timed out. Killing hanging processes...${NC}"
+            kill_hanging_apt
+            echo -e "${YELLOW}>>> Continuing with installation${NC}"
+        elif [ $upgrade_status -ne 0 ]; then
+            echo -e "${RED}>>> Package upgrade failed with status $upgrade_status. Continuing...${NC}"
+        else
+            echo -e "${GREEN}>>> System packages upgraded successfully${NC}"
+        fi
         
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
@@ -263,45 +322,59 @@ if [ -f /etc/os-release ]; then
                 echo -e "${YELLOW}>>> Installing libssl-dev with extended timeout...${NC}"
                 export DEBIAN_FRONTEND=noninteractive
                 
-                # Set the start time for apt watchdog
+                # Try a different approach for libssl-dev - using apt-get download and dpkg
+                echo -e "${YELLOW}>>> Using alternative installation method for libssl-dev...${NC}"
+                
+                # Create a temporary directory for downloads
+                temp_dir=$(mktemp -d)
+                cd "$temp_dir"
+                
+                # Try to download the package first
+                echo -e "${CYAN}Running: apt-get download libssl-dev (timeout: 300s)${NC}"
                 APT_START_TIME=$(date +%s)
-                
-                # Try installing libssl-dev with an even longer timeout
-                echo -e "${YELLOW}>>> Attempting to install libssl-dev (timeout: 600s)...${NC}"
-                timeout 600 apt-get install -y libssl-dev
-                libssl_result=$?
-                
-                # Clear the APT start time
-                unset APT_START_TIME
-                
-                if [ $libssl_result -eq 124 ]; then
-                    echo -e "${RED}>>> libssl-dev installation timed out after 600 seconds${NC}"
-                    # Kill any hanging processes
-                    kill_hanging_apt
+                if timeout 300 apt-get download libssl-dev; then
+                    echo -e "${GREEN}>>> Downloaded libssl-dev package${NC}"
                     
-                    echo -e "${YELLOW}>>> Checking if libssl-dev is actually installed despite the timeout...${NC}"
-                    if dpkg -s libssl-dev &> /dev/null; then
-                        echo -e "${GREEN}>>> libssl-dev appears to be installed correctly despite timeout${NC}"
-                    else
-                        echo -e "${YELLOW}>>> Will attempt installation one more time with --no-install-recommends...${NC}"
-                        APT_START_TIME=$(date +%s)
-                        timeout 300 apt-get install -y --no-install-recommends libssl-dev
-                        unset APT_START_TIME
+                    # Find the downloaded deb file
+                    deb_file=$(ls libssl-dev*.deb 2>/dev/null | head -n 1)
+                    
+                    if [ -n "$deb_file" ]; then
+                        echo -e "${CYAN}Running: dpkg -i $deb_file (timeout: 300s)${NC}"
+                        timeout 300 dpkg -i "$deb_file"
+                        dpkg_status=$?
                         
-                        if dpkg -s libssl-dev &> /dev/null; then
-                            echo -e "${GREEN}>>> libssl-dev installed successfully on second attempt${NC}"
+                        if [ $dpkg_status -eq 0 ]; then
+                            echo -e "${GREEN}>>> Successfully installed libssl-dev${NC}"
+                        elif [ $dpkg_status -eq 124 ]; then
+                            echo -e "${RED}>>> libssl-dev installation timed out${NC}"
+                            echo -e "${YELLOW}>>> Killing any hanging dpkg processes...${NC}"
+                            kill_hanging_apt
+                            
+                            echo -e "${YELLOW}>>> Checking if libssl-dev is actually installed despite timeout...${NC}"
+                            if dpkg -s libssl-dev &> /dev/null; then
+                                echo -e "${GREEN}>>> libssl-dev appears to be installed correctly despite timeout${NC}"
+                            else
+                                echo -e "${RED}>>> Will continue without libssl-dev. Some features may not work.${NC}"
+                                echo -e "${YELLOW}>>> You can retry later with: apt-get install -y libssl-dev${NC}"
+                                echo -e "${YELLOW}>>> Or run this script with --skip-libssl to skip this package${NC}"
+                            fi
                         else
-                            echo -e "${RED}>>> Will continue without libssl-dev. Some features may not work.${NC}"
-                            echo -e "${YELLOW}>>> You can retry later with: apt-get install -y libssl-dev${NC}"
-                            echo -e "${YELLOW}>>> Or run this script with --skip-libssl to skip this package${NC}"
+                            echo -e "${RED}>>> Failed to install libssl-dev with status $dpkg_status${NC}"
+                            echo -e "${YELLOW}>>> Will continue without libssl-dev. Some features may not work.${NC}"
                         fi
+                    else
+                        echo -e "${RED}>>> Could not find downloaded libssl-dev package${NC}"
+                        echo -e "${YELLOW}>>> Will continue without libssl-dev. Some features may not work.${NC}"
                     fi
-                elif [ $libssl_result -ne 0 ]; then
-                    echo -e "${RED}>>> Failed to install libssl-dev. Will continue without it.${NC}"
-                    echo -e "${YELLOW}>>> You may need to install it manually later with: apt-get install -y libssl-dev${NC}"
                 else
-                    echo -e "${GREEN}>>> Successfully installed libssl-dev${NC}"
+                    echo -e "${RED}>>> Failed to download libssl-dev package${NC}"
+                    echo -e "${YELLOW}>>> Will continue without libssl-dev. Some features may not work.${NC}"
                 fi
+                
+                # Clean up
+                cd - > /dev/null
+                rm -rf "$temp_dir"
+                unset APT_START_TIME
             fi
         fi
         
@@ -338,22 +411,92 @@ if [ -f /etc/os-release ]; then
 
         # Install Metasploit Framework separately (large package)
         echo -e "${YELLOW}>>> Installing Metasploit Framework (may take some time)...${NC}"
-        timeout 300 apt-get install -y metasploit-framework
-        if [ $? -ne 0 ]; then
-            log_message "${RED}>>> Error or timeout installing Metasploit. Will continue with other packages.${NC}"
+        echo -e "${CYAN}Running: apt-get install -y metasploit-framework (timeout: 900s)${NC}"
+        APT_START_TIME=$(date +%s)
+        timeout 900 apt-get install -y metasploit-framework
+        msf_status=$?
+        unset APT_START_TIME
+
+        if [ $msf_status -eq 124 ]; then
+            echo -e "${RED}>>> Metasploit installation timed out. Killing hanging processes...${NC}"
+            kill_hanging_apt
+            
+            # Check if it was actually installed despite timeout
+            if dpkg -s metasploit-framework &> /dev/null; then
+                echo -e "${GREEN}>>> Metasploit Framework appears to be installed correctly despite timeout${NC}"
+            else
+                echo -e "${YELLOW}>>> Will attempt installation one more time with --no-install-recommends...${NC}"
+                APT_START_TIME=$(date +%s)
+                timeout 600 apt-get install -y --no-install-recommends metasploit-framework
+                unset APT_START_TIME
+                
+                if dpkg -s metasploit-framework &> /dev/null; then
+                    echo -e "${GREEN}>>> Metasploit Framework installed successfully on second attempt${NC}"
+                else
+                    echo -e "${RED}>>> Metasploit Framework installation failed. Some features will not be available.${NC}"
+                fi
+            fi
+        elif [ $msf_status -ne 0 ]; then
+            echo -e "${RED}>>> Metasploit Framework installation failed with status $msf_status.${NC}"
+            echo -e "${YELLOW}>>> Some features requiring Metasploit will not be available.${NC}"
         else
-            log_message "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
+            echo -e "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
         fi
 
-        # Install network packages one by one
+        # Install network packages one by one with proper error handling
         echo -e "${YELLOW}>>> Installing network packages...${NC}"
         network_packages=(
             "nmap" "python3-nmap" "smbclient" "libpcap-dev" "hping3"
             "libnetfilter-queue-dev" "libnetfilter-queue1" 
             "libnetfilter-conntrack-dev" "libnetfilter-conntrack3"
         )
+
+        # Function to install a single package with proper timeout
+        install_single_package() {
+            local package=$1
+            local timeout_seconds=${2:-300}  # Default 300 seconds timeout
+            local no_recommends=${3:-false}  # Whether to use --no-install-recommends
+            
+            echo -e "${CYAN}Running: apt-get install -y $([ "$no_recommends" = true ] && echo "--no-install-recommends ")$package (timeout: ${timeout_seconds}s)${NC}"
+            
+            APT_START_TIME=$(date +%s)
+            if [ "$no_recommends" = true ]; then
+                timeout $timeout_seconds apt-get install -y --no-install-recommends $package
+            else
+                timeout $timeout_seconds apt-get install -y $package
+            fi
+            local status=$?
+            unset APT_START_TIME
+            
+            if [ $status -eq 124 ]; then
+                echo -e "${RED}>>> $package installation timed out. Killing hanging processes...${NC}"
+                kill_hanging_apt
+                
+                # Check if it was actually installed despite timeout
+                if dpkg -s $package &> /dev/null; then
+                    echo -e "${GREEN}>>> $package appears to be installed correctly despite timeout${NC}"
+                    return 0
+                else
+                    echo -e "${YELLOW}>>> Continuing without $package${NC}"
+                    return 124
+                fi
+            elif [ $status -ne 0 ]; then
+                echo -e "${RED}>>> $package installation failed with status $status.${NC}"
+                return $status
+            else
+                echo -e "${GREEN}>>> $package installed successfully.${NC}"
+                return 0
+            fi
+        }
+
+        # Install network packages
         for package in "${network_packages[@]}"; do
-            install_package "$package"
+            install_single_package "$package" 300
+            if [ $? -ne 0 ] && [ $? -ne 124 ]; then
+                # If normal install failed but not due to timeout, try with --no-install-recommends
+                echo -e "${YELLOW}>>> Retrying $package installation without recommended packages...${NC}"
+                install_single_package "$package" 300 true
+            fi
         done
 
         # Install Python packages one by one
@@ -362,7 +505,12 @@ if [ -f /etc/os-release ]; then
             "python3-dev" "python3-setuptools" "python3-wheel"
         )
         for package in "${python_packages[@]}"; do
-            install_package "$package"
+            install_single_package "$package" 300
+            if [ $? -ne 0 ] && [ $? -ne 124 ]; then
+                # If normal install failed but not due to timeout, try with --no-install-recommends
+                echo -e "${YELLOW}>>> Retrying $package installation without recommended packages...${NC}"
+                install_single_package "$package" 300 true
+            fi
         done
 
         # Install additional utilities one by one
@@ -371,7 +519,12 @@ if [ -f /etc/os-release ]; then
             "apache2-utils" "bc"
         )
         for package in "${additional_packages[@]}"; do
-            install_package "$package"
+            install_single_package "$package" 300
+            if [ $? -ne 0 ] && [ $? -ne 124 ]; then
+                # If normal install failed but not due to timeout, try with --no-install-recommends
+                echo -e "${YELLOW}>>> Retrying $package installation without recommended packages...${NC}"
+                install_single_package "$package" 300 true
+            fi
         done
 
         # Verify nmap installation
@@ -402,40 +555,60 @@ if [ -f /etc/os-release ]; then
         # Install Ollama if not already installed
         if ! command_exists ollama; then
             echo -e "${YELLOW}>>> Installing Ollama...${NC}"
-            timeout 300 curl -fsSL https://ollama.com/install.sh | sh -s -- -q
             
-            # Start Ollama service
-            echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
-            systemctl start ollama
-            systemctl enable ollama
+            # Set timeout for curl request to prevent hanging
+            echo -e "${CYAN}Running: curl -fsSL https://ollama.com/install.sh (timeout: 300s)${NC}"
             
-            # Wait for Ollama to start
-            echo -e "${YELLOW}>>> Waiting for Ollama service to start...${NC}"
-            sleep 10
-            
-            # Check if we should skip model downloads
-            if [ "$SKIP_MODELS" = true ]; then
-                echo -e "${YELLOW}>>> Skipping model downloads (--no-models flag detected)${NC}"
-                echo -e "${YELLOW}>>> You will need to pull models manually later with:${NC}"
-                echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
-                echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
-            else
-                # Pull the specified models directly with timeout
-                echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
-                timeout 900 ollama pull artifish/llama3.2-uncensored
-                if [ $? -eq 0 ]; then
-                    echo -e "${GREEN}>>> Downloaded primary model successfully${NC}"
-                else
-                    echo -e "${YELLOW}>>> Could not download primary model (timed out or failed). Will try fallback model.${NC}"
-                fi
+            # First download the script to a temporary file
+            temp_script=$(mktemp)
+            if timeout 300 curl -fsSL https://ollama.com/install.sh -o "$temp_script"; then
+                echo -e "${GREEN}>>> Successfully downloaded Ollama install script${NC}"
                 
-                echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
-                timeout 300 ollama pull gemma:1b
-                if [ $? -eq 0 ]; then
-                    echo -e "${GREEN}>>> Downloaded fallback model successfully${NC}"
+                # Make the script executable and run it with timeout
+                chmod +x "$temp_script"
+                echo -e "${CYAN}Running Ollama install script with timeout (300s)...${NC}"
+                
+                if timeout 300 "$temp_script" -s -- -q; then
+                    echo -e "${GREEN}>>> Ollama installed successfully${NC}"
                 else
-                    echo -e "${RED}>>> Could not download fallback model. AI analysis may not work.${NC}"
+                    echo -e "${RED}>>> Failed to install Ollama. AI analysis may not work.${NC}"
+                    echo -e "${YELLOW}>>> You can try installing it manually later with: curl -fsSL https://ollama.com/install.sh | sh${NC}"
                 fi
+            else
+                echo -e "${RED}>>> Failed to download Ollama install script${NC}"
+                echo -e "${YELLOW}>>> You can try installing it manually later with: curl -fsSL https://ollama.com/install.sh | sh${NC}"
+            fi
+            
+            # Clean up the temporary script
+            rm -f "$temp_script"
+            
+            # Start Ollama service with timeout
+            echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
+            timeout 60 systemctl start ollama
+            timeout 10 systemctl enable ollama
+            
+            # Wait for Ollama to start with timeout
+            echo -e "${YELLOW}>>> Waiting for Ollama service to start (timeout: 60s)...${NC}"
+            
+            ollama_started=false
+            start_time=$(date +%s)
+            wait_timeout=60
+            
+            while [ $(($(date +%s) - start_time)) -lt $wait_timeout ]; do
+                if timeout 5 curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+                    ollama_started=true
+                    echo -e "${GREEN}>>> Ollama service started successfully${NC}"
+                    break
+                fi
+                sleep 5
+                echo -ne "${YELLOW}>>> Still waiting for Ollama service to start... ($(($wait_timeout - ($(date +%s) - start_time)))s remaining)${NC}\r"
+            done
+            
+            echo ""  # Ensure we have a line break after the progress indicator
+            
+            if [ "$ollama_started" = false ]; then
+                echo -e "${RED}>>> Ollama service did not start within $wait_timeout seconds${NC}"
+                echo -e "${YELLOW}>>> AI analysis may not work. You may need to start it manually with: systemctl start ollama${NC}"
             fi
         else
             echo -e "${YELLOW}>>> Ollama already installed, checking for required models...${NC}"
@@ -447,29 +620,130 @@ if [ -f /etc/os-release ]; then
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
                 echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
             else
-                # Check if models are available
-                if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
-                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
-                    timeout 900 ollama pull artifish/llama3.2-uncensored
-                    if [ $? -eq 0 ]; then
-                        echo -e "${GREEN}>>> Downloaded primary model successfully${NC}"
+                # Pull the specified models directly with timeout
+                echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
+                
+                model_download_start=$(date +%s)
+                model_timeout=1200  # 20 minutes
+                
+                # Show progress during model download
+                (
+                    while true; do
+                        current_time=$(date +%s)
+                        elapsed=$((current_time - model_download_start))
+                        
+                        if [ $elapsed -gt $model_timeout ]; then
+                            break
+                        fi
+                        
+                        # Check if ollama is still running
+                        if ! pgrep -f "ollama" > /dev/null; then
+                            break
+                        fi
+                        
+                        # Try to get model download progress (this may not work depending on ollama version)
+                        progress=$(curl -s http://localhost:11434/api/status 2>/dev/null | grep -o '"progress":[0-9.]*' | cut -d: -f2 || echo "unknown")
+                        
+                        if [ "$progress" != "unknown" ]; then
+                            # Convert to percentage if possible
+                            progress=$(echo "$progress * 100" | bc 2>/dev/null || echo "unknown")
+                            echo -ne "${YELLOW}>>> Downloading primary model... (${progress}% complete, ${elapsed}s elapsed)${NC}\r"
+                        else
+                            echo -ne "${YELLOW}>>> Downloading primary model... (${elapsed}s elapsed)${NC}\r"
+                        fi
+                        
+                        sleep 5
+                    done
+                ) &
+                PROGRESS_PID=$!
+                
+                # Download with timeout
+                timeout $model_timeout ollama pull artifish/llama3.2-uncensored
+                primary_status=$?
+                
+                # Kill progress display
+                kill $PROGRESS_PID 2>/dev/null || true
+                echo ""  # Ensure we have a line break after the progress indicator
+                
+                if [ $primary_status -eq 124 ]; then
+                    echo -e "${RED}>>> Primary model download timed out after $model_timeout seconds${NC}"
+                    echo -e "${YELLOW}>>> Checking if the model was partially downloaded...${NC}"
+                    
+                    if ollama list 2>/dev/null | grep -q "artifish/llama3.2-uncensored"; then
+                        echo -e "${YELLOW}>>> Model appears to be partially downloaded. It may or may not work correctly.${NC}"
                     else
-                        echo -e "${YELLOW}>>> Could not download primary model (timed out or failed). Will try fallback model.${NC}"
+                        echo -e "${RED}>>> Primary model was not downloaded. Will try fallback model.${NC}"
                     fi
+                elif [ $primary_status -ne 0 ]; then
+                    echo -e "${RED}>>> Primary model download failed with status $primary_status${NC}"
+                    echo -e "${YELLOW}>>> Will try fallback model.${NC}"
                 else
-                    echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
+                    echo -e "${GREEN}>>> Downloaded primary model successfully${NC}"
                 fi
                 
-                if ! ollama list | grep -q "gemma:1b"; then
-                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
-                    timeout 300 ollama pull gemma:1b
-                    if [ $? -eq 0 ]; then
-                        echo -e "${GREEN}>>> Downloaded fallback model successfully${NC}"
+                # Try downloading the fallback model
+                echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
+                
+                fallback_download_start=$(date +%s)
+                fallback_timeout=600  # 10 minutes
+                
+                # Show progress during fallback model download
+                (
+                    while true; do
+                        current_time=$(date +%s)
+                        elapsed=$((current_time - fallback_download_start))
+                        
+                        if [ $elapsed -gt $fallback_timeout ]; then
+                            break
+                        fi
+                        
+                        # Check if ollama is still running
+                        if ! pgrep -f "ollama" > /dev/null; then
+                            break
+                        fi
+                        
+                        echo -ne "${YELLOW}>>> Downloading fallback model... (${elapsed}s elapsed)${NC}\r"
+                        sleep 5
+                    done
+                ) &
+                FALLBACK_PROGRESS_PID=$!
+                
+                # Download with timeout
+                timeout $fallback_timeout ollama pull gemma:1b
+                fallback_status=$?
+                
+                # Kill progress display
+                kill $FALLBACK_PROGRESS_PID 2>/dev/null || true
+                echo ""  # Ensure we have a line break after the progress indicator
+                
+                if [ $fallback_status -eq 124 ]; then
+                    echo -e "${RED}>>> Fallback model download timed out after $fallback_timeout seconds${NC}"
+                    echo -e "${YELLOW}>>> Checking if the model was partially downloaded...${NC}"
+                    
+                    if ollama list 2>/dev/null | grep -q "gemma:1b"; then
+                        echo -e "${YELLOW}>>> Fallback model appears to be partially downloaded. It may or may not work correctly.${NC}"
                     else
-                        echo -e "${RED}>>> Could not download fallback model. AI analysis may not work.${NC}"
+                        echo -e "${RED}>>> Neither primary nor fallback model was downloaded successfully. AI analysis will not work.${NC}"
+                        echo -e "${YELLOW}>>> You can try downloading models manually later with:${NC}"
+                        echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+                        echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
                     fi
+                elif [ $fallback_status -ne 0 ]; then
+                    echo -e "${RED}>>> Fallback model download failed with status $fallback_status${NC}"
+                    echo -e "${YELLOW}>>> You can try downloading models manually later with:${NC}"
+                    echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
                 else
-                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
+                    echo -e "${GREEN}>>> Downloaded fallback model successfully${NC}"
+                fi
+                
+                # Verify that at least one model is available
+                if ollama list 2>/dev/null | grep -q "artifish/llama3.2-uncensored\|gemma:1b"; then
+                    echo -e "${GREEN}>>> At least one AI model is now available for use${NC}"
+                else
+                    echo -e "${RED}>>> No AI models were downloaded successfully. AI analysis will not work.${NC}"
+                    echo -e "${YELLOW}>>> You can try downloading models manually later with:${NC}"
+                    echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+                    echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
                 fi
             fi
         fi
