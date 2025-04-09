@@ -163,22 +163,27 @@ if [ -f /etc/os-release ]; then
         upgrade_pid=$!
         spinner $upgrade_pid "${CYAN}Upgrading installed packages"
         
-        # Function to install a single package with direct output
+        # Function to install a single package with direct output and timeout
         install_package() {
             local package=$1
+            local timeout_seconds=120
+            
             log_message "${CYAN}Installing $package...${NC}"
             
-            # Try to install with apt-get, log the result to the log file
-            DEBIAN_FRONTEND=noninteractive apt-get install -y $package >> "$LOG_FILE" 2>&1
+            # Use timeout command to prevent hanging
+            timeout $timeout_seconds apt-get install -y $package
             
-            if [ $? -ne 0 ]; then
-                log_message "${RED}>>> Failed to install $package${NC}"
-                log_message "${YELLOW}>>> You can check details in $LOG_FILE${NC}"
-                log_message "${YELLOW}>>> Continuing with installation...${NC}"
-                return 1
-            else
+            if [ $? -eq 0 ]; then
                 log_message "${GREEN}>>> Successfully installed $package${NC}"
                 return 0
+            elif [ $? -eq 124 ]; then
+                log_message "${RED}>>> Installation of $package timed out after $timeout_seconds seconds${NC}"
+                log_message "${YELLOW}>>> Continuing with remaining packages...${NC}"
+                return 1
+            else
+                log_message "${RED}>>> Failed to install $package${NC}"
+                log_message "${YELLOW}>>> Continuing with remaining packages...${NC}"
+                return 1
             fi
         }
 
@@ -197,11 +202,11 @@ if [ -f /etc/os-release ]; then
 
         # Install Metasploit Framework separately (large package)
         echo -e "${YELLOW}>>> Installing Metasploit Framework (may take some time)...${NC}"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y metasploit-framework
+        timeout 300 apt-get install -y metasploit-framework
         if [ $? -ne 0 ]; then
-            echo -e "${RED}>>> Error installing Metasploit. Will continue with other packages.${NC}"
+            log_message "${RED}>>> Error or timeout installing Metasploit. Will continue with other packages.${NC}"
         else
-            echo -e "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
+            log_message "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
         fi
 
         # Install network packages one by one
@@ -261,7 +266,7 @@ if [ -f /etc/os-release ]; then
         # Install Ollama if not already installed
         if ! command_exists ollama; then
             echo -e "${YELLOW}>>> Installing Ollama...${NC}"
-            curl -fsSL https://ollama.com/install.sh | sh -s -- -q
+            timeout 300 curl -fsSL https://ollama.com/install.sh | sh -s -- -q
             
             # Start Ollama service
             echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
@@ -279,14 +284,22 @@ if [ -f /etc/os-release ]; then
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
                 echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
             else
-                # Pull the specified models directly
+                # Pull the specified models directly with timeout
                 echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
-                ollama pull artifish/llama3.2-uncensored
-                echo -e "${GREEN}>>> Downloaded primary model${NC}"
+                timeout 900 ollama pull artifish/llama3.2-uncensored
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}>>> Downloaded primary model successfully${NC}"
+                else
+                    echo -e "${YELLOW}>>> Could not download primary model (timed out or failed). Will try fallback model.${NC}"
+                fi
                 
                 echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
-                ollama pull gemma:1b
-                echo -e "${GREEN}>>> Downloaded fallback model${NC}"
+                timeout 300 ollama pull gemma:1b
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}>>> Downloaded fallback model successfully${NC}"
+                else
+                    echo -e "${RED}>>> Could not download fallback model. AI analysis may not work.${NC}"
+                fi
             fi
         else
             echo -e "${YELLOW}>>> Ollama already installed, checking for required models...${NC}"
@@ -301,16 +314,24 @@ if [ -f /etc/os-release ]; then
                 # Check if models are available
                 if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
                     echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
-                    ollama pull artifish/llama3.2-uncensored
-                    echo -e "${GREEN}>>> Downloaded primary model${NC}"
+                    timeout 900 ollama pull artifish/llama3.2-uncensored
+                    if [ $? -eq 0 ]; then
+                        echo -e "${GREEN}>>> Downloaded primary model successfully${NC}"
+                    else
+                        echo -e "${YELLOW}>>> Could not download primary model (timed out or failed). Will try fallback model.${NC}"
+                    fi
                 else
                     echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
                 fi
                 
                 if ! ollama list | grep -q "gemma:1b"; then
                     echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
-                    ollama pull gemma:1b
-                    echo -e "${GREEN}>>> Downloaded fallback model${NC}"
+                    timeout 300 ollama pull gemma:1b
+                    if [ $? -eq 0 ]; then
+                        echo -e "${GREEN}>>> Downloaded fallback model successfully${NC}"
+                    else
+                        echo -e "${RED}>>> Could not download fallback model. AI analysis may not work.${NC}"
+                    fi
                 else
                     echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
                 fi
@@ -460,9 +481,9 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     # Extract package name for progress tracking
     package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
     
-    # Install with output visible
+    # Install with output visible and timeout
     echo -e "${CYAN}Installing ${package_name}...${NC}"
-    pip3 install "$line"
+    timeout 120 pip3 install "$line"
     
     if [ $? -ne 0 ]; then
         echo -e "${RED}>>> Failed to install package: $package_name. Continuing...${NC}"
@@ -474,7 +495,13 @@ done < requirements.txt
 
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
-pip3 install -e .
+timeout 180 pip3 install -e .
+if [ $? -ne 0 ]; then
+    log_message "${RED}>>> Error installing AI_MAL package. Installation may be incomplete.${NC}"
+    exit 1
+else
+    log_message "${GREEN}>>> AI_MAL package installed successfully${NC}"
+fi
 
 # Set permissions
 echo -e "${YELLOW}>>> Setting permissions...${NC}"
@@ -717,4 +744,67 @@ for i in {1..40}; do
     echo -ne "${YELLOW}▀${NC}"
     sleep 0.01
 done
-echo "" 
+echo ""
+
+# Add a completion check at the end of the script
+echo -e "${YELLOW}>>> Performing final checks...${NC}"
+
+# Check if required directories exist
+missing_dirs=()
+for dir in "logs" "scan_results" "msf_resources" "generated_scripts" "workspaces"; do
+    if [ ! -d "$dir" ]; then
+        missing_dirs+=("$dir")
+    fi
+done
+
+if [ ${#missing_dirs[@]} -gt 0 ]; then
+    echo -e "${RED}>>> Some required directories are missing: ${missing_dirs[*]}${NC}"
+    echo -e "${YELLOW}>>> Creating missing directories...${NC}"
+    for dir in "${missing_dirs[@]}"; do
+        mkdir -p "$dir"
+        chmod 755 "$dir"
+        echo -e "${GREEN}>>> Created directory: $dir${NC}"
+    done
+fi
+
+# Check if AI_MAL is installed
+if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
+    echo -e "${GREEN}>>> Python virtual environment is installed correctly${NC}"
+else
+    echo -e "${RED}>>> Python virtual environment is missing or incomplete${NC}"
+fi
+
+# Check nmap permissions
+if [ -f /usr/bin/nmap ]; then
+    if [ -u /usr/bin/nmap ]; then
+        echo -e "${GREEN}>>> Nmap permissions are set correctly${NC}"
+    else
+        echo -e "${YELLOW}>>> Setting correct permissions for nmap...${NC}"
+        chmod +s /usr/bin/nmap
+    fi
+fi
+
+# Create symbolic link for convenience
+if [ ! -f /usr/local/bin/AI_MAL ]; then
+    echo -e "${YELLOW}>>> Creating executable link...${NC}"
+    cat > /usr/local/bin/AI_MAL << 'EOF'
+#!/bin/bash
+cd /opt/AI_MAL
+source venv/bin/activate
+python -m AI_MAL.main "$@"
+EOF
+    chmod +x /usr/local/bin/AI_MAL
+    echo -e "${GREEN}>>> Created executable link at /usr/local/bin/AI_MAL${NC}"
+fi
+
+echo -e "${GREEN}>>> Installation completed successfully!${NC}"
+echo -e "${YELLOW}>>> You can now run AI_MAL with:${NC} ${GREEN}AI_MAL <target> [options]${NC}"
+echo -e "${YELLOW}>>> Example:${NC} ${GREEN}AI_MAL 192.168.1.1 --vuln --os --services${NC}"
+echo -e "${YELLOW}>>> For help, run:${NC} ${GREEN}AI_MAL --help${NC}"
+echo ""
+echo -e "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄"
+echo -e " ✓ Installation Complete! "
+echo -e " AI_MAL is now ready to use "
+echo -e "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+
+exit 0 
