@@ -97,6 +97,44 @@ kill_hanging_apt() {
     echo -e "${GREEN}>>> Package management system should now be usable again${NC}"
 }
 
+# Function to install a single package with proper timeout
+install_single_package() {
+    local package=$1
+    local timeout_seconds=${2:-300}  # Default 300 seconds timeout
+    local no_recommends=${3:-false}  # Whether to use --no-install-recommends
+    
+    echo -e "${CYAN}Running: apt-get install -y $([ "$no_recommends" = true ] && echo "--no-install-recommends ")$package (timeout: ${timeout_seconds}s)${NC}"
+    
+    APT_START_TIME=$(date +%s)
+    if [ "$no_recommends" = true ]; then
+        timeout $timeout_seconds apt-get install -y --no-install-recommends $package
+    else
+        timeout $timeout_seconds apt-get install -y $package
+    fi
+    local status=$?
+    unset APT_START_TIME
+    
+    if [ $status -eq 124 ]; then
+        echo -e "${RED}>>> $package installation timed out. Killing hanging processes...${NC}"
+        kill_hanging_apt
+        
+        # Check if it was actually installed despite timeout
+        if dpkg -s $package &> /dev/null; then
+            echo -e "${GREEN}>>> $package appears to be installed correctly despite timeout${NC}"
+            return 0
+        else
+            echo -e "${YELLOW}>>> Continuing without $package${NC}"
+            return 124
+        fi
+    elif [ $status -ne 0 ]; then
+        echo -e "${RED}>>> $package installation failed with status $status.${NC}"
+        return $status
+    else
+        echo -e "${GREEN}>>> $package installed successfully.${NC}"
+        return 0
+    fi
+}
+
 # Add a trap for long-running apt processes
 trap_apt_hang() {
     # This function is called periodically during the script execution
@@ -456,44 +494,6 @@ if [ -f /etc/os-release ]; then
             "libnetfilter-queue-dev" "libnetfilter-queue1" 
             "libnetfilter-conntrack-dev" "libnetfilter-conntrack3"
         )
-
-        # Function to install a single package with proper timeout
-        install_single_package() {
-            local package=$1
-            local timeout_seconds=${2:-300}  # Default 300 seconds timeout
-            local no_recommends=${3:-false}  # Whether to use --no-install-recommends
-            
-            echo -e "${CYAN}Running: apt-get install -y $([ "$no_recommends" = true ] && echo "--no-install-recommends ")$package (timeout: ${timeout_seconds}s)${NC}"
-            
-            APT_START_TIME=$(date +%s)
-            if [ "$no_recommends" = true ]; then
-                timeout $timeout_seconds apt-get install -y --no-install-recommends $package
-            else
-                timeout $timeout_seconds apt-get install -y $package
-            fi
-            local status=$?
-            unset APT_START_TIME
-            
-            if [ $status -eq 124 ]; then
-                echo -e "${RED}>>> $package installation timed out. Killing hanging processes...${NC}"
-                kill_hanging_apt
-                
-                # Check if it was actually installed despite timeout
-                if dpkg -s $package &> /dev/null; then
-                    echo -e "${GREEN}>>> $package appears to be installed correctly despite timeout${NC}"
-                    return 0
-                else
-                    echo -e "${YELLOW}>>> Continuing without $package${NC}"
-                    return 124
-                fi
-            elif [ $status -ne 0 ]; then
-                echo -e "${RED}>>> $package installation failed with status $status.${NC}"
-                return $status
-            else
-                echo -e "${GREEN}>>> $package installed successfully.${NC}"
-                return 0
-            fi
-        }
 
         # Install network packages
         for package in "${network_packages[@]}"; do
