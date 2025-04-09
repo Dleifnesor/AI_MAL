@@ -142,45 +142,75 @@ if [ -f /etc/os-release ]; then
         
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
-        echo -ne "${CYAN}Installing required packages ${NC}["
-        packages=(
-            "python3" "python3-pip" "python3-venv" "git" "nmap" "metasploit-framework" 
-            "curl" "wget" "build-essential" "libssl-dev" "libffi-dev" "python3-nmap" 
-            "smbclient" "libpcap-dev" "libnetfilter-queue-dev" "libnetfilter-queue1" 
-            "libnetfilter-conntrack-dev" "libnetfilter-conntrack3" "python3-dev" 
-            "python3-setuptools" "python3-wheel" "hping3" "apache2-utils" "bc"
+        
+        # Group packages by category for better reliability
+        base_packages=(
+            "python3" "python3-pip" "python3-venv" "git" "curl" "wget" 
+            "build-essential" "libssl-dev" "libffi-dev"
         )
-
-        total=${#packages[@]}
-        current=0
-        for package in "${packages[@]}"; do
-            apt-get install -y $package > /dev/null 2>&1
-            current=$((current + 1))
-            progress=$((current * 40 / total))
-            completed=$((current * 100 / total))
+        
+        network_packages=(
+            "nmap" "python3-nmap" "smbclient" "libpcap-dev" "hping3"
+            "libnetfilter-queue-dev" "libnetfilter-queue1" 
+            "libnetfilter-conntrack-dev" "libnetfilter-conntrack3"
+        )
+        
+        python_packages=(
+            "python3-dev" "python3-setuptools" "python3-wheel"
+        )
+        
+        additional_packages=(
+            "apache2-utils" "bc"
+        )
+        
+        # Install metasploit separately as it's the largest package
+        echo -e "${YELLOW}>>> Installing Metasploit Framework (this may take a while)...${NC}"
+        apt-get install -y metasploit-framework
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}>>> Warning: Metasploit installation may have issues. Will continue with other packages.${NC}"
+        else
+            echo -e "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
+        fi
+        
+        # Function to install package groups with better error handling
+        install_package_group() {
+            local group_name=$1
+            shift
+            local packages=("$@")
             
-            # Different colors based on progress
-            if [ $completed -lt 25 ]; then
-                color="${BLUE}"
-            elif [ $completed -lt 50 ]; then
-                color="${CYAN}"
-            elif [ $completed -lt 75 ]; then
-                color="${YELLOW}"
+            echo -e "${YELLOW}>>> Installing ${group_name} packages...${NC}"
+            local total=${#packages[@]}
+            local current=0
+            local failed=()
+            
+            for package in "${packages[@]}"; do
+                current=$((current + 1))
+                echo -ne "${CYAN}Installing ${package} (${current}/${total}) ${NC}"
+                
+                # Install with timeout to prevent hanging
+                timeout 300 apt-get install -y $package
+                if [ $? -ne 0 ]; then
+                    echo -e " ${RED}[FAILED]${NC}"
+                    failed+=("$package")
+                else
+                    echo -e " ${GREEN}[OK]${NC}"
+                fi
+            done
+            
+            # Report any failed packages
+            if [ ${#failed[@]} -gt 0 ]; then
+                echo -e "${YELLOW}>>> Some packages failed to install: ${failed[*]}${NC}"
+                echo -e "${YELLOW}>>> Will continue with installation anyway.${NC}"
             else
-                color="${GREEN}"
+                echo -e "${GREEN}>>> All ${group_name} packages installed successfully.${NC}"
             fi
-            
-            # Print progress bar
-            printf "\r${CYAN}Installing required packages ${NC}["
-            for ((i=0; i<progress; i++)); do
-                printf "${color}▓${NC}"
-            done
-            for ((i=progress; i<40; i++)); do
-                printf " "
-            done
-            printf "] ${completed}%%"
-        done
-        printf "\n"
+        }
+        
+        # Install package groups
+        install_package_group "base" "${base_packages[@]}"
+        install_package_group "network" "${network_packages[@]}"
+        install_package_group "Python" "${python_packages[@]}"
+        install_package_group "additional" "${additional_packages[@]}"
 
         # Verify nmap installation
         echo -e "${YELLOW}>>> Verifying nmap installation...${NC}"
@@ -536,6 +566,14 @@ total=${#directories[@]}
 current=0
 for dir in "${directories[@]}"; do
     mkdir -p $dir 2>/dev/null
+    
+    # Ensure proper permissions for script execution
+    if [ "$dir" = "generated_scripts" ]; then
+        echo -e "${YELLOW}>>> Setting execution permissions for generated scripts directory...${NC}"
+        chmod -R 755 "$dir"
+        chown -R "$REAL_USER:$REAL_USER" "$dir" 2>/dev/null || true
+    fi
+    
     current=$((current + 1))
     progress=$((current * 40 / total))
     
@@ -550,6 +588,27 @@ for dir in "${directories[@]}"; do
     printf "] ${GREEN}%d/%d${NC}" $current $total
 done
 printf "\n"
+
+# Verify script directories
+echo -e "${YELLOW}>>> Verifying script directories...${NC}"
+if [ -d "generated_scripts" ]; then
+    echo -e "${GREEN}>>> Script directory exists and is ready${NC}"
+    # Test write permissions
+    touch "generated_scripts/test_permissions.txt" 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}>>> Script directory is writable${NC}"
+        rm "generated_scripts/test_permissions.txt"
+    else
+        echo -e "${RED}>>> Script directory is not writable. Fixing permissions...${NC}"
+        sudo chmod -R 755 "generated_scripts"
+        sudo chown -R "$REAL_USER:$REAL_USER" "generated_scripts" 2>/dev/null || true
+    fi
+else
+    echo -e "${RED}>>> Script directory does not exist. Creating it...${NC}"
+    mkdir -p "generated_scripts"
+    chmod -R 755 "generated_scripts"
+    chown -R "$REAL_USER:$REAL_USER" "generated_scripts" 2>/dev/null || true
+fi
 
 # Create virtual environment
 echo -e "${YELLOW}>>> Creating virtual environment...${NC}"

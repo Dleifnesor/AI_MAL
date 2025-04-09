@@ -29,6 +29,16 @@ class ScriptGenerator:
         try:
             os.makedirs(self.scripts_dir, exist_ok=True)
             logger.info(f"Using scripts directory: {self.scripts_dir}")
+            
+            # Make sure the directory is writable
+            if not os.access(self.scripts_dir, os.W_OK):
+                logger.warning(f"Scripts directory is not writable: {self.scripts_dir}")
+                # Try to fix permissions
+                try:
+                    os.chmod(self.scripts_dir, 0o755)
+                    logger.info(f"Fixed permissions on scripts directory: {self.scripts_dir}")
+                except Exception as perm_error:
+                    logger.error(f"Failed to fix permissions: {str(perm_error)}")
         except Exception as e:
             logger.warning(f"Failed to create scripts directory: {str(e)}")
             # Fall back to current directory/generated_scripts if we can't create the configured one
@@ -844,12 +854,42 @@ end
                 logger.debug(f"Running command: {' '.join(cmd)}")
                 start_time = datetime.now()
                 
+                # Verify script exists and has content
+                if not os.path.exists(script['path']):
+                    logger.error(f"Script file does not exist: {script['path']}")
+                    return {
+                        "status": "error",
+                        "error": f"Script file not found: {script['path']}",
+                        "duration": 0
+                    }
+                
+                # Check file size to make sure it's not empty
+                file_size = os.path.getsize(script['path'])
+                if file_size == 0:
+                    logger.error(f"Script file is empty: {script['path']}")
+                    return {
+                        "status": "error",
+                        "error": "Script file is empty",
+                        "duration": 0
+                    }
+                
                 # Ensure script is executable
                 try:
                     os.chmod(script['path'], 0o755)
                     logger.debug(f"Set executable permissions on {script['path']}")
                 except Exception as e:
                     logger.warning(f"Failed to set executable permissions on {script['path']}: {str(e)}")
+                    # Try with sudo
+                    try:
+                        subprocess.run(['sudo', 'chmod', '+x', script['path']], check=True)
+                        logger.debug(f"Set executable permissions with sudo on {script['path']}")
+                    except Exception as sudo_e:
+                        logger.error(f"Failed to set executable permissions with sudo: {str(sudo_e)}")
+                
+                # Verify script has executable permissions
+                if not os.access(script['path'], os.X_OK):
+                    logger.warning(f"Script still not executable after chmod: {script['path']}")
+                    # Continue anyway, we're using interpreters
                 
                 # Log more detailed info about the script execution
                 logger.info(f"Executing script: {script['name']} ({script['type']}) at {script['path']}")
@@ -868,45 +908,38 @@ end
                 stdout_text = stdout.decode('utf-8', errors='replace')
                 stderr_text = stderr.decode('utf-8', errors='replace')
                 
-                # Always log the output for debugging purposes
-                if stdout_text:
-                    logger.debug(f"Script stdout: {stdout_text}")
+                # Detailed logging of output
+                logger.debug(f"Script stdout: {stdout_text}")
                 if stderr_text:
                     logger.debug(f"Script stderr: {stderr_text}")
                 
-                if process.returncode != 0:
-                    logger.error(f"Script execution failed with exit code {process.returncode}: {stderr_text}")
-                    return {
-                        "status": "failed",
-                        "error": stderr_text,
-                        "output": stdout_text,
-                        "exit_code": process.returncode,
-                        "duration": duration
-                    }
+                # Log script exit code
+                exit_code = process.returncode
+                logger.info(f"Script exit code: {exit_code}")
                 
-                logger.info(f"Script execution completed successfully in {duration:.2f} seconds")
+                if exit_code != 0:
+                    logger.warning(f"Script returned non-zero exit code: {exit_code}")
+                    
                 return {
-                    "status": "success",
+                    "status": "success" if exit_code == 0 else "error",
+                    "exit_code": exit_code,
                     "output": stdout_text,
+                    "error": stderr_text if stderr_text else None,
                     "duration": duration
                 }
                 
             except asyncio.TimeoutError:
-                # Kill process on timeout
-                try:
-                    process.kill()
-                except:
-                    pass
-                    
-                logger.error(f"Script execution timed out after {timeout} seconds")
+                logger.error(f"Script execution timed out after {timeout} seconds: {script['path']}")
                 return {
                     "status": "timeout",
-                    "error": f"Script execution timed out after {timeout} seconds",
+                    "error": f"Execution timed out after {timeout} seconds",
                     "duration": timeout
                 }
-            
+                
         except Exception as e:
-            logger.error(f"Error executing script: {str(e)}")
+            logger.error(f"Error executing script {script.get('path', 'unknown')}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {
                 "status": "error",
                 "error": str(e),
@@ -948,7 +981,6 @@ for PORT in $(seq $START_PORT $END_PORT); do
     echo "[+] Port $PORT/tcp is open - $SERVICE"
   fi
 done 2>/dev/null
-
 echo "[*] Port scan completed"
 """
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
