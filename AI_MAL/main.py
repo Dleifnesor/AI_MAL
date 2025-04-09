@@ -129,7 +129,7 @@ class AI_MAL:
         # Initialize AI manager
         self.ai_manager = AIManager(
             model=kwargs.get('model', os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')),
-            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma3:1b'))
+            fallback_model=kwargs.get('fallback_model', os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'))
         )
         
         # Create a workspace name based on target and timestamp
@@ -148,10 +148,10 @@ class AI_MAL:
         if self.exfil_enabled:
             self.exfil_dir = Path(os.getenv('EXFIL_DIR', 'exfiltrated_data'))
             try:
-                self.exfil_dir.mkdir(exist_ok=True)
-                self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
-                self.exfil_target_dir.mkdir(exist_ok=True)
-                logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+            self.exfil_dir.mkdir(exist_ok=True)
+            self.exfil_target_dir = self.exfil_dir / target.replace('.', '_')
+            self.exfil_target_dir.mkdir(exist_ok=True)
+            logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
             except Exception as e:
                 logger.warning(f"Failed to create exfiltration directory: {str(e)}")
                 # Fallback to current directory
@@ -173,7 +173,7 @@ class AI_MAL:
                 # Create directory for implant logs
                 self.implant_logs_dir = Path(os.getenv('IMPLANT_LOGS_DIR', 'implant_logs'))
                 try:
-                    self.implant_logs_dir.mkdir(exist_ok=True)
+                self.implant_logs_dir.mkdir(exist_ok=True)
                 except Exception as e:
                     logger.warning(f"Failed to create implant logs directory: {str(e)}")
                     # Fallback to current directory
@@ -332,9 +332,9 @@ class AI_MAL:
             # Analyze results
             if scan_results:
                 analysis = await self._analyze_results(scan_results)
-                self._display_ai_results(analysis)
+                        self._display_ai_results(analysis)
                 return scan_results
-            else:
+                        else:
                 self.logger.error("Scan failed to return results")
                 return {"error": "Scan failed to return results"}
                 
@@ -356,7 +356,7 @@ class AI_MAL:
         except Exception as e:
             self.logger.error(f"Error getting network interfaces: {str(e)}")
             return []
-        
+            
     def _show_banner(self):
         """Show the AI_MAL welcome banner"""
         banner = """
@@ -436,13 +436,13 @@ class AI_MAL:
         try:
             if not analysis:
                 self.logger.warning("No AI analysis results to display")
-                return
-
+            return
+            
             console = Console()
             
             # Create a table for the results
             table = Table(show_header=True, header_style="bold magenta", box=ROUNDED)
-            table.add_column("Category", style="cyan")
+        table.add_column("Category", style="cyan")
             table.add_column("Details", style="white")
 
             # Add rows based on analysis content
@@ -492,7 +492,7 @@ class AI_MAL:
             # Truncate long names and add ellipsis
             if len(name) > 28:
                 name = name[:25] + "..."
-                
+            
             # Set color based on rank
             rank_style = {
                 'excellent': 'bright_green',
@@ -508,7 +508,7 @@ class AI_MAL:
             
             # Add row
             table.add_row(name, styled_rank, description)
-        
+            
         if len(exploits) > 10:
             console.print(f"\nShowing 10 of {len(exploits)} exploits")
             
@@ -1221,45 +1221,54 @@ class AI_MAL:
     def _initialize_ai_models(self):
         """Initialize AI models for analysis"""
         try:
-            # Check Ollama service
+            # First check if Ollama service is running
             if not self._check_ollama_service():
-                self.logger.error("Ollama service is not running")
+                logger.error("Ollama service not running. AI analysis will not be available.")
+                rprint("[bold red]Ollama service not running. AI analysis will not be available.[/]")
                 return False
 
             # Get available models
             available_models = self._get_available_models()
-            self.logger.info(f"Available models: {available_models}")
-
-            # Try to use primary model
-            if "artifish/llama3.2-uncensored" in available_models:
-                self.primary_model = "artifish/llama3.2-uncensored"
-                self.logger.info(f"Using primary model: {self.primary_model}")
-                return True
-
-            # Try to use fallback model
-            if "gemma:1b" in available_models:
-                self.primary_model = "gemma:1b"
-                self.logger.info(f"Using fallback model: {self.primary_model}")
-                return True
-
-            # If no models are available, try to pull them
-            self.logger.warning("No models available, attempting to pull them...")
+            logger.info(f"Available models: {available_models}")
             
-            # Try to pull primary model
-            if self._pull_model("artifish/llama3.2-uncensored"):
-                self.primary_model = "artifish/llama3.2-uncensored"
-                return True
-
-            # Try to pull fallback model
-            if self._pull_model("gemma:1b"):
-                self.primary_model = "gemma:1b"
-                return True
-
-            self.logger.error("Failed to initialize any AI models")
-            return False
-
+            if not available_models:
+                logger.warning("No Ollama models available")
+                rprint("[bold yellow]No Ollama models available. Will attempt to pull required models.[/]")
+                
+                # Try to pull primary model
+                if self._pull_model("artifish/llama3.2-uncensored"):
+                    self.primary_model = "artifish/llama3.2-uncensored"
+                    logger.info(f"Primary model set to {self.primary_model}")
+                    rprint(f"[bold green]Successfully pulled model: {self.primary_model}[/]")
+                # Try smaller model if primary fails
+                elif self._pull_model("gemma:1b"):
+                    self.primary_model = "gemma:1b"
+                    logger.info(f"Primary model set to {self.primary_model}")
+                    rprint(f"[bold green]Successfully pulled fallback model: {self.primary_model}[/]")
+                else:
+                    logger.error("Failed to pull any AI models")
+                    rprint("[bold red]Failed to pull any AI models. AI analysis will not be available.[/]")
+                    return False
+            else:
+                # Prioritize models in order of preference
+                if "artifish/llama3.2-uncensored" in available_models:
+                    self.primary_model = "artifish/llama3.2-uncensored"
+                elif "gemma:1b" in available_models:
+                    self.primary_model = "gemma:1b"
+                else:
+                    # Use first available model
+                    self.primary_model = available_models[0]
+                
+                logger.info(f"Using model: {self.primary_model}")
+                rprint(f"[bold green]Using AI model: {self.primary_model}[/]")
+            
+            return True
+            
         except Exception as e:
-            self.logger.error(f"Error initializing AI models: {str(e)}")
+            logger.error(f"Error initializing AI models: {str(e)}")
+            if self.kwargs.get('debug', False):
+                import traceback
+                traceback.print_exc()
             return False
 
     def _check_ollama_service(self) -> bool:
@@ -1428,7 +1437,7 @@ Examples:
     basic_group.add_argument('--msf', action='store_true', help='Enable Metasploit integration')
     basic_group.add_argument('--exploit', action='store_true', help='Attempt exploitation of vulnerabilities')
     basic_group.add_argument('--model', help='Ollama model to use (default: from .env or artifish/llama3.2-uncensored)')
-    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or gemma3:1b)')
+    basic_group.add_argument('--fallback-model', help='Fallback Ollama model (default: from .env or gemma:1b)')
     basic_group.add_argument('--full-auto', action='store_true', help='Enable full automation mode')
     basic_group.add_argument('--ai-analysis', action='store_true', default=True,
                        help='Enable AI analysis of results (default: enabled)')
@@ -1499,7 +1508,7 @@ Examples:
     if args.ai_analysis and not args.quiet:
         try:
             primary_model = args.model or os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored')
-            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma3:1b')
+            fallback_model = args.fallback_model or os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b')
             
             print(f"Verifying AI models availability: {primary_model} (primary) and {fallback_model} (fallback)")
             
@@ -1516,7 +1525,7 @@ Examples:
                 print(f"Warning: Could not check available Ollama models: {str(e)}")
             
             # Define the default models that should be auto-installed if not available
-            default_models = ['artifish/llama3.2-uncensored', 'gemma3:7b']
+            default_models = ['artifish/llama3.2-uncensored', 'gemma:1b']
             models_to_check = []
             
             # Only add models to auto-install list if they're in our default set
@@ -1595,8 +1604,8 @@ Examples:
     except Exception as e:
         print(f"Fatal error: {str(e)}")
         # Print traceback for debugging
-        import traceback
-        traceback.print_exc()
+            import traceback
+            traceback.print_exc()
         return 1
     
 def clean_up_loop(loop):

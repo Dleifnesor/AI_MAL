@@ -18,18 +18,13 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class AIManager:
-    def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'gemma3:1b'):
-        # Set default models if empty strings are provided
-        self.primary_model = model if model else 'artifish/llama3.2-uncensored'
-        self.fallback_model = fallback_model if fallback_model else 'gemma3:1b'
-        
-        # Define backup models to try if both primary and fallback fail
-        # These are the default models that should be installed
-        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma3:1b']
-        
-        self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
-        logger.info(f"AI Manager initialized with model: {self.primary_model}, fallback model: {self.fallback_model}")
-        logger.info(f"Using Ollama host: {self.ollama_host}")
+    def __init__(self, model: str = 'artifish/llama3.2-uncensored', fallback_model: str = 'gemma:1b'):
+        """Initialize the AI Manager with specified or default model."""
+        self.model = model if model else 'artifish/llama3.2-uncensored'
+        self.fallback_model = fallback_model if fallback_model else 'gemma:1b'
+        self.active_model = None
+        self.ollama_url = os.getenv('OLLAMA_API_URL', 'http://localhost:11434')
+        self.backup_models = ['artifish/llama3.2-uncensored', 'gemma:1b']
         
         # Track available models
         self.available_models = []
@@ -38,7 +33,7 @@ class AIManager:
         """List all available models in Ollama"""
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.ollama_host}/api/tags") as response:
+                async with session.get(f"{self.ollama_url}/api/tags") as response:
                     if response.status != 200:
                         logger.warning(f"Failed to list Ollama models: {response.status}")
                         return []
@@ -67,7 +62,7 @@ class AIManager:
             prompt = self._create_analysis_prompt(scan_results)
             
             # Get AI analysis
-            logger.info(f"Requesting AI analysis using model: {self.primary_model}")
+            logger.info(f"Requesting AI analysis using model: {self.model}")
             analysis, model_used = await self._get_ai_analysis(prompt)
             
             # Parse and structure the analysis
@@ -150,24 +145,24 @@ Format your response clearly using these exact headings.
         # Primary model attempt
         try:
             # Check using case-insensitive comparison
-            is_available = self.primary_model in available_models or self.primary_model.lower() in available_models_lower
+            is_available = self.model in available_models or self.model.lower() in available_models_lower
             
             if is_available:
-                logger.info(f"Trying primary model: {self.primary_model}")
+                logger.info(f"Trying primary model: {self.model}")
                 
                 # Find the actual model name with correct case
-                actual_model_name = self.primary_model
-                if self.primary_model not in available_models:
-                    idx = available_models_lower.index(self.primary_model.lower())
+                actual_model_name = self.model
+                if self.model not in available_models:
+                    idx = available_models_lower.index(self.model.lower())
                     actual_model_name = available_models[idx]
                     logger.info(f"Using case-corrected model name: {actual_model_name}")
                 
                 result = await self._try_model(actual_model_name, prompt)
                 if result:
                     return result, actual_model_name
-                logger.warning(f"Primary model {self.primary_model} failed to provide analysis")
+                logger.warning(f"Primary model {self.model} failed to provide analysis")
             else:
-                logger.warning(f"Primary model {self.primary_model} not available in Ollama")
+                logger.warning(f"Primary model {self.model} not available in Ollama")
                 logger.info(f"Available models: {', '.join(available_models[:5])}{'...' if len(available_models) > 5 else ''}")
         except Exception as e:
             logger.warning(f"Error with primary model: {str(e)}")
@@ -236,7 +231,7 @@ Format your response clearly using these exact headings.
         try:
             async with aiohttp.ClientSession() as session:
                 response = await session.post(
-                    f"{self.ollama_host}/api/generate",
+                    f"{self.ollama_url}/api/generate",
                     json={
                         "model": model_name,
                         "prompt": prompt,
@@ -534,7 +529,7 @@ Recommendations:
             while retry_count < max_retries:
                 try:
                     async with aiohttp.ClientSession() as session:
-                        async with session.post(self.ollama_host, json=payload, timeout=60) as response:
+                        async with session.post(self.ollama_url, json=payload, timeout=60) as response:
                             if response.status == 200:
                                 result = await response.json()
                                 return result.get('response', '')
