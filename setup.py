@@ -29,7 +29,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "AI_MAL=AI_MAL.main:main",
+            "AI_MAL=AI_MAL.main.scanner:main",
         ],
     },
     author="Dleifnesor",
@@ -50,6 +50,6 @@ setup(
     ],
     python_requires=">=3.8",
     package_data={
-        'AI_MAL': ['*.py', 'core/*.py'],
+        'AI_MAL': ['*.py', 'core/*.py', 'main/*.py'],
     },
 ) 

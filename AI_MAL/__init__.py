@@ -12,8 +12,8 @@ from .core.ai_manager import AIManager
 from .core.metasploit import MetasploitManager
 from .core.script_generator import ScriptGenerator
 
-# Import main function
-from .main import main
+# Import main function from scanner module
+from .main.scanner import main
 
 __all__ = [
     'AdaptiveScanner',
