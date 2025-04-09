@@ -153,75 +153,78 @@ safe_install_package() {
     return 0
 }
 
-# Function to safely install libssl-dev
-install_libssl_dev() {
-    if [ "$SKIP_LIBSSL" = true ]; then
-        echo -e "${YELLOW}>>> Skipping libssl-dev installation (--skip-libssl flag detected)${NC}"
+# Function to install libssl-dev with alternatives
+install_libssl() {
+    echo -e "${CYAN}Installing OpenSSL development libraries...${NC}"
+    
+    # Check if already installed
+    if dpkg -s libssl-dev &>/dev/null; then
+        echo -e "${GREEN}>>> libssl-dev is already installed${NC}"
         return 0
     fi
     
-    echo -e "${YELLOW}>>> Installing OpenSSL development libraries...${NC}"
+    # Try standard installation first
+    echo -e "${YELLOW}>>> Attempting standard installation of libssl-dev...${NC}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev 2>&1 | while read line; do
+        echo -e "${CYAN}>>> $line${NC}"
+    done
     
-    # First attempt: direct apt installation
-    echo -e "${CYAN}Attempting standard installation of libssl-dev...${NC}"
-    if timeout 120 apt-get install -y libssl-dev; then
+    if [ $? -eq 0 ]; then
         echo -e "${GREEN}>>> Successfully installed libssl-dev${NC}"
         return 0
     fi
     
-    echo -e "${YELLOW}>>> Standard installation failed. Trying alternative approaches...${NC}"
+    # If standard installation fails, try alternative methods
+    echo -e "${YELLOW}>>> Standard installation failed. Trying alternative methods...${NC}"
     
-    # Second attempt: try specific version
-    if command -v apt-cache &>/dev/null; then
-        # Find available versions
-        AVAILABLE_VERSIONS=$(apt-cache madison libssl-dev | awk '{print $3}')
-        if [ -n "$AVAILABLE_VERSIONS" ]; then
-            FIRST_VERSION=$(echo "$AVAILABLE_VERSIONS" | head -n 1)
-            echo -e "${CYAN}Attempting to install specific version: libssl-dev=$FIRST_VERSION${NC}"
-            if timeout 120 apt-get install -y libssl-dev=$FIRST_VERSION; then
-                echo -e "${GREEN}>>> Successfully installed libssl-dev version $FIRST_VERSION${NC}"
-                return 0
-            fi
-        fi
-    fi
-    
-    # Third attempt: try to download and install directly
-    echo -e "${CYAN}Attempting manual download and installation...${NC}"
-    TEMP_DIR="$TMP_DIR/libssl"
-    mkdir -p "$TEMP_DIR"
-    cd "$TEMP_DIR"
-    
-    apt-get download libssl-dev &>/dev/null
-    if [ $? -eq 0 ] && [ -f *.deb ]; then
-        echo -e "${CYAN}Downloaded package. Attempting installation...${NC}"
-        if dpkg -i *.deb; then
-            echo -e "${GREEN}>>> Successfully installed libssl-dev using dpkg${NC}"
-            cd - &>/dev/null
-            return 0
-        fi
-    fi
-    cd - &>/dev/null
-    
-    # Fourth attempt: try alternative packages
-    for alt_pkg in "libssl1.1-dev" "libssl3-dev" "libssl1.0-dev"; do
-        echo -e "${CYAN}Trying alternative package: $alt_pkg${NC}"
-        if timeout 120 apt-get install -y $alt_pkg; then
-            echo -e "${GREEN}>>> Successfully installed $alt_pkg as an alternative${NC}"
-            echo -e "${YELLOW}>>> Note: Using $alt_pkg instead of libssl-dev${NC}"
-            return 0
-        fi
+    # Method 1: Try installing from Kali repository
+    echo -e "${YELLOW}>>> Attempting installation from Kali repository...${NC}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev=3.0.11-1 2>&1 | while read line; do
+        echo -e "${CYAN}>>> $line${NC}"
     done
     
-    # Final fallback: try to install openssl binary and headers
-    echo -e "${CYAN}Trying to install openssl package...${NC}"
-    if timeout 120 apt-get install -y openssl; then
-        echo -e "${YELLOW}>>> Installed openssl binary, but development headers may be missing${NC}"
-        echo -e "${YELLOW}>>> Some features requiring OpenSSL development headers may not work${NC}"
-        return 1
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}>>> Successfully installed libssl-dev from Kali repository${NC}"
+        return 0
     fi
     
-    echo -e "${RED}>>> Failed to install OpenSSL development libraries${NC}"
-    echo -e "${YELLOW}>>> Some cryptographic features may not work correctly${NC}"
+    # Method 2: Try installing from Debian repository
+    echo -e "${YELLOW}>>> Attempting installation from Debian repository...${NC}"
+    echo "deb http://deb.debian.org/debian bullseye main" > /etc/apt/sources.list.d/debian.list
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev/bullseye 2>&1 | while read line; do
+        echo -e "${CYAN}>>> $line${NC}"
+    done
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}>>> Successfully installed libssl-dev from Debian repository${NC}"
+        # Clean up
+        rm /etc/apt/sources.list.d/debian.list
+        apt-get update
+        return 0
+    fi
+    
+    # Method 3: Try building from source
+    echo -e "${YELLOW}>>> Attempting to build from source...${NC}"
+    apt-get install -y build-essential wget
+    cd /tmp
+    wget https://www.openssl.org/source/openssl-3.0.11.tar.gz
+    tar xzf openssl-3.0.11.tar.gz
+    cd openssl-3.0.11
+    ./config --prefix=/usr/local/ssl --openssldir=/usr/local/ssl shared
+    make
+    make install
+    echo "/usr/local/ssl/lib" > /etc/ld.so.conf.d/openssl.conf
+    ldconfig
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}>>> Successfully built and installed OpenSSL from source${NC}"
+        return 0
+    fi
+    
+    # If all methods fail
+    echo -e "${RED}>>> Failed to install libssl-dev. Some features may not work properly.${NC}"
+    echo -e "${YELLOW}>>> You can try installing it manually or continue without it.${NC}"
     return 1
 }
 
@@ -287,7 +290,18 @@ for package in "${essential_packages[@]}"; do
 done
 
 # Install OpenSSL development libraries
-install_libssl_dev
+if [ "$SKIP_LIBSSL" = false ]; then
+    install_libssl
+    if [ $? -ne 0 ]; then
+        echo -e "${YELLOW}>>> libssl-dev installation failed. Some features may not work.${NC}"
+        echo -e "${YELLOW}>>> You can try installing it manually or continue without it.${NC}"
+        read -p "Continue installation? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+fi
 
 # Additional important libraries that might be needed
 additional_libs=(
