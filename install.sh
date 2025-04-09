@@ -297,21 +297,9 @@ if [ -f /etc/os-release ]; then
                 echo -e "${GREEN}>>> Package lists updated successfully${NC}"
             fi
 
-            echo -e "${CYAN}Running: apt-get upgrade -y (timeout: 600s)${NC}"
-            APT_START_TIME=$(date +%s)
-            timeout 600 apt-get upgrade -y > /dev/null 2>&1
-            upgrade_status=$?
-            unset APT_START_TIME
-
-            if [ $upgrade_status -eq 124 ]; then
-                echo -e "${RED}>>> Package upgrade timed out. Killing hanging processes...${NC}"
-                kill_hanging_apt
-                echo -e "${YELLOW}>>> Continuing with installation${NC}"
-            elif [ $upgrade_status -ne 0 ]; then
-                echo -e "${RED}>>> Package upgrade failed with status $upgrade_status. Continuing...${NC}"
-            else
-                echo -e "${GREEN}>>> System packages upgraded successfully${NC}"
-            fi
+            # CRITICAL FIX: Completely skip system upgrade which causes hanging
+            echo -e "${YELLOW}>>> Skipping system upgrade to prevent hanging...${NC}"
+            echo -e "${GREEN}>>> Continuing with installation${NC}"
         fi
         
         # Install required system packages
@@ -397,7 +385,12 @@ if [ -f /etc/os-release ]; then
             "build-essential" "libffi-dev"
         )
         for package in "${base_packages[@]}"; do
-            install_package "$package" 300
+            install_single_package "$package" 300
+            if [ $? -ne 0 ] && [ $? -ne 124 ]; then
+                # If normal install failed but not due to timeout, try with --no-install-recommends
+                echo -e "${YELLOW}>>> Retrying $package installation without recommended packages...${NC}"
+                install_single_package "$package" 300 true
+            fi
         done
         
         # Add a check for successful installation of essential packages
@@ -407,7 +400,7 @@ if [ -f /etc/os-release ]; then
         for package in "${essential_packages[@]}"; do
             if ! dpkg -s "$package" &> /dev/null; then
                 echo -e "${RED}>>> Critical package $package is missing. Attempting reinstall...${NC}"
-                install_package "$package" 300
+                install_single_package "$package" 300
                 if ! dpkg -s "$package" &> /dev/null; then
                     echo -e "${RED}>>> Failed to install $package after retry. This may cause issues.${NC}"
                     missing_essentials=true
