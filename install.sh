@@ -60,6 +60,7 @@ reset_terminal() {
 # Function to handle errors
 handle_error() {
     echo -e "${RED}Error: $1${NC}"
+    reset_terminal
     exit 1
 }
 
@@ -637,9 +638,12 @@ else
     echo -e "${YELLOW}>>> You can manually download models later with: ollama pull artifish/llama3.2-uncensored${NC}"
 fi
 
-# Create a system-wide executable
-echo -e "${YELLOW}>>> Creating system-wide executable...${NC}"
-cat > /usr/local/bin/AI_MAL << 'EOF'
+# Function to create AI_MAL executable
+create_executable() {
+    echo -e "${CYAN}Creating AI_MAL executable...${NC}"
+    
+    # Create the executable script
+    cat > /usr/local/bin/AI_MAL << 'EOF'
 #!/bin/bash
 
 # Find the AI_MAL installation directory
@@ -674,15 +678,25 @@ if [ -f "venv/bin/activate" ]; then
 fi
 
 # Run the main module with all arguments
-if ! python -m AI_MAL.main "$@" 2>/dev/null; then
-    if ! python3 -m AI_MAL.main "$@"; then
+if ! python -m AI_MAL.main.scanner "$@" 2>/dev/null; then
+    if ! python3 -m AI_MAL.main.scanner "$@"; then
         echo "Error: Failed to run AI_MAL. Check installation and try again." >&2
         exit 1
     fi
 fi
 EOF
 
-chmod +x /usr/local/bin/AI_MAL
+    # Make the script executable
+    chmod +x /usr/local/bin/AI_MAL
+    
+    # Create a symlink in the current directory
+    ln -sf /usr/local/bin/AI_MAL "$(pwd)/AI_MAL"
+    
+    echo -e "${GREEN}>>> AI_MAL executable created successfully${NC}"
+}
+
+# Add this to the main installation section, after package installation
+create_executable
 
 # Create a configuration file if it doesn't exist
 if [ ! -f ".env" ]; then

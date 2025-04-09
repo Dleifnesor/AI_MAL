@@ -1,32 +1,21 @@
 from setuptools import setup, find_packages
+import os
+
+# Get the long description from the README file
+with open('README.md', encoding='utf-8') as f:
+    long_description = f.read()
+
+# Get the requirements from requirements.txt
+with open('requirements.txt') as f:
+    requirements = f.read().splitlines()
 
 setup(
     name="AI_MAL",
     version="0.1.0",
-    packages=find_packages(include=['AI_MAL', 'AI_MAL.*']),
+    packages=find_packages(),
     package_dir={'': '.'},
     include_package_data=True,
-    install_requires=[
-        "aiohttp>=3.8.0",
-        "python-dotenv>=0.19.0",
-        "typing-extensions>=4.0.0",
-        "requests>=2.31.0",
-        "colorama>=0.4.6",
-        "rich>=13.7.0",
-        "pyyaml>=6.0.1",
-        "jinja2>=3.1.3",
-        "python-nmap>=0.7.1",
-        "paramiko>=2.7.2",  # For SSH connections
-        "scapy>=2.4.5",
-        "cryptography>=3.4.7",
-        "numpy>=1.21.2",
-        "pandas>=1.3.3",
-        "scikit-learn>=0.24.2",
-        "torch>=1.9.0",
-        "transformers>=4.11.3",
-        "tqdm>=4.62.3",
-        "click>=8.0.1",
-    ],
+    install_requires=requirements,
     entry_points={
         "console_scripts": [
             "AI_MAL=AI_MAL.main.scanner:main",
@@ -35,7 +24,7 @@ setup(
     author="Dleifnesor",
     author_email="phlegmenthusiast@gmail.com",
     description="AI-Powered Penetration Testing Tool",
-    long_description=open("README.md").read(),
+    long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Dleifnesor/AI_MAL",
     classifiers=[
@@ -50,6 +39,18 @@ setup(
     ],
     python_requires=">=3.8",
     package_data={
-        'AI_MAL': ['*.py', 'core/*.py', 'main/*.py'],
+        'AI_MAL': [
+            '*.py',
+            'core/*.py',
+            'main/*.py',
+            '*.md',
+            '*.txt',
+            '*.sh'
+        ],
     },
+    data_files=[
+        ('/usr/local/bin', ['AI_MAL']),
+        ('/etc/AI_MAL', ['.env']),
+    ],
+    scripts=['install.sh'],
 ) 
