@@ -13,6 +13,29 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
 
+# Trap for cleanup on interruption
+cleanup() {
+    echo -e "\n${YELLOW}>>> Installation interrupted. Cleaning up...${NC}"
+    # Kill any running processes
+    jobs -p | xargs -r kill
+    exit 1
+}
+
+# Set up trap for SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM
+
+# Log file for detailed output
+LOG_FILE="install_log_$(date +%Y%m%d_%H%M%S).txt"
+echo "Starting installation at $(date)" > "$LOG_FILE"
+
+# Function to log messages
+log_message() {
+    echo "$@" | tee -a "$LOG_FILE"
+}
+
+# Print a message showing log file is available
+log_message "${YELLOW}>>> Detailed installation log will be saved to: $LOG_FILE${NC}"
+
 # Set installation directory if not specified
 if [ -z "$INSTALL_DIR" ]; then
     INSTALL_DIR="/opt/AI_MAL"
@@ -140,77 +163,75 @@ if [ -f /etc/os-release ]; then
         upgrade_pid=$!
         spinner $upgrade_pid "${CYAN}Upgrading installed packages"
         
+        # Function to install a single package with direct output
+        install_package() {
+            local package=$1
+            log_message "${CYAN}Installing $package...${NC}"
+            
+            # Try to install with apt-get, log the result to the log file
+            DEBIAN_FRONTEND=noninteractive apt-get install -y $package >> "$LOG_FILE" 2>&1
+            
+            if [ $? -ne 0 ]; then
+                log_message "${RED}>>> Failed to install $package${NC}"
+                log_message "${YELLOW}>>> You can check details in $LOG_FILE${NC}"
+                log_message "${YELLOW}>>> Continuing with installation...${NC}"
+                return 1
+            else
+                log_message "${GREEN}>>> Successfully installed $package${NC}"
+                return 0
+            fi
+        }
+
         # Install required system packages
         echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
         
-        # Group packages by category for better reliability
+        # Install base packages one by one
+        echo -e "${YELLOW}>>> Installing base packages...${NC}"
         base_packages=(
             "python3" "python3-pip" "python3-venv" "git" "curl" "wget" 
             "build-essential" "libssl-dev" "libffi-dev"
         )
-        
+        for package in "${base_packages[@]}"; do
+            install_package "$package"
+        done
+
+        # Install Metasploit Framework separately (large package)
+        echo -e "${YELLOW}>>> Installing Metasploit Framework (may take some time)...${NC}"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y metasploit-framework
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}>>> Error installing Metasploit. Will continue with other packages.${NC}"
+        else
+            echo -e "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
+        fi
+
+        # Install network packages one by one
+        echo -e "${YELLOW}>>> Installing network packages...${NC}"
         network_packages=(
             "nmap" "python3-nmap" "smbclient" "libpcap-dev" "hping3"
             "libnetfilter-queue-dev" "libnetfilter-queue1" 
             "libnetfilter-conntrack-dev" "libnetfilter-conntrack3"
         )
-        
+        for package in "${network_packages[@]}"; do
+            install_package "$package"
+        done
+
+        # Install Python packages one by one
+        echo -e "${YELLOW}>>> Installing Python development packages...${NC}"
         python_packages=(
             "python3-dev" "python3-setuptools" "python3-wheel"
         )
-        
+        for package in "${python_packages[@]}"; do
+            install_package "$package"
+        done
+
+        # Install additional utilities one by one
+        echo -e "${YELLOW}>>> Installing additional utilities...${NC}"
         additional_packages=(
             "apache2-utils" "bc"
         )
-        
-        # Install metasploit separately as it's the largest package
-        echo -e "${YELLOW}>>> Installing Metasploit Framework (this may take a while)...${NC}"
-        apt-get install -y metasploit-framework
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}>>> Warning: Metasploit installation may have issues. Will continue with other packages.${NC}"
-        else
-            echo -e "${GREEN}>>> Metasploit Framework installed successfully.${NC}"
-        fi
-        
-        # Function to install package groups with better error handling
-        install_package_group() {
-            local group_name=$1
-            shift
-            local packages=("$@")
-            
-            echo -e "${YELLOW}>>> Installing ${group_name} packages...${NC}"
-            local total=${#packages[@]}
-            local current=0
-            local failed=()
-            
-            for package in "${packages[@]}"; do
-                current=$((current + 1))
-                echo -ne "${CYAN}Installing ${package} (${current}/${total}) ${NC}"
-                
-                # Install with timeout to prevent hanging
-                timeout 300 apt-get install -y $package
-                if [ $? -ne 0 ]; then
-                    echo -e " ${RED}[FAILED]${NC}"
-                    failed+=("$package")
-                else
-                    echo -e " ${GREEN}[OK]${NC}"
-                fi
-            done
-            
-            # Report any failed packages
-            if [ ${#failed[@]} -gt 0 ]; then
-                echo -e "${YELLOW}>>> Some packages failed to install: ${failed[*]}${NC}"
-                echo -e "${YELLOW}>>> Will continue with installation anyway.${NC}"
-            else
-                echo -e "${GREEN}>>> All ${group_name} packages installed successfully.${NC}"
-            fi
-        }
-        
-        # Install package groups
-        install_package_group "base" "${base_packages[@]}"
-        install_package_group "network" "${network_packages[@]}"
-        install_package_group "Python" "${python_packages[@]}"
-        install_package_group "additional" "${additional_packages[@]}"
+        for package in "${additional_packages[@]}"; do
+            install_package "$package"
+        done
 
         # Verify nmap installation
         echo -e "${YELLOW}>>> Verifying nmap installation...${NC}"
@@ -240,7 +261,7 @@ if [ -f /etc/os-release ]; then
         # Install Ollama if not already installed
         if ! command_exists ollama; then
             echo -e "${YELLOW}>>> Installing Ollama...${NC}"
-            curl -fsSL https://ollama.com/install.sh | sh -s -- -q > /dev/null 2>&1
+            curl -fsSL https://ollama.com/install.sh | sh -s -- -q
             
             # Start Ollama service
             echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
@@ -249,7 +270,7 @@ if [ -f /etc/os-release ]; then
             
             # Wait for Ollama to start
             echo -e "${YELLOW}>>> Waiting for Ollama service to start...${NC}"
-            sleep 5
+            sleep 10
             
             # Check if we should skip model downloads
             if [ "$SKIP_MODELS" = true ]; then
@@ -258,122 +279,14 @@ if [ -f /etc/os-release ]; then
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
                 echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
             else
-                # Pull the specified models with progress indication
-                echo -e "${YELLOW}>>> Pulling required AI models...${NC}"
-                echo -e "${YELLOW}>>> This may take several minutes for large models. Please be patient.${NC}"
-                echo -e "${YELLOW}>>> To skip model downloads, run the installer with --no-models${NC}"
+                # Pull the specified models directly
+                echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
+                ollama pull artifish/llama3.2-uncensored
+                echo -e "${GREEN}>>> Downloaded primary model${NC}"
                 
-                # Function to pull a model with timeout
-                pull_model_with_timeout() {
-                    local model=$1
-                    local timeout=$2
-                    local start_time=$(date +%s)
-                    
-                    echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
-                    echo -ne "${CYAN}Downloading model ${NC}["
-                    
-                    # Start the pull in background
-                    ollama pull $model > /dev/null 2>&1 &
-                    local pull_pid=$!
-                    
-                    # Variables for progress tracking
-                    local progress=0
-                    local bar_size=40
-                    local elapsed=0
-                    local last_progress_time=$start_time
-                    
-                    # Monitor the process with progress updates
-                    while kill -0 $pull_pid 2>/dev/null; do
-                        local current_time=$(date +%s)
-                        elapsed=$((current_time - start_time))
-                        
-                        # Calculate progress based on elapsed time and timeout
-                        # This is an approximation since we don't have actual download progress
-                        if [ $elapsed -lt $timeout ]; then
-                            progress=$((elapsed * 90 / timeout)) # Cap at 90% during download
-                        else
-                            progress=90 # Cap at 90% if timeout reached
-                        fi
-                        
-                        # Different colors based on progress
-                        if [ $progress -lt 25 ]; then
-                            color="${BLUE}"
-                        elif [ $progress -lt 50 ]; then
-                            color="${CYAN}"
-                        elif [ $progress -lt 75 ]; then
-                            color="${YELLOW}"
-                        else
-                            color="${GREEN}"
-                        fi
-                        
-                        # Only update the display every second to reduce flickering
-                        if [ $current_time -ne $last_progress_time ]; then
-                            last_progress_time=$current_time
-                            
-                            # Calculate how many blocks to show
-                            local blocks=$((progress * bar_size / 100))
-                            
-                            # Print progress bar
-                            printf "\r${CYAN}Downloading model ${NC}["
-                            for ((i=0; i<blocks; i++)); do
-                                printf "${color}▓${NC}"
-                            done
-                            for ((i=blocks; i<bar_size; i++)); do
-                                printf " "
-                            done
-                            printf "] ${progress}%% (${elapsed}s)"
-                        fi
-                        
-                        # Exit if timeout reached
-                        if [ $elapsed -ge $timeout ]; then
-                            echo -e "\n${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
-                            kill -9 $pull_pid 2>/dev/null || true
-                            wait $pull_pid 2>/dev/null || true
-                            return 1
-                        fi
-                        
-                        sleep 0.2
-                    done
-                    
-                    # Complete the progress bar to 100%
-                    printf "\r${CYAN}Downloading model ${NC}["
-                    for ((i=0; i<bar_size; i++)); do
-                        printf "${GREEN}▓${NC}"
-                    done
-                    printf "] ${GREEN}100%%${NC} (${elapsed}s)\n"
-                    
-                    # Check if the model is now available
-                    if ollama list | grep -q "$model"; then
-                        echo -e "${GREEN}>>> Successfully pulled $model${NC}"
-                        return 0
-                    else
-                        echo -e "${RED}>>> Failed to pull $model${NC}"
-                        return 1
-                    fi
-                }
-
-                # Try to pull the primary model with a generous timeout (10 minutes)
-                if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
-                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
-                    echo -e "${YELLOW}>>> This is a large model and may take several minutes...${NC}"
-                    if ! pull_model_with_timeout "artifish/llama3.2-uncensored" 600; then
-                        echo -e "${RED}>>> Could not pull artifish/llama3.2-uncensored within the timeout period.${NC}"
-                        echo -e "${YELLOW}>>> Will try to use a smaller model instead.${NC}"
-                    fi
-                else
-                    echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
-                fi
-
-                # Pull the fallback model (smaller and faster to download)
-                if ! ollama list | grep -q "gemma:1b"; then
-                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
-                    if ! pull_model_with_timeout "gemma:1b" 300; then
-                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
-                        echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
-                    fi
-                else
-                    echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
-                fi
+                echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
+                ollama pull gemma:1b
+                echo -e "${GREEN}>>> Downloaded fallback model${NC}"
             fi
         else
             echo -e "${YELLOW}>>> Ollama already installed, checking for required models...${NC}"
@@ -385,113 +298,19 @@ if [ -f /etc/os-release ]; then
                 echo -e "${GREEN}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
                 echo -e "${GREEN}>>>   ollama pull gemma:1b${NC}"
             else
-                # Function to pull a model with timeout
-                pull_model_with_timeout() {
-                    local model=$1
-                    local timeout=$2
-                    local start_time=$(date +%s)
-                    
-                    echo -e "${YELLOW}>>> Pulling $model (timeout: ${timeout}s)...${NC}"
-                    echo -ne "${CYAN}Downloading model ${NC}["
-                    
-                    # Start the pull in background
-                    ollama pull $model > /dev/null 2>&1 &
-                    local pull_pid=$!
-                    
-                    # Variables for progress tracking
-                    local progress=0
-                    local bar_size=40
-                    local elapsed=0
-                    local last_progress_time=$start_time
-                    
-                    # Monitor the process with progress updates
-                    while kill -0 $pull_pid 2>/dev/null; do
-                        local current_time=$(date +%s)
-                        elapsed=$((current_time - start_time))
-                        
-                        # Calculate progress based on elapsed time and timeout
-                        # This is an approximation since we don't have actual download progress
-                        if [ $elapsed -lt $timeout ]; then
-                            progress=$((elapsed * 90 / timeout)) # Cap at 90% during download
-                        else
-                            progress=90 # Cap at 90% if timeout reached
-                        fi
-                        
-                        # Different colors based on progress
-                        if [ $progress -lt 25 ]; then
-                            color="${BLUE}"
-                        elif [ $progress -lt 50 ]; then
-                            color="${CYAN}"
-                        elif [ $progress -lt 75 ]; then
-                            color="${YELLOW}"
-                        else
-                            color="${GREEN}"
-                        fi
-                        
-                        # Only update the display every second to reduce flickering
-                        if [ $current_time -ne $last_progress_time ]; then
-                            last_progress_time=$current_time
-                            
-                            # Calculate how many blocks to show
-                            local blocks=$((progress * bar_size / 100))
-                            
-                            # Print progress bar
-                            printf "\r${CYAN}Downloading model ${NC}["
-                            for ((i=0; i<blocks; i++)); do
-                                printf "${color}▓${NC}"
-                            done
-                            for ((i=blocks; i<bar_size; i++)); do
-                                printf " "
-                            done
-                            printf "] ${progress}%% (${elapsed}s)"
-                        fi
-                        
-                        # Exit if timeout reached
-                        if [ $elapsed -ge $timeout ]; then
-                            echo -e "\n${RED}>>> Timeout reached ($timeout seconds) for $model. Aborting pull.${NC}"
-                            kill -9 $pull_pid 2>/dev/null || true
-                            wait $pull_pid 2>/dev/null || true
-                            return 1
-                        fi
-                        
-                        sleep 0.2
-                    done
-                    
-                    # Complete the progress bar to 100%
-                    printf "\r${CYAN}Downloading model ${NC}["
-                    for ((i=0; i<bar_size; i++)); do
-                        printf "${GREEN}▓${NC}"
-                    done
-                    printf "] ${GREEN}100%%${NC} (${elapsed}s)\n"
-                    
-                    # Check if the model is now available
-                    if ollama list | grep -q "$model"; then
-                        echo -e "${GREEN}>>> Successfully pulled $model${NC}"
-                        return 0
-                    else
-                        echo -e "${RED}>>> Failed to pull $model${NC}"
-                        return 1
-                    fi
-                }
-                
                 # Check if models are available
                 if ! ollama list | grep -q "artifish/llama3.2-uncensored"; then
-                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored${NC}"
-                    echo -e "${YELLOW}>>> This is a large model and may take several minutes...${NC}"
-                    if ! pull_model_with_timeout "artifish/llama3.2-uncensored" 600; then
-                        echo -e "${RED}>>> Could not pull artifish/llama3.2-uncensored within the timeout period.${NC}"
-                        echo -e "${YELLOW}>>> Will try to use a smaller model instead.${NC}"
-                    fi
+                    echo -e "${YELLOW}>>> Pulling primary AI model: artifish/llama3.2-uncensored (this may take a while)...${NC}"
+                    ollama pull artifish/llama3.2-uncensored
+                    echo -e "${GREEN}>>> Downloaded primary model${NC}"
                 else
                     echo -e "${GREEN}>>> Primary model artifish/llama3.2-uncensored is already available${NC}"
                 fi
                 
                 if ! ollama list | grep -q "gemma:1b"; then
-                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b${NC}"
-                    if ! pull_model_with_timeout "gemma:1b" 300; then
-                        echo -e "${RED}>>> Could not pull gemma:1b within the timeout period.${NC}"
-                        echo -e "${YELLOW}>>> The AI analysis features may not work correctly.${NC}"
-                    fi
+                    echo -e "${YELLOW}>>> Pulling fallback AI model: gemma:1b...${NC}"
+                    ollama pull gemma:1b
+                    echo -e "${GREEN}>>> Downloaded fallback model${NC}"
                 else
                     echo -e "${GREEN}>>> Fallback model gemma:1b is already available${NC}"
                 fi
@@ -620,21 +439,10 @@ source venv/bin/activate
 # Install dependencies
 echo -e "${YELLOW}>>> Installing dependencies...${NC}"
 echo -e "${CYAN}Upgrading pip...${NC}"
-pip3 install --upgrade pip > /dev/null 2>&1 &
-pip_pid=$!
-spinner $pip_pid "${CYAN}Upgrading pip"
+pip3 install --upgrade pip
 
-echo -e "${CYAN}Installing project dependencies...${NC}"
-
-# Create a temporary cleaned requirements file
-temp_req=$(mktemp)
-grep -v '^\s*$\|^\s*\#' requirements.txt | sed '/^$/d' > "$temp_req"
-
-# Count the number of valid packages
-req_count=$(wc -l < "$temp_req")
-echo -ne "${CYAN}Installing packages ${NC}["
-
-count=0
+# Install packages directly with output visible
+echo -e "${CYAN}Installing project dependencies individually...${NC}"
 while IFS= read -r line || [[ -n "$line" ]]; do
     # Skip empty lines and comments
     if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
@@ -652,99 +460,21 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     # Extract package name for progress tracking
     package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
     
-    # Install the package with error handling
-    if ! pip3 install "$line" > /dev/null 2>&1; then
-        echo -e "\n${RED}>>> Error installing package: $package_name${NC}"
-        echo -e "${YELLOW}>>> Attempting to install with verbose output...${NC}"
-        pip3 install "$line"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}>>> Failed to install package: $package_name${NC}"
-            echo -e "${YELLOW}>>> Continuing with remaining packages...${NC}"
-        fi
-    fi
+    # Install with output visible
+    echo -e "${CYAN}Installing ${package_name}...${NC}"
+    pip3 install "$line"
     
-    # Update progress
-    count=$((count + 1))
-    progress=$((count * 40 / req_count))
-    percent=$((count * 100 / req_count))
-    
-    # Different colors based on progress
-    if [ $percent -lt 25 ]; then
-        color="${BLUE}"
-    elif [ $percent -lt 50 ]; then
-        color="${CYAN}"
-    elif [ $percent -lt 75 ]; then
-        color="${YELLOW}"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}>>> Failed to install package: $package_name. Continuing...${NC}"
     else
-        color="${GREEN}"
+        echo -e "${GREEN}>>> Successfully installed: $package_name${NC}"
     fi
     
-    # Update progress bar
-    printf "\r${CYAN}Installing packages ${NC}["
-    for ((i=0; i<progress; i++)); do
-        printf "${color}▓${NC}"
-    done
-    for ((i=progress; i<40; i++)); do
-        printf " "
-    done
-    printf "] ${percent}%%"
-    
-done < "$temp_req"
-printf "\n"
-
-# Clean up temporary file
-rm "$temp_req"
-
-# Verify all packages were installed
-echo -e "${YELLOW}>>> Verifying package installation...${NC}"
-missing_packages=0
-while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
-        continue
-    fi
-    
-    package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
-    if [[ -z "$package_name" ]]; then
-        continue
-    fi
-    
-    if ! pip3 show "$package_name" > /dev/null 2>&1; then
-        echo -e "${RED}>>> Package not installed: $package_name${NC}"
-        missing_packages=$((missing_packages + 1))
-    fi
 done < requirements.txt
-
-if [ $missing_packages -gt 0 ]; then
-    echo -e "${YELLOW}>>> $missing_packages packages failed to install. Attempting to install them individually...${NC}"
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
-            continue
-        fi
-        
-        package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
-        if [[ -z "$package_name" ]]; then
-            continue
-        fi
-        
-        if ! pip3 show "$package_name" > /dev/null 2>&1; then
-            echo -e "${YELLOW}>>> Retrying installation of $package_name...${NC}"
-            pip3 install "$line" --no-cache-dir
-        fi
-    done < requirements.txt
-fi
 
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
-animated_progress "${CYAN}Installing AI_MAL" 2
-if ! pip3 install -e . > /dev/null 2>&1; then
-    echo -e "${RED}>>> Error installing AI_MAL package. Retrying with verbose output...${NC}"
-    pip3 install -e .
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}>>> Failed to install AI_MAL package. Please check the error messages above.${NC}"
-        exit 1
-    fi
-fi
-echo -e "${GREEN}>>> AI_MAL package installed${NC}"
+pip3 install -e .
 
 # Set permissions
 echo -e "${YELLOW}>>> Setting permissions...${NC}"
