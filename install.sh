@@ -194,18 +194,41 @@ if [ -f /etc/os-release ]; then
         # Install base packages one by one with specific timeouts for problematic packages
         echo -e "${YELLOW}>>> Installing base packages...${NC}"
         
-        # Install problematic packages with longer timeouts
+        # Install problematic packages with longer timeouts and noninteractive mode for all
         echo -e "${YELLOW}>>> Installing libssl-dev with extended timeout...${NC}"
-        DEBIAN_FRONTEND=noninteractive install_package "libssl-dev" 300
+        export DEBIAN_FRONTEND=noninteractive
+        install_package "libssl-dev" 600
         
-        # Install other base packages
+        # Install other base packages with noninteractive mode
         base_packages=(
             "python3" "python3-pip" "python3-venv" "git" "curl" "wget" 
             "build-essential" "libffi-dev"
         )
         for package in "${base_packages[@]}"; do
-            install_package "$package"
+            install_package "$package" 300
         done
+        
+        # Add a check for successful installation of essential packages
+        echo -e "${YELLOW}>>> Verifying essential packages...${NC}"
+        essential_packages=("python3" "python3-pip" "python3-venv")
+        missing_essentials=false
+        for package in "${essential_packages[@]}"; do
+            if ! dpkg -s "$package" &> /dev/null; then
+                echo -e "${RED}>>> Critical package $package is missing. Attempting reinstall...${NC}"
+                install_package "$package" 300
+                if ! dpkg -s "$package" &> /dev/null; then
+                    echo -e "${RED}>>> Failed to install $package after retry. This may cause issues.${NC}"
+                    missing_essentials=true
+                fi
+            fi
+        done
+        
+        if [ "$missing_essentials" = true ]; then
+            echo -e "${YELLOW}>>> Warning: Some essential packages could not be installed.${NC}"
+            echo -e "${YELLOW}>>> Continuing with installation, but functionality may be limited.${NC}"
+        else
+            echo -e "${GREEN}>>> All essential packages verified!${NC}"
+        fi
 
         # Install Metasploit Framework separately (large package)
         echo -e "${YELLOW}>>> Installing Metasploit Framework (may take some time)...${NC}"
@@ -467,38 +490,63 @@ source venv/bin/activate
 # Install dependencies
 echo -e "${YELLOW}>>> Installing dependencies...${NC}"
 echo -e "${CYAN}Upgrading pip...${NC}"
-pip3 install --upgrade pip
+timeout 60 pip3 install --upgrade pip
 
 # Install packages directly with output visible
 echo -e "${CYAN}Installing project dependencies individually...${NC}"
-while IFS= read -r line || [[ -n "$line" ]]; do
-    # Skip empty lines and comments
-    if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
-        continue
-    fi
+
+# Create a temporary requirements file without version constraints for fallback
+echo -e "${YELLOW}>>> Creating fallback requirements file...${NC}"
+cp requirements.txt requirements.simple.txt
+# Extract just package names without version constraints
+sed -i 's/[<>=!~].*//' requirements.simple.txt
+
+# First try to install all packages at once with a timeout
+echo -e "${YELLOW}>>> Attempting to install all requirements together...${NC}"
+timeout 300 pip3 install -r requirements.txt
+pip_status=$?
+
+if [ $pip_status -eq 0 ]; then
+    echo -e "${GREEN}>>> Successfully installed all dependencies!${NC}"
+else
+    echo -e "${YELLOW}>>> Bulk installation failed or timed out. Falling back to individual package installation...${NC}"
     
-    # Clean the line of any leading/trailing whitespace
-    line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    
-    # Skip if the line is empty after cleaning
-    if [[ -z "$line" ]]; then
-        continue
-    fi
-    
-    # Extract package name for progress tracking
-    package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
-    
-    # Install with output visible and timeout
-    echo -e "${CYAN}Installing ${package_name}...${NC}"
-    timeout 120 pip3 install "$line"
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}>>> Failed to install package: $package_name. Continuing...${NC}"
-    else
-        echo -e "${GREEN}>>> Successfully installed: $package_name${NC}"
-    fi
-    
-done < requirements.txt
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip empty lines and comments
+        if [[ -z "$line" || "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
+            continue
+        fi
+        
+        # Clean the line of any leading/trailing whitespace
+        line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        
+        # Skip if the line is empty after cleaning
+        if [[ -z "$line" ]]; then
+            continue
+        fi
+        
+        # Extract package name for progress tracking
+        package_name=$(echo "$line" | cut -d'>' -f1 | cut -d'=' -f1 | cut -d'<' -f1 | sed 's/[[:space:]]*$//')
+        
+        # Install with output visible and timeout
+        echo -e "${CYAN}Installing ${package_name}...${NC}"
+        timeout 180 pip3 install "$line"
+        
+        if [ $? -ne 0 ]; then
+            echo -e "${YELLOW}>>> Failed to install package with version constraints: $package_name. Trying without version constraints...${NC}"
+            timeout 180 pip3 install "$package_name"
+            
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}>>> Failed to install package: $package_name. Continuing...${NC}"
+            else
+                echo -e "${GREEN}>>> Successfully installed: $package_name (without version constraints)${NC}"
+            fi
+        else
+            echo -e "${GREEN}>>> Successfully installed: $package_name${NC}"
+        fi
+        
+    done < requirements.txt
+fi
 
 # Install AI_MAL package
 echo -e "${YELLOW}>>> Installing AI_MAL package...${NC}"
@@ -753,10 +801,14 @@ for i in {1..40}; do
 done
 echo ""
 
-# Add a completion check at the end of the script
-echo -e "${YELLOW}>>> Performing final checks...${NC}"
+# Add a more robust completion check at the end of the script
+echo -e "${YELLOW}>>> Performing final installation verification...${NC}"
 
-# Check if required directories exist
+# Keep track of verification errors
+verification_errors=0
+
+# 1. Check if required directories exist
+echo -e "${CYAN}Verifying required directories...${NC}"
 missing_dirs=()
 for dir in "logs" "scan_results" "msf_resources" "generated_scripts" "workspaces"; do
     if [ ! -d "$dir" ]; then
@@ -772,46 +824,156 @@ if [ ${#missing_dirs[@]} -gt 0 ]; then
         chmod 755 "$dir"
         echo -e "${GREEN}>>> Created directory: $dir${NC}"
     done
+else
+    echo -e "${GREEN}>>> All required directories verified${NC}"
 fi
 
-# Check if AI_MAL is installed
-if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
-    echo -e "${GREEN}>>> Python virtual environment is installed correctly${NC}"
+# 2. Check if Python virtual environment is properly installed
+echo -e "${CYAN}Verifying Python virtual environment...${NC}"
+if [ -d "venv" ] && [ -f "venv/bin/activate" ] && [ -f "venv/bin/python" ]; then
+    echo -e "${GREEN}>>> Python virtual environment is properly installed${NC}"
+    # Check if we can activate it
+    if source venv/bin/activate 2>/dev/null; then
+        echo -e "${GREEN}>>> Virtual environment can be activated${NC}"
+        # Check if essential Python packages are installed
+        if python -c "import rich, nmap, pathlib" 2>/dev/null; then
+            echo -e "${GREEN}>>> Essential Python packages are installed${NC}"
+        else
+            echo -e "${RED}>>> Some essential Python packages are missing. You may need to reinstall them manually:${NC}"
+            echo -e "${YELLOW}>>>   pip install rich python-nmap pathlib${NC}"
+            ((verification_errors++))
+        fi
+    else
+        echo -e "${RED}>>> Cannot activate virtual environment. This might indicate a problem.${NC}"
+        echo -e "${YELLOW}>>> You might need to recreate it with: python3 -m venv venv${NC}"
+        ((verification_errors++))
+    fi
 else
     echo -e "${RED}>>> Python virtual environment is missing or incomplete${NC}"
+    echo -e "${YELLOW}>>> You might need to recreate it with: python3 -m venv venv${NC}"
+    ((verification_errors++))
 fi
 
-# Check nmap permissions
-if [ -f /usr/bin/nmap ]; then
-    if [ -u /usr/bin/nmap ]; then
-        echo -e "${GREEN}>>> Nmap permissions are set correctly${NC}"
-    else
-        echo -e "${YELLOW}>>> Setting correct permissions for nmap...${NC}"
-        chmod +s /usr/bin/nmap
+# 3. Check nmap permissions and functionality
+echo -e "${CYAN}Verifying nmap installation...${NC}"
+if command -v nmap >/dev/null 2>&1; then
+    echo -e "${GREEN}>>> nmap is installed${NC}"
+    
+    # Check if nmap has proper permissions
+    if [ -f /usr/bin/nmap ]; then
+        if [ -u /usr/bin/nmap ]; then
+            echo -e "${GREEN}>>> nmap has setuid permissions${NC}"
+        else
+            echo -e "${YELLOW}>>> Setting setuid permission on nmap for privileged operations...${NC}"
+            chmod +s /usr/bin/nmap
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}>>> Successfully set permissions on nmap${NC}"
+            else
+                echo -e "${RED}>>> Failed to set permissions on nmap. Some scans may require sudo.${NC}"
+                ((verification_errors++))
+            fi
+        fi
     fi
+    
+    # Test if nmap works
+    if timeout 10 nmap -V >/dev/null 2>&1; then
+        echo -e "${GREEN}>>> nmap is functioning correctly${NC}"
+    else
+        echo -e "${RED}>>> nmap test failed. There might be issues with the installation.${NC}"
+        ((verification_errors++))
+    fi
+else
+    echo -e "${RED}>>> nmap is not installed or not in PATH${NC}"
+    echo -e "${YELLOW}>>> Please install nmap manually: apt-get install -y nmap${NC}"
+    ((verification_errors++))
 fi
 
-# Create symbolic link for convenience
-if [ ! -f /usr/local/bin/AI_MAL ]; then
-    echo -e "${YELLOW}>>> Creating executable link...${NC}"
+# 4. Check if Ollama is running
+echo -e "${CYAN}Verifying Ollama service...${NC}"
+if command -v ollama >/dev/null 2>&1; then
+    echo -e "${GREEN}>>> Ollama is installed${NC}"
+    
+    # Check if Ollama service is running
+    if timeout 5 curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+        echo -e "${GREEN}>>> Ollama service is running${NC}"
+        
+        # Check if models are available
+        if ollama list 2>/dev/null | grep -q "artifish/llama3.2-uncensored\|gemma:1b"; then
+            echo -e "${GREEN}>>> At least one AI model is available${NC}"
+        else
+            echo -e "${YELLOW}>>> No AI models detected. AI analysis won't work.${NC}"
+            echo -e "${YELLOW}>>> You can install models with:${NC}"
+            echo -e "${YELLOW}>>>   ollama pull artifish/llama3.2-uncensored${NC}"
+            echo -e "${YELLOW}>>>   ollama pull gemma:1b${NC}"
+            ((verification_errors++))
+        fi
+    else
+        echo -e "${YELLOW}>>> Ollama service is not running${NC}"
+        echo -e "${YELLOW}>>> Starting Ollama service...${NC}"
+        systemctl start ollama >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}>>> Successfully started Ollama service${NC}"
+            sleep 5  # Give it time to start up
+            
+            # Check again if it's running
+            if timeout 5 curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+                echo -e "${GREEN}>>> Ollama service is now running${NC}"
+            else
+                echo -e "${RED}>>> Failed to start Ollama service${NC}"
+                ((verification_errors++))
+            fi
+        else
+            echo -e "${RED}>>> Failed to start Ollama service${NC}"
+            ((verification_errors++))
+        fi
+    fi
+else
+    echo -e "${YELLOW}>>> Ollama is not installed${NC}"
+    echo -e "${YELLOW}>>> AI analysis functionality will not be available${NC}"
+    echo -e "${YELLOW}>>> You can install Ollama with: curl -fsSL https://ollama.com/install.sh | sh${NC}"
+    ((verification_errors++))
+fi
+
+# 5. Check if AI_MAL executable is available
+echo -e "${CYAN}Verifying AI_MAL executable...${NC}"
+if [ -f "/usr/local/bin/AI_MAL" ]; then
+    echo -e "${GREEN}>>> AI_MAL executable is available${NC}"
+    
+    # Check if it's executable
+    if [ -x "/usr/local/bin/AI_MAL" ]; then
+        echo -e "${GREEN}>>> AI_MAL executable has proper permissions${NC}"
+    else
+        echo -e "${YELLOW}>>> Setting executable permissions on AI_MAL...${NC}"
+        chmod +x "/usr/local/bin/AI_MAL"
+    fi
+else
+    echo -e "${YELLOW}>>> Creating AI_MAL executable...${NC}"
     cat > /usr/local/bin/AI_MAL << 'EOF'
 #!/bin/bash
-cd /opt/AI_MAL
-source venv/bin/activate
+cd $(dirname "$(readlink -f "$0")")/../AI_MAL
+source venv/bin/activate 2>/dev/null || echo "Error: Virtual environment not found"
 python -m AI_MAL.main "$@"
 EOF
     chmod +x /usr/local/bin/AI_MAL
-    echo -e "${GREEN}>>> Created executable link at /usr/local/bin/AI_MAL${NC}"
+    echo -e "${GREEN}>>> Created AI_MAL executable at /usr/local/bin/AI_MAL${NC}"
 fi
 
-echo -e "${GREEN}>>> Installation completed successfully!${NC}"
-echo -e "${YELLOW}>>> You can now run AI_MAL with:${NC} ${GREEN}AI_MAL <target> [options]${NC}"
-echo -e "${YELLOW}>>> Example:${NC} ${GREEN}AI_MAL 192.168.1.1 --vuln --os --services${NC}"
-echo -e "${YELLOW}>>> For help, run:${NC} ${GREEN}AI_MAL --help${NC}"
+# Final status report
+if [ $verification_errors -eq 0 ]; then
+    echo -e "${GREEN}>>> All verification checks passed! Installation is complete and ready to use.${NC}"
+else
+    echo -e "${YELLOW}>>> Installation completed with $verification_errors warning(s).${NC}"
+    echo -e "${YELLOW}>>> Some functionality might be limited. Check the logs above for details.${NC}"
+fi
+
+echo -e "${GREEN}>>> You can now run AI_MAL with:${NC} ${YELLOW}AI_MAL <target> [options]${NC}"
+echo -e "${GREEN}>>> Example:${NC} ${YELLOW}AI_MAL 192.168.1.1 --vuln --os --services${NC}"
+echo -e "${GREEN}>>> For help, run:${NC} ${YELLOW}AI_MAL --help${NC}"
+
 echo ""
-echo -e "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄"
-echo -e " ✓ Installation Complete! "
-echo -e " AI_MAL is now ready to use "
-echo -e "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+echo -e "${GREEN}▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${NC}"
+echo -e "${GREEN} ✓ Installation ${verification_errors -eq 0 && echo "Complete" || echo "Completed with warnings"} ${NC}"
+echo -e "${GREEN} AI_MAL is now ready to use ${NC}"
+echo -e "${GREEN}▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀${NC}"
 
 exit 0 
