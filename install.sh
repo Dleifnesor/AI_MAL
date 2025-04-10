@@ -229,6 +229,32 @@ install_libssl() {
     return 1
 }
 
+# Function to install python-ldap dependencies
+install_python_ldap_deps() {
+    echo -e "${CYAN}Installing python-ldap dependencies...${NC}"
+    
+    # Install required packages
+    local packages=(
+        "libldap2-dev"
+        "libsasl2-dev"
+        "libssl-dev"
+        "python3-dev"
+    )
+    
+    for package in "${packages[@]}"; do
+        safe_install_package "$package" true
+    done
+    
+    # Verify installation
+    if ! dpkg -s libldap2-dev &>/dev/null || ! dpkg -s libsasl2-dev &>/dev/null; then
+        echo -e "${RED}>>> Failed to install python-ldap dependencies. Installation cannot continue.${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}>>> Successfully installed python-ldap dependencies${NC}"
+    return 0
+}
+
 # Create necessary directories
 echo -e "${YELLOW}>>> Creating necessary directories...${NC}"
 # More robust directory creation
@@ -276,19 +302,31 @@ if [ "$SKIP_UPDATE" = false ]; then
     apt-get update
 fi
 
-# Install essential packages only, one at a time for reliability
-echo -e "${YELLOW}>>> Installing essential packages...${NC}"
-essential_packages=(
-    "python3" "python3-pip" "python3-venv" "python3-dev" "git" "curl" 
-    "build-essential" "nmap" "python3-nmap" "libpcap-dev"
+# Install system dependencies
+echo -e "${YELLOW}>>> Installing system dependencies...${NC}"
+packages=(
+    "python3"
+    "python3-pip"
+    "python3-venv"
+    "git"
+    "curl"
+    "wget"
+    "build-essential"
+    "libffi-dev"
+    "libssl-dev"
+    "libldap2-dev"
+    "libsasl2-dev"
+    "python3-dev"
+    "nmap"
+    "metasploit-framework"
 )
 
-for package in "${essential_packages[@]}"; do
+for package in "${packages[@]}"; do
     safe_install_package "$package" true
-    if [ $? -ne 0 ]; then
-        handle_error "Failed to install essential package $package. Aborting installation."
-    fi
 done
+
+# Install python-ldap dependencies before pip install
+install_python_ldap_deps
 
 # Install OpenSSL development libraries
 if [ "$SKIP_LIBSSL" = false ]; then
