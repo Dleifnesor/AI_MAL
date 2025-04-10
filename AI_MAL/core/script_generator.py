@@ -8,7 +8,9 @@ import json
 import logging
 import os
 import shutil
-from typing import Dict, List, Optional, Any
+import threading
+import time
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 import subprocess
 from pathlib import Path
@@ -16,8 +18,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 class ScriptGenerator:
-    def __init__(self):
-        """Initialize the script generator"""
+    """Class for generating and executing various types of scripts."""
+    
+    def __init__(self) -> None:
+        """Initialize the script generator."""
         # Get scripts directory from environment variable or use default
         self.scripts_dir = os.getenv('GENERATED_SCRIPTS_DIR', 'generated_scripts')
         
@@ -56,8 +60,8 @@ class ScriptGenerator:
         # Check for required tools
         self._check_dependencies()
         
-    def _check_dependencies(self):
-        """Check for required dependencies for script execution"""
+    def _check_dependencies(self) -> None:
+        """Check for required dependencies for script execution."""
         # Check Python3
         if not shutil.which('python3'):
             logger.warning("Python3 not found in PATH. Python scripts may not execute.")
@@ -76,8 +80,14 @@ class ScriptGenerator:
         script_type: str = 'python'
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Generate custom exploitation scripts based on scan results
-        Returns a dictionary where keys are script paths and values are script details
+        Generate custom exploitation scripts based on scan results.
+        
+        Args:
+            scan_results: Dictionary containing scan results.
+            script_type: Type of scripts to generate (python, bash, ruby).
+            
+        Returns:
+            Dictionary where keys are script paths and values are script details.
         """
         try:
             print("\n" + "="*80)
@@ -136,16 +146,20 @@ class ScriptGenerator:
             print(f"Error generating scripts: {str(e)}")
             return {}
 
-    async def execute_scripts(self, scripts: Dict[str, Dict[str, Any]], script_type: str = None) -> List[Dict[str, Any]]:
+    async def execute_scripts(
+        self,
+        scripts: Dict[str, Dict[str, Any]],
+        script_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Execute generated scripts
+        Execute generated scripts.
         
         Args:
-            scripts: Dictionary of scripts (path -> script details) from generate_scripts
-            script_type: Optional script type filter (python, bash, ruby)
+            scripts: Dictionary of scripts (path -> script details) from generate_scripts.
+            script_type: Optional script type filter (python, bash, ruby).
             
         Returns:
-            List of execution results
+            List of execution results.
         """
         try:
             print("\n" + "="*80)
@@ -185,12 +199,10 @@ class ScriptGenerator:
                 print("-"*40)
                 
                 # Display animated "Running..." message
-                import threading
-                import time
-                
                 running = True
                 
-                def animation():
+                def animation() -> None:
+                    """Display an animated running indicator."""
                     animation_chars = "|/-\\"
                     idx = 0
                     while running:
@@ -249,24 +261,9 @@ class ScriptGenerator:
                         "script": script,
                         "result": {
                             "status": "error",
-                            "error": str(e),
-                            "duration": 0
+                            "error": str(e)
                         }
                     })
-            
-            # Print summary of all results
-            print("\n" + "="*40)
-            print("Script Execution Summary")
-            print("="*40)
-            for result in results:
-                script_name = result['script']['name']
-                status = result['result']['status']
-                duration = result.get('result', {}).get('duration', 0)
-                
-                if status == 'success':
-                    print(f"✅ {script_name}: Success ({duration:.2f}s)")
-                else:
-                    print(f"❌ {script_name}: {status.capitalize()}")
             
             return results
             

@@ -13,7 +13,9 @@ from pathlib import Path
 logger = logging.getLogger("AI_MAL.network_scanner")
 
 class NetworkScanner:
-    def __init__(self, scan_config: Dict[str, Any]):
+    """Network scanner class for performing various types of network scans."""
+    
+    def __init__(self, scan_config: Dict[str, Any]) -> None:
         """
         Initialize the network scanner with the given configuration.
         
@@ -248,73 +250,57 @@ class NetworkScanner:
             "hosts": []
         }
         
-        # Process each host in scan results
-        for host, host_data in result.get('scan', {}).items():
+        # Process each host in the scan results
+        for host in result['scan']:
+            host_data = result['scan'][host]
             host_info = {
                 "ip": host,
-                "status": host_data.get('status', {}).get('state', 'unknown'),
                 "hostname": self._get_hostname(host_data),
                 "ports": self._get_ports(host_data),
                 "os": self._get_os_info(host_data),
                 "services": self._get_services(host_data)
             }
-            
-            if host_info["status"] == "up":
-                processed_result["hosts_up"] += 1
-                
             processed_result["hosts"].append(host_info)
-        
+            processed_result["hosts_up"] += 1
+            
         return processed_result
     
     def _get_hostname(self, host_data: Dict[str, Any]) -> str:
         """
-        Extract hostname from host data.
+        Extract hostname information from host data.
         
         Args:
-            host_data: Host data from nmap scan.
+            host_data: Dictionary containing host information.
             
         Returns:
-            Hostname or empty string if not found.
+            The hostname or IP address if no hostname found.
         """
-        if 'hostnames' in host_data and host_data['hostnames']:
-            for hostname in host_data['hostnames']:
-                if hostname.get('name'):
-                    return hostname.get('name')
-        return ""
+        hostnames = host_data.get('hostnames', [])
+        if hostnames:
+            return hostnames[0].get('name', host_data.get('addresses', {}).get('ipv4', ''))
+        return host_data.get('addresses', {}).get('ipv4', '')
     
     def _get_ports(self, host_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Extract port information from host data.
         
         Args:
-            host_data: Host data from nmap scan.
+            host_data: Dictionary containing host information.
             
         Returns:
             List of dictionaries containing port information.
         """
         ports = []
-        if 'tcp' in host_data:
-            for port_num, port_data in host_data['tcp'].items():
-                ports.append({
-                    "number": port_num,
-                    "protocol": "tcp",
-                    "state": port_data.get('state', 'unknown'),
-                    "service": port_data.get('name', 'unknown'),
-                    "product": port_data.get('product', ''),
-                    "version": port_data.get('version', '')
-                })
-                
-        if 'udp' in host_data:
-            for port_num, port_data in host_data['udp'].items():
-                ports.append({
-                    "number": port_num,
-                    "protocol": "udp",
-                    "state": port_data.get('state', 'unknown'),
-                    "service": port_data.get('name', 'unknown'),
-                    "product": port_data.get('product', ''),
-                    "version": port_data.get('version', '')
-                })
-                
+        for port, port_data in host_data.get('tcp', {}).items():
+            port_info = {
+                "port": port,
+                "state": port_data.get('state', ''),
+                "service": port_data.get('name', ''),
+                "version": port_data.get('version', ''),
+                "product": port_data.get('product', ''),
+                "extra_info": port_data.get('extrainfo', '')
+            }
+            ports.append(port_info)
         return ports
     
     def _get_os_info(self, host_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,65 +308,56 @@ class NetworkScanner:
         Extract OS information from host data.
         
         Args:
-            host_data: Host data from nmap scan.
+            host_data: Dictionary containing host information.
             
         Returns:
             Dictionary containing OS information.
         """
-        os_info = {"name": "Unknown", "accuracy": "0", "cpe": ""}
+        os_info = {
+            "name": "",
+            "version": "",
+            "type": "",
+            "vendor": "",
+            "family": ""
+        }
         
-        if 'osmatch' in host_data and host_data['osmatch']:
-            best_match = host_data['osmatch'][0]
-            os_info = {
-                "name": best_match.get('name', 'Unknown'),
-                "accuracy": best_match.get('accuracy', '0'),
-                "cpe": best_match.get('osclass', [{}])[0].get('cpe', [''])[0] if 'osclass' in best_match and best_match['osclass'] else ''
-            }
-            
+        if 'osmatch' in host_data:
+            for match in host_data['osmatch']:
+                if match.get('accuracy', 0) > 0:
+                    os_info.update({
+                        "name": match.get('name', ''),
+                        "version": match.get('osclass', [{}])[0].get('osgen', ''),
+                        "type": match.get('osclass', [{}])[0].get('type', ''),
+                        "vendor": match.get('osclass', [{}])[0].get('vendor', ''),
+                        "family": match.get('osclass', [{}])[0].get('osfamily', '')
+                    })
+                    break
+                    
         return os_info
     
     def _get_services(self, host_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Identify key services running on the host.
+        Extract service information from host data.
         
         Args:
-            host_data: Host data from nmap scan.
+            host_data: Dictionary containing host information.
             
         Returns:
-            Dictionary mapping service types to port numbers.
+            Dictionary containing service information.
         """
-        services = {
-            "web": [],
-            "ssh": [],
-            "ftp": [],
-            "database": [],
-            "mail": [],
-            "dns": [],
-            "other": []
-        }
-        
-        for protocol in ['tcp', 'udp']:
-            if protocol in host_data:
-                for port_num, port_data in host_data[protocol].items():
-                    service_name = port_data.get('name', '').lower()
-                    
-                    if service_name in ['http', 'https', 'www']:
-                        services["web"].append(f"{port_num}/{protocol}")
-                    elif service_name == 'ssh':
-                        services["ssh"].append(f"{port_num}/{protocol}")
-                    elif service_name in ['ftp', 'ftps', 'sftp']:
-                        services["ftp"].append(f"{port_num}/{protocol}")
-                    elif service_name in ['mysql', 'postgresql', 'mongodb', 'redis', 'cassandra', 'mssql', 'oracle']:
-                        services["database"].append(f"{port_num}/{protocol}")
-                    elif service_name in ['smtp', 'pop3', 'imap', 'exchange']:
-                        services["mail"].append(f"{port_num}/{protocol}")
-                    elif service_name in ['dns', 'domain']:
-                        services["dns"].append(f"{port_num}/{protocol}")
-                    else:
-                        services["other"].append(f"{port_num}/{protocol} ({service_name})")
-                        
-        # Remove empty categories
-        return {k: v for k, v in services.items() if v}
+        services = {}
+        for port, port_data in host_data.get('tcp', {}).items():
+            if port_data.get('state') == 'open':
+                service_name = port_data.get('name', 'unknown')
+                if service_name not in services:
+                    services[service_name] = []
+                services[service_name].append({
+                    "port": port,
+                    "version": port_data.get('version', ''),
+                    "product": port_data.get('product', ''),
+                    "extra_info": port_data.get('extrainfo', '')
+                })
+        return services
     
     def _save_scan_result(self, result: Dict[str, Any]) -> None:
         """
@@ -389,18 +366,13 @@ class NetworkScanner:
         Args:
             result: The scan result to save.
         """
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = self.results_dir / f"scan_{self.target}_{timestamp}.json"
+        
         try:
-            # Create a unique filename based on target and timestamp
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            filename = f"{self.target.replace('.', '_')}_{timestamp}.json"
-            filepath = self.results_dir / filename
-            
-            # Save the result as JSON
-            with open(filepath, 'w') as f:
+            with open(filename, 'w') as f:
                 json.dump(result, f, indent=2)
-                
-            logger.info(f"Scan result saved to {filepath}")
-            
+            logger.info(f"Scan result saved to {filename}")
         except Exception as e:
             logger.error(f"Error saving scan result: {str(e)}")
     
@@ -409,9 +381,8 @@ class NetworkScanner:
         Get the processed results of the last scan.
         
         Returns:
-            Processed scan results or error message if no results available.
+            The processed scan results or None if no scan has been performed.
         """
         if self.last_scan_result:
             return self._process_scan_result(self.last_scan_result)
-        else:
-            return {"error": "No scan results available"} 
+        return {"error": "No scan results available"} 

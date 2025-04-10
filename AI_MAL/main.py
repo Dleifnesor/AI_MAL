@@ -8,7 +8,7 @@ import sys
 import time
 import asyncio
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union, Callable
 from datetime import datetime
 from pathlib import Path
 import platform
@@ -20,7 +20,7 @@ import subprocess
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.box import ROUNDED, Box  # Import Box from rich.box
+from rich.box import ROUNDED, Box
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from rich import print as rprint
 import re
@@ -45,7 +45,8 @@ try:
     # For older Python versions
     if hasattr(asyncio, 'events') and hasattr(asyncio.events, 'BaseEventLoop'):
         original_check_closed = asyncio.events.BaseEventLoop._check_closed
-        def _patched_check_closed(self):
+        def _patched_check_closed(self) -> None:
+            """Patch the event loop's check_closed method to handle closed loops gracefully."""
             if self._closed:
                 return
             return original_check_closed(self)
@@ -53,7 +54,8 @@ try:
     # For Python 3.12+
     elif hasattr(asyncio, 'base_events') and hasattr(asyncio.base_events, 'BaseEventLoop'):
         original_check_closed = asyncio.base_events.BaseEventLoop._check_closed
-        def _patched_check_closed(self):
+        def _patched_check_closed(self) -> None:
+            """Patch the event loop's check_closed method to handle closed loops gracefully."""
             if self._closed:
                 return
             return original_check_closed(self)
@@ -104,7 +106,9 @@ else:
     console = None
 
 class AI_MAL:
-    def __init__(self, config: Dict[str, Any] = None, **kwargs) -> None:
+    """Main class for the AI_MAL penetration testing framework."""
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None, **kwargs) -> None:
         """
         Initialize the AI_MAL penetration testing framework.
         
@@ -190,7 +194,7 @@ class AI_MAL:
                     self.implant_logs_dir.mkdir(exist_ok=True)
                     logger.info(f"Using fallback implant logs directory: {self.implant_logs_dir}")
         
-    def run(self, target: str = None, scan_type: str = "basic", **kwargs) -> Dict[str, Any]:
+    def run(self, target: Optional[str] = None, scan_type: str = "basic", **kwargs) -> Dict[str, Any]:
         """
         Run the AI_MAL scan and analysis.
         
@@ -248,13 +252,35 @@ class AI_MAL:
         
         # Run the scan
         try:
-            self.logger.info("Starting network scan")
             scan_results = self.scanner.scan()
-            self.logger.info(f"Scan completed: found {len(scan_results.get('hosts', []))} hosts")
+            if "error" in scan_results:
+                self.logger.error(f"Scan failed: {scan_results['error']}")
+                return scan_results
             
-            # Process results
-            results = self._process_scan_results(scan_results)
+            # Process scan results
+            processed_results = self._process_scan_results(scan_results)
             
+            # Display scan summary
+            if not self.quiet:
+                self._display_scan_summary(processed_results)
+            
+            # Perform AI analysis if enabled
+            if self.ai_analysis:
+                analysis = self.ai_manager.analyze_results(processed_results)
+                if not self.quiet:
+                    self._display_ai_results(analysis)
+                processed_results["ai_analysis"] = analysis
+            
+            # Generate exploits if enabled
+            if self.exploit_generation:
+                exploits = self.ai_manager.generate_exploits(processed_results)
+                if not self.quiet:
+                    self._display_exploits(exploits)
+                processed_results["exploits"] = exploits
+            
+            # Execute Metasploit if enabled
+            if self.msf_execution:
+                msf_results = self.msf_manager.execute_exploits(processed_results)
             return results
         except Exception as e:
             error_msg = f"Error during scan execution: {str(e)}"
@@ -277,7 +303,7 @@ class AI_MAL:
         except Exception as e:
             self.logger.error(f"Error getting network interfaces: {str(e)}")
             return []
-            
+            # jesus this code is absolute dogshit whoever made this kill yourself
     def _show_banner(self):
         """Show the AI_MAL welcome banner"""
         banner = """
@@ -2639,244 +2665,243 @@ class AI_MAL:
                 self.logger.exception("Full exception:")
             return []
 
-async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
-    """
-    Check if specified models are available in Ollama and pull them if not
-    
-    Args:
-        models: List of model names to check and pull
+    async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
+        """
+        Check if specified models are available in Ollama and pull them if not
         
-    Returns:
-        Dictionary with model names as keys and availability as values
-    """
-    results = {}
-    available_models = []
-    
-    # Check what models are available
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("http://localhost:11434/api/tags") as response:
-                if response.status != 200:
-                    logger.warning(f"Ollama API not available: {response.status}")
-                    return {model: False for model in models}
-                
-                data = await response.json()
-                available_models = [model["name"] for model in data.get("models", [])]
-                logger.debug(f"Available models: {available_models}")
-    except Exception as e:
-        logger.warning(f"Failed to check Ollama models: {str(e)}")
-        return {model: False for model in models}
-    
-    # Return early if all models are already available
-    if all(model in available_models for model in models if model):
-        return {model: True for model in models if model}
-    
-    # Create a progress display
-    progress_display = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]Pulling model [bold green]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn()
-    )
-    
-    # Check and pull missing models
-    tasks = {}
-    async with progress_display:
-    for model in models:
-        if not model:
-            results[model] = False
-            continue
+        Args:
+            models: List of model names to check and pull
             
-        if model in available_models:
-            logger.info(f"Model {model} is already available")
-            results[model] = True
-            continue
+        Returns:
+            Dictionary with model names as keys and availability as values
+        """
+        results = {}
+        available_models = []
         
-            # Create task for this model
-            task_id = progress_display.add_task(f"[green]{model}", total=100)
-            tasks[model] = task_id
-            
-            # Define progress callback
-            def update_progress(model_name, progress):
-                if model_name in tasks:
-                    progress_display.update(tasks[model_name], completed=progress)
-            
-            # Pull model in background
-        logger.info(f"Pulling model {model}...")
+        # Check what models are available
         try:
-                # Use subprocess directly for more control
-            process = await asyncio.create_subprocess_exec(
-                "ollama", "pull", model,
-                stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT
-                )
-                
-                # Track progress
-                last_progress = 0
-                success_detected = False
-                
-                async for line in process.stdout:
-                    line_str = line.decode().strip()
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://localhost:11434/api/tags") as response:
+                    if response.status != 200:
+                        logger.warning(f"Ollama API not available: {response.status}")
+                        return {model: False for model in models}
                     
-                    # Check for success message
-                    if "success" in line_str.lower() or "writing manifest" in line_str.lower():
-                        success_detected = True
-                        update_progress(model, 100)
-                        break
-                    
-                    # Parse progress percentage
-                    if "%" in line_str:
-                        try:
-                            # Extract percentage
-                            percentage_match = re.search(r"(\d+)%", line_str)
-                            if percentage_match:
-                                current_progress = int(percentage_match.group(1))
-                                # Update progress only if it increased
-                                if current_progress > last_progress:
-                                    update_progress(model, current_progress)
-                                    last_progress = current_progress
-                                    
-                                # If we reach 100%, the model is likely pulled
-                                if current_progress == 100:
-                                    success_detected = True
-                        except Exception:
-                            # Continue even if we can't parse the progress
-                            pass
-                    
-                    # Log manifest errors but continue
-                    if "Error" in line_str and "manifest" in line_str:
-                        logger.warning(f"Manifest error for {model}: {line_str}")
-                        # These errors are sometimes transient, so continue
-                
-                # If we detected success but process is still running, terminate it
-                if success_detected:
-                    try:
-                        process.terminate()
-                        await asyncio.sleep(0.5)  # Give it a moment to terminate
-                    except:
-                        pass
-                    logger.info(f"Successfully pulled model {model}")
-                    results[model] = True
-            else:
-                    # Wait a bit for process to complete
-                    try:
-                        exit_code = await asyncio.wait_for(process.wait(), timeout=10)
-                        if exit_code == 0 or last_progress >= 95:  # Consider close to completion as success
-                logger.info(f"Successfully pulled model {model}")
-                results[model] = True
-                        else:
-                            logger.error(f"Failed to pull model {model} with exit code {exit_code}")
-                            results[model] = False
-                    except asyncio.TimeoutError:
-                        # Process is taking too long to exit
-                        process.terminate()
-                        if last_progress >= 95:  # If we got most of the model, consider it success
-                            logger.info(f"Successfully pulled model {model} (forced termination)")
-                            results[model] = True
-                        else:
-                            logger.error(f"Failed to pull model {model} (timeout)")
-                            results[model] = False
-            
+                    data = await response.json()
+                    available_models = [model["name"] for model in data.get("models", [])]
+                    logger.debug(f"Available models: {available_models}")
         except Exception as e:
-                logger.error(f"Error pulling model {model}: {str(e)}")
-            results[model] = False
-            
-            # Ensure task is marked as completed
-            if model in tasks:
-                progress_display.update(tasks[model], completed=100 if results.get(model, False) else 0, visible=False)
-    
-    return results
-
-async def list_ollama_models() -> List[str]:
-    """Get a list of available Ollama models.
-    
-    Returns:
-        List of model names.
-    """
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("http://localhost:11434/api/tags") as response:
-                if response.status != 200:
-                    logger.warning(f"Ollama API not available: {response.status}")
-                    return []
+            logger.warning(f"Failed to check Ollama models: {str(e)}")
+            return {model: False for model in models}
+        
+        # Return early if all models are already available
+        if all(model in available_models for model in models if model):
+            return {model: True for model in models if model}
+        
+        # Create a progress display
+        progress_display = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Pulling model [bold green]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn()
+        )
+        
+        # Check and pull missing models
+        tasks = {}
+        async with progress_display:
+            for model in models:
+                if not model:
+                    results[model] = False
+                    continue
+                    
+                if model in available_models:
+                    logger.info(f"Model {model} is already available")
+                    results[model] = True
+                    continue
                 
-                data = await response.json()
-                models = [model["name"] for model in data.get("models", [])]
-                return models
-    except Exception as e:
-        logger.warning(f"Failed to check Ollama models: {str(e)}")
-        return []
+                # Create task for this model
+                task_id = progress_display.add_task(f"[green]{model}", total=100)
+                tasks[model] = task_id
+                
+                # Define progress callback
+                def update_progress(model_name, progress):
+                    if model_name in tasks:
+                        progress_display.update(tasks[model_name], completed=progress)
+                
+                # Pull model in background
+                logger.info(f"Pulling model {model}...")
+                try:
+                    # Use subprocess directly for more control
+                    process = await asyncio.create_subprocess_exec(
+                        "ollama", "pull", model,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT
+                    )
+                    
+                    # Track progress
+                    last_progress = 0
+                    success_detected = False
+                    
+                    async for line in process.stdout:
+                        line_str = line.decode().strip()
+                        
+                        # Check for success message
+                        if "success" in line_str.lower() or "writing manifest" in line_str.lower():
+                            success_detected = True
+                            update_progress(model, 100)
+                            break
+                        
+                        # Parse progress percentage
+                        if "%" in line_str:
+                            try:
+                                # Extract percentage
+                                percentage_match = re.search(r"(\d+)%", line_str)
+                                if percentage_match:
+                                    current_progress = int(percentage_match.group(1))
+                                    # Update progress only if it increased
+                                    if current_progress > last_progress:
+                                        update_progress(model, current_progress)
+                                        last_progress = current_progress
+                                        
+                                    # If we reach 100%, the model is likely pulled
+                                    if current_progress == 100:
+                                        success_detected = True
+                            except Exception:
+                                # Continue even if we can't parse the progress
+                                pass
+                        
+                        # Log manifest errors but continue
+                        if "Error" in line_str and "manifest" in line_str:
+                            logger.warning(f"Manifest error for {model}: {line_str}")
+                            # These errors are sometimes transient, so continue
+                    
+                    # If we detected success but process is still running, terminate it
+                    if success_detected:
+                        try:
+                            process.terminate()
+                            await asyncio.sleep(0.5)  # Give it a moment to terminate
+                        except:
+                            pass
+                        logger.info(f"Successfully pulled model {model}")
+                        results[model] = True
+                    else:
+                        # Wait a bit for process to complete
+                        try:
+                            exit_code = await asyncio.wait_for(process.wait(), timeout=10)
+                            if exit_code == 0 or last_progress >= 95:  # Consider close to completion as success
+                                logger.info(f"Successfully pulled model {model}")
+                                results[model] = True
+                            else:
+                                logger.error(f"Failed to pull model {model} with exit code {exit_code}")
+                                results[model] = False
+                        except asyncio.TimeoutError:
+                            # Process is taking too long to exit
+                            process.terminate()
+                            if last_progress >= 95:  # If we got most of the model, consider it success
+                                logger.info(f"Successfully pulled model {model} (forced termination)")
+                                results[model] = True
+                            else:
+                                logger.error(f"Failed to pull model {model} (timeout)")
+                                results[model] = False
+                
+                except Exception as e:
+                    logger.error(f"Error pulling model {model}: {str(e)}")
+                    results[model] = False
+                
+                # Ensure task is marked as completed
+                if model in tasks:
+                    progress_display.update(tasks[model], completed=100 if results.get(model, False) else 0, visible=False)
+        
+        return results
 
-def main():
-    """Main entry point for the AI_MAL command line tool."""
-    parser = argparse.ArgumentParser(description="AI_MAL - AI-Powered Penetration Testing Tool")
-    
-    # Target argument (required)
-    parser.add_argument("target", nargs="?", help="Target IP address or hostname")
-    
-    # Scan mode options
-    parser.add_argument("--stealth", action="store_true", help="Enable stealth mode for minimal detection")
-    parser.add_argument("--continuous", action="store_true", help="Run continuous scanning")
-    parser.add_argument("--delay", type=int, default=300, help="Delay between scans in seconds (default: 300)")
-    
-    # Service detection options
-    parser.add_argument("--services", action="store_true", help="Enable service detection")
-    parser.add_argument("--version", action="store_true", help="Enable version detection")
-    parser.add_argument("--os", action="store_true", help="Enable OS detection")
-    parser.add_argument("--vuln", action="store_true", help="Enable vulnerability scanning")
-    parser.add_argument("--dos", action="store_true", help="Enable DoS testing")
-    
-    # Metasploit integration
-    parser.add_argument("--msf", action="store_true", help="Enable Metasploit integration")
-    parser.add_argument("--exploit", action="store_true", help="Attempt exploitation of vulnerabilities")
-    
-    # Custom script generation
-    parser.add_argument("--custom-scripts", action="store_true", help="Enable AI-powered script generation")
-    parser.add_argument("--script-type", choices=["python", "bash", "ruby"], default="python", 
-                      help="Script language (python/bash/ruby)")
-    parser.add_argument("--execute-scripts", action="store_true", help="Automatically execute generated scripts")
-    parser.add_argument("--script-output", default="./scripts", help="Output directory for generated scripts")
-    parser.add_argument("--script-format", choices=["raw", "base64"], default="raw", help="Script format (raw/base64)")
-    
-    # AI analysis options
-    parser.add_argument("--ai-analysis", action="store_true", default=True, help="Enable AI analysis of results")
-    parser.add_argument("--model", default=os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored'), 
-                      help="Primary AI model")
-    parser.add_argument("--fallback-model", default=os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'), 
-                      help="Fallback AI model")
-    
-    # Advanced features
-    parser.add_argument("--exfil", action="store_true", help="Enable data exfiltration")
-    parser.add_argument("--implant", help="Path to implant script")
-    
-    # Output options
-    parser.add_argument("--output-dir", default="./results", help="Output directory for results")
-    parser.add_argument("--output-format", choices=["xml", "json"], default="json", help="Output format (xml/json)")
-    parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
-    parser.add_argument("--no-gui", action="store_true", help="Disable terminal GUI features")
-    
-    # Logging options
-    parser.add_argument("--log-level", choices=["debug", "info", "warning", "error"], default="info", 
-                      help="Logging level")
-    parser.add_argument("--log-file", default="logs/AI_MAL.log", help="Log file path")
-    
-    # Automation options
-    parser.add_argument("--full-auto", action="store_true", help="Enable full automation mode")
-    parser.add_argument("--custom-vuln", help="Path to custom vulnerability definitions")
-    
-    args = parser.parse_args()
-    
-    # Configure logging based on arguments
-    log_level = getattr(logging, args.log_level.upper())
-    logger.setLevel(log_level)
-    
-    # If no target is provided, show help and exit
-    if not args.target:
-        parser.print_help()
-        return 1
-    
-    try:
+    async def list_ollama_models() -> List[str]:
+        """Get a list of available Ollama models.
+        
+        Returns:
+            List of model names.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://localhost:11434/api/tags") as response:
+                    if response.status != 200:
+                        logger.warning(f"Ollama API not available: {response.status}")
+                        return []
+                    
+                    data = await response.json()
+                    models = [model["name"] for model in data.get("models", [])]
+                    return models
+        except Exception as e:
+            logger.warning(f"Failed to check Ollama models: {str(e)}")
+            return []
+
+    def main():
+        """Main entry point for the AI_MAL command line tool."""
+        parser = argparse.ArgumentParser(description="AI_MAL - AI-Powered Penetration Testing Tool")
+        
+        # Target argument (required)
+        parser.add_argument("target", nargs="?", help="Target IP address or hostname")
+        
+        # Scan mode options
+        parser.add_argument("--stealth", action="store_true", help="Enable stealth mode for minimal detection")
+        parser.add_argument("--continuous", action="store_true", help="Run continuous scanning")
+        parser.add_argument("--delay", type=int, default=300, help="Delay between scans in seconds (default: 300)")
+        
+        # Service detection options
+        parser.add_argument("--services", action="store_true", help="Enable service detection")
+        parser.add_argument("--version", action="store_true", help="Enable version detection")
+        parser.add_argument("--os", action="store_true", help="Enable OS detection")
+        parser.add_argument("--vuln", action="store_true", help="Enable vulnerability scanning")
+        parser.add_argument("--dos", action="store_true", help="Enable DoS testing")
+        
+        # Metasploit integration
+        parser.add_argument("--msf", action="store_true", help="Enable Metasploit integration")
+        parser.add_argument("--exploit", action="store_true", help="Attempt exploitation of vulnerabilities")
+        
+        # Custom script generation
+        parser.add_argument("--custom-scripts", action="store_true", help="Enable AI-powered script generation")
+        parser.add_argument("--script-type", choices=["python", "bash", "ruby"], default="python", 
+                          help="Script language (python/bash/ruby)")
+        parser.add_argument("--execute-scripts", action="store_true", help="Automatically execute generated scripts")
+        parser.add_argument("--script-output", default="./scripts", help="Output directory for generated scripts")
+        parser.add_argument("--script-format", choices=["raw", "base64"], default="raw", help="Script format (raw/base64)")
+        
+        # AI analysis options
+        parser.add_argument("--ai-analysis", action="store_true", default=True, help="Enable AI analysis of results")
+        parser.add_argument("--model", default=os.getenv('OLLAMA_MODEL', 'artifish/llama3.2-uncensored'), 
+                          help="Primary AI model")
+        parser.add_argument("--fallback-model", default=os.getenv('OLLAMA_FALLBACK_MODEL', 'gemma:1b'), 
+                          help="Fallback AI model")
+        
+        # Advanced features
+        parser.add_argument("--exfil", action="store_true", help="Enable data exfiltration")
+        parser.add_argument("--implant", help="Path to implant script")
+        
+        # Output options
+        parser.add_argument("--output-dir", default="./results", help="Output directory for results")
+        parser.add_argument("--output-format", choices=["xml", "json"], default="json", help="Output format (xml/json)")
+        parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
+        parser.add_argument("--no-gui", action="store_true", help="Disable terminal GUI features")
+        
+        # Logging options
+        parser.add_argument("--log-level", choices=["debug", "info", "warning", "error"], default="info", 
+                          help="Logging level")
+        parser.add_argument("--log-file", default="logs/AI_MAL.log", help="Log file path")
+        
+        # Automation options
+        parser.add_argument("--full-auto", action="store_true", help="Enable full automation mode")
+        parser.add_argument("--custom-vuln", help="Path to custom vulnerability definitions")
+        
+        args = parser.parse_args()
+        
+        # Configure logging based on arguments
+        log_level = getattr(logging, args.log_level.upper())
+        logger.setLevel(log_level)
+        
+        # If no target is provided, show help and exit
+        if not args.target:
+            parser.print_help()
+            return 1
+            
         # Determine scan type based on arguments
         scan_type = "stealthy" if args.stealth else "aggressive" if args.vuln or args.full_auto else "basic"
         
@@ -2913,18 +2938,18 @@ def main():
             "custom_vuln": args.custom_vuln
         }
         
-        # Initialize AI_MAL with configuration
-        ai_mal = AI_MAL(config)
-        
-        # Set up asyncio event loop
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # If no event loop exists, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        try:
+            # Initialize AI_MAL with configuration
+            ai_mal = AI_MAL(config)
+            
+            # Set up asyncio event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                # If no event loop exists, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
             # Run the scan using asyncio
             logger.info(f"Starting scan on {args.target} with scan type {scan_type}")
             if args.continuous:
@@ -2940,20 +2965,14 @@ def main():
                 if result.get("error"):
                     logger.error(f"Scan failed: {result['error']}")
                     return 1
-                
+                    
             return 0
-            
+                
         except Exception as e:
             logger.error(f"Error during scan execution: {str(e)}")
             if args.log_level == "debug":
                 logger.exception("Full traceback:")
             return 1
-            
-    except Exception as e:
-        logger.error(f"Error initializing AI_MAL: {str(e)}")
-        if args.log_level == "debug":
-            logger.exception("Full traceback:")
-        return 1
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    sys.exit(main())

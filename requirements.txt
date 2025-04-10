@@ -1,29 +1,29 @@
 # Core dependencies
 python-nmap>=0.7.1
-aiohttp>=3.8.1
+aiohttp>=3.8.0
 python-dotenv>=0.19.0
 asyncio>=3.4.3
-typing-extensions>=4.0.1
+typing-extensions>=4.0.0
 argparse>=1.4.0
 
 # Network and security
 scapy>=2.4.5
-cryptography>=36.0.0
-paramiko>=2.8.0
-requests>=2.26.0
-urllib3>=1.26.6
+cryptography>=3.4.7
+paramiko>=2.7.2
+requests>=2.31.0
+urllib3>=2.0.2
 pymetasploit3>=1.0.1
 impacket>=0.9.25
-pyOpenSSL>=21.0.0
+pyOpenSSL>=23.0.0
 protobuf>=3.19.3
 pycryptodomex>=3.11.0
 
 # AI and data processing
-numpy>=1.22.0
-pandas>=1.3.5
-scikit-learn>=1.0.2
-torch>=1.10.1
-transformers>=4.15.0
+numpy>=1.21.2
+pandas>=1.3.3
+scikit-learn>=0.24.2
+torch>=1.9.0
+transformers>=4.11.3
 matplotlib>=3.5.1
 
 # Network utilities
@@ -34,16 +34,16 @@ shodan>=1.25.0
 censys>=2.0.9
 
 # Web and parsing
-beautifulsoup4>=4.10.0
-lxml>=4.7.1
-jinja2>=3.0.3
+beautifulsoup4>=4.12.0
+lxml>=4.9.3
+jinja2>=3.1.3
 
 # Utilities and formatting
-colorama>=0.4.4
+colorama>=0.4.6
 tqdm>=4.62.3
-pyyaml>=6.0
+pyyaml>=6.0.1
 click>=8.0.1
-rich>=10.12.0
+rich>=13.7.0
 progressbar2>=4.0.0
 prettytable>=2.2.1
 pygments>=2.15.0
@@ -62,4 +62,21 @@ isort>=5.9.3
 
 # Note: smbclient is a system package, not a Python package
 # Install it using: sudo apt-get install smbclient (Debian/Ubuntu/Kali)
-# or: sudo yum install samba-client (RHEL/CentOS) 
+# or: sudo yum install samba-client (RHEL/CentOS)
+
+# Additional dependencies
+psutil>=5.9.0
+python-magic>=0.4.27
+pyasn1>=0.5.0
+pysnmp>=4.4.12
+pysnmp-mibs>=0.1.6
+python-ldap>=3.4.3
+ldap3>=2.9.1
+pymongo>=4.3.3
+redis>=4.5.4
+elasticsearch>=8.5.0
+selenium>=4.8.0
+webdriver-manager>=3.8.6
+certifi>=2022.12.7
+idna>=3.4
+charset-normalizer>=3.0.1 
