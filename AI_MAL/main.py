@@ -161,10 +161,10 @@ class AI_MAL:
         if self.exfil_enabled:
             self.exfil_dir = Path(os.getenv('EXFIL_DIR', 'exfiltrated_data'))
             try:
-                self.exfil_dir.mkdir(exist_ok=True)
+            self.exfil_dir.mkdir(exist_ok=True)
                 self.exfil_target_dir = self.exfil_dir / kwargs.get('target', '').replace('.', '_')
-                self.exfil_target_dir.mkdir(exist_ok=True)
-                logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
+            self.exfil_target_dir.mkdir(exist_ok=True)
+            logger.info(f"Data exfiltration enabled. Files will be saved to {self.exfil_target_dir}")
             except Exception as e:
                 logger.warning(f"Failed to create exfiltration directory: {str(e)}")
                 # Fallback to current directory
@@ -186,7 +186,7 @@ class AI_MAL:
                 # Create directory for implant logs
                 self.implant_logs_dir = Path(os.getenv('IMPLANT_LOGS_DIR', 'implant_logs'))
                 try:
-                    self.implant_logs_dir.mkdir(exist_ok=True)
+                self.implant_logs_dir.mkdir(exist_ok=True)
                 except Exception as e:
                     logger.warning(f"Failed to create implant logs directory: {str(e)}")
                     # Fallback to current directory
@@ -268,7 +268,7 @@ class AI_MAL:
             if self.ai_analysis:
                 analysis = self.ai_manager.analyze_results(processed_results)
                 if not self.quiet:
-                    self._display_ai_results(analysis)
+                        self._display_ai_results(analysis)
                 processed_results["ai_analysis"] = analysis
             
             # Generate exploits if enabled
@@ -472,7 +472,7 @@ class AI_MAL:
         table.add_column("Description", style="yellow")
         table.add_column("Path", style="magenta")
         
-        for script in scripts:
+                        for script in scripts:
             name = script.get('name', 'Unknown')
             script_type = script.get('type', 'Unknown')
             description = script.get('description', 'No description')
@@ -506,7 +506,7 @@ class AI_MAL:
                                 lexer = None
                             elif extension in ['.ps1']:
                                 lexer = None
-                            else:
+            else:
                                 lexer = PythonLexer()
                         
                         # Apply syntax highlighting
@@ -660,7 +660,7 @@ class AI_MAL:
         for host in hosts:
             ip = host.get('ip')
             if not ip:
-                continue
+                            continue
                 
             logger.info(f"Attempting to deploy implant to {ip}")
             
@@ -711,7 +711,7 @@ class AI_MAL:
             if implant_success:
                 results['successful_targets'].append(ip)
                 results['success'] = True
-            else:
+                        else:
                 results['failed_targets'].append(ip)
         
         # Log summary
@@ -1261,7 +1261,7 @@ class AI_MAL:
         if not interfaces:
             self.logger.warning("No suitable network interfaces found")
             interface = None
-        else:
+            else:
             interface = interfaces[0]  # Use first available interface
             self.logger.info(f"Using network interface: {interface}")
         
@@ -1391,7 +1391,7 @@ class AI_MAL:
                 try:
                     ai_analysis = self.ai_manager.analyze_results(results)
                     results.update(ai_analysis)
-                except Exception as e:
+        except Exception as e:
                     self.logger.error(f"AI analysis failed: {str(e)}")
                     if self.verbose:
                         self.logger.exception("Full exception:")
@@ -1519,13 +1519,13 @@ class AI_MAL:
         try:
             if not analysis:
                 self.logger.warning("No AI analysis results to display")
-                return
+            return
             
             console = Console()
             
             # Create a table for the results
             table = Table(show_header=True, header_style="bold magenta", box=ROUNDED)
-            table.add_column("Category", style="cyan")
+        table.add_column("Category", style="cyan")
             table.add_column("Details", style="white")
 
             # Add rows based on analysis content
@@ -2665,34 +2665,34 @@ class AI_MAL:
                 self.logger.exception("Full exception:")
             return []
 
-    async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
-        """
-        Check if specified models are available in Ollama and pull them if not
+async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
+    """
+    Check if specified models are available in Ollama and pull them if not
+    
+    Args:
+        models: List of model names to check and pull
         
-        Args:
-            models: List of model names to check and pull
-            
-        Returns:
-            Dictionary with model names as keys and availability as values
-        """
-        results = {}
-        available_models = []
-        
-        # Check what models are available
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://localhost:11434/api/tags") as response:
-                    if response.status != 200:
-                        logger.warning(f"Ollama API not available: {response.status}")
-                        return {model: False for model in models}
-                    
-                    data = await response.json()
-                    available_models = [model["name"] for model in data.get("models", [])]
-                    logger.debug(f"Available models: {available_models}")
-        except Exception as e:
-            logger.warning(f"Failed to check Ollama models: {str(e)}")
-            return {model: False for model in models}
-        
+    Returns:
+        Dictionary with model names as keys and availability as values
+    """
+    results = {}
+    available_models = []
+    
+    # Check what models are available
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://localhost:11434/api/tags") as response:
+                if response.status != 200:
+                    logger.warning(f"Ollama API not available: {response.status}")
+                    return {model: False for model in models}
+                
+                data = await response.json()
+                available_models = [model["name"] for model in data.get("models", [])]
+                logger.debug(f"Available models: {available_models}")
+    except Exception as e:
+        logger.warning(f"Failed to check Ollama models: {str(e)}")
+        return {model: False for model in models}
+    
         # Return early if all models are already available
         if all(model in available_models for model in models if model):
             return {model: True for model in models if model}
@@ -2706,19 +2706,19 @@ class AI_MAL:
             TimeElapsedColumn()
         )
         
-        # Check and pull missing models
+    # Check and pull missing models
         tasks = {}
         async with progress_display:
-            for model in models:
-                if not model:
-                    results[model] = False
-                    continue
-                    
-                if model in available_models:
-                    logger.info(f"Model {model} is already available")
-                    results[model] = True
-                    continue
-                
+    for model in models:
+        if not model:
+            results[model] = False
+            continue
+            
+        if model in available_models:
+            logger.info(f"Model {model} is already available")
+            results[model] = True
+            continue
+        
                 # Create task for this model
                 task_id = progress_display.add_task(f"[green]{model}", total=100)
                 tasks[model] = task_id
@@ -2729,12 +2729,12 @@ class AI_MAL:
                         progress_display.update(tasks[model_name], completed=progress)
                 
                 # Pull model in background
-                logger.info(f"Pulling model {model}...")
-                try:
+        logger.info(f"Pulling model {model}...")
+        try:
                     # Use subprocess directly for more control
-                    process = await asyncio.create_subprocess_exec(
-                        "ollama", "pull", model,
-                        stdout=asyncio.subprocess.PIPE,
+            process = await asyncio.create_subprocess_exec(
+                "ollama", "pull", model,
+                stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT
                     )
                     
@@ -2784,13 +2784,13 @@ class AI_MAL:
                             pass
                         logger.info(f"Successfully pulled model {model}")
                         results[model] = True
-                    else:
+            else:
                         # Wait a bit for process to complete
                         try:
                             exit_code = await asyncio.wait_for(process.wait(), timeout=10)
                             if exit_code == 0 or last_progress >= 95:  # Consider close to completion as success
-                                logger.info(f"Successfully pulled model {model}")
-                                results[model] = True
+                logger.info(f"Successfully pulled model {model}")
+                results[model] = True
                             else:
                                 logger.error(f"Failed to pull model {model} with exit code {exit_code}")
                                 results[model] = False
@@ -2804,37 +2804,37 @@ class AI_MAL:
                                 logger.error(f"Failed to pull model {model} (timeout)")
                                 results[model] = False
                 
-                except Exception as e:
+        except Exception as e:
                     logger.error(f"Error pulling model {model}: {str(e)}")
-                    results[model] = False
+            results[model] = False
                 
                 # Ensure task is marked as completed
                 if model in tasks:
                     progress_display.update(tasks[model], completed=100 if results.get(model, False) else 0, visible=False)
-        
-        return results
+    
+    return results
 
-    async def list_ollama_models() -> List[str]:
+async def list_ollama_models() -> List[str]:
         """Get a list of available Ollama models.
-        
-        Returns:
+    
+    Returns:
             List of model names.
-        """
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://localhost:11434/api/tags") as response:
-                    if response.status != 200:
-                        logger.warning(f"Ollama API not available: {response.status}")
-                        return []
-                    
-                    data = await response.json()
-                    models = [model["name"] for model in data.get("models", [])]
-                    return models
-        except Exception as e:
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://localhost:11434/api/tags") as response:
+                if response.status != 200:
+                    logger.warning(f"Ollama API not available: {response.status}")
+                    return []
+                
+                data = await response.json()
+                models = [model["name"] for model in data.get("models", [])]
+                return models
+    except Exception as e:
             logger.warning(f"Failed to check Ollama models: {str(e)}")
-            return []
+        return []
 
-    def main():
+def main():
         """Main entry point for the AI_MAL command line tool."""
         parser = argparse.ArgumentParser(description="AI_MAL - AI-Powered Penetration Testing Tool")
         
@@ -2965,14 +2965,14 @@ class AI_MAL:
                 if result.get("error"):
                     logger.error(f"Scan failed: {result['error']}")
                     return 1
-                    
-            return 0
+        
+        return 0
                 
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Error during scan execution: {str(e)}")
             if args.log_level == "debug":
                 logger.exception("Full traceback:")
-            return 1
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main())
