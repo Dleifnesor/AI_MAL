@@ -185,6 +185,7 @@ install_metasploit() {
     
     # Start PostgreSQL
     systemctl start postgresql >/dev/null 2>&1
+    systemctl enable postgresql >/dev/null 2>&1
     
     # Initialize Metasploit database
     if [ ! -f ~/.msf4/db_initialized ]; then
@@ -231,16 +232,24 @@ install_ai_models() {
 create_directories() {
     echo -e "${CYAN}Creating directories...${NC}"
     
+    # Create base directory
+    mkdir -p /opt/AI_MAL
+    
+    # Create subdirectories
     mkdir -p /var/log/AI_MAL
     mkdir -p /opt/AI_MAL/results
     mkdir -p /opt/AI_MAL/scripts
     mkdir -p /opt/AI_MAL/logs
     
+    # Set permissions
     chmod 755 /var/log/AI_MAL
     chmod 755 /opt/AI_MAL
     chmod 755 /opt/AI_MAL/results
     chmod 755 /opt/AI_MAL/scripts
     chmod 755 /opt/AI_MAL/logs
+    
+    # Create symlink
+    ln -sf /opt/AI_MAL/AI_MAL /usr/local/bin/AI_MAL
     
     echo -e "${GREEN}>>> Directories created${NC}"
 }
@@ -249,7 +258,9 @@ create_directories() {
 setup_environment() {
     echo -e "${CYAN}Setting up environment...${NC}"
     
-    cat > /etc/profile.d/AI_MAL.sh << EOF
+    # Create environment file
+    mkdir -p /etc/AI_MAL
+    cat > /etc/AI_MAL/environment << EOF
 # AI_MAL Environment Variables
 export DEBUG=1
 export OLLAMA_HOST=http://localhost:11434
@@ -260,9 +271,24 @@ export AI_MAL_RESULTS_DIR=/opt/AI_MAL/results
 export AI_MAL_SCRIPTS_DIR=/opt/AI_MAL/scripts
 EOF
     
-    source /etc/profile.d/AI_MAL.sh
+    # Source the environment file
+    source /etc/AI_MAL/environment
     
     echo -e "${GREEN}>>> Environment configured${NC}"
+}
+
+# Function to install the package
+install_package() {
+    echo -e "${CYAN}Installing AI_MAL package...${NC}"
+    
+    # Copy files to installation directory
+    cp -r . /opt/AI_MAL/
+    
+    # Install Python package
+    cd /opt/AI_MAL
+    python3 setup.py install >/dev/null 2>&1
+    
+    echo -e "${GREEN}>>> Package installed${NC}"
 }
 
 # Main installation process
@@ -282,9 +308,10 @@ main() {
     install_ai_models
     create_directories
     setup_environment
+    install_package
     
     echo -e "\n${GREEN}>>> AI_MAL installation completed successfully${NC}"
-    echo -e "${YELLOW}>>> Please restart your terminal or run 'source /etc/profile.d/AI_MAL.sh'${NC}"
+    echo -e "${YELLOW}>>> Please restart your terminal or run 'source /etc/AI_MAL/environment'${NC}"
 }
 
 # Run main installation

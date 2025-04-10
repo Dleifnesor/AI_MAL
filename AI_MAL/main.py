@@ -2705,7 +2705,7 @@ async def check_and_pull_ollama_models(models: List[str]) -> Dict[str, bool]:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn()
         )
-        
+    
     # Check and pull missing models
         tasks = {}
         async with progress_display:
