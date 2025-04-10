@@ -1,0 +1,49 @@
+{
+  "scan_id": "0",
+  "target": {
+    "hosts": [
+      "127.0.0.1"
+    ],
+    "ports": [
+      {
+        "range": [
+          {
+            "end": 22,
+            "start": 22
+          }
+        ],
+        "protocol": "tcp"
+      }
+    ],
+    "alive_test_methods": [
+      "icmp",
+      "tcp_syn",
+      "tcp_ack",
+      "arp"
+    ],
+    "credentials": []
+  },
+  "scanner_preferences": [],
+  "vts": [
+    {
+      "oid": "0.0.0.0.0.0.0.0.0.1",
+      "parameters": []
+    },
+    {
+      "oid": "0.0.0.0.0.0.0.0.0.2",
+      "parameters": []
+    },
+    {
+      "oid": "0.0.0.0.0.0.0.0.0.3",
+      "parameters": []
+    },
+    {
+      "oid": "0.0.0.0.0.0.0.0.0.4",
+      "parameters": []
+    },
+    {
+      "oid": "0.0.0.0.0.0.0.0.0.5",
+      "parameters": []
+    }
+  ]
+}

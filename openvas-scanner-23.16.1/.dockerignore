@@ -1,0 +1,4 @@
+.vscode/
+.mergify.yml
+build/
+rust/target

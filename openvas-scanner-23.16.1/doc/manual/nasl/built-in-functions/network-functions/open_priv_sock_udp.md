@@ -1,0 +1,39 @@
+# open_priv_sock_udp
+
+## NAME
+
+**open_priv_sock_udp** - opens a “privileged” UDP socket to the target host.
+
+## SYNOPSIS
+
+*any* **open_priv_sock_udp**(dport: *int*, sport: *int*);
+
+**open_priv_sock_udp** takes two named integer arguments:
+- dport is the destination port
+- sport is the source port, which may be inferior to 1024.
+
+## DESCRIPTION
+
+Open a “privileged” UDP socket to the target host.
+
+## RETURN VALUE
+
+Return a socket, NULL on error.
+
+## ERRORS
+
+- Missing or undefined parameter dport
+- Get socket option error
+
+## EXAMPLES
+
+**1**: Open and close a socket 
+```cpp
+soc = open_priv_sock_udp(dport: 443, sport: 1000);
+close(soc);
+
+```
+
+## SEE ALSO
+
+**[close(3)](close.md)**

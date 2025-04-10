@@ -1,0 +1,28 @@
+name: "Build"
+
+on: [workflow_call]
+
+jobs:
+  C:
+    runs-on: self-hosted-generic
+    container: greenbone/gvm-libs:stable
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        run: |
+          sh .github/install-openvas-dependencies.sh
+      - name: build 
+        run: |
+          cmake -Bbuild -DCMAKE_C_COMPILER=/usr/share/clang/scan-build-14/libexec/ccc-analyzer
+          cmake --build build
+  Rust:
+    runs-on: self-hosted-generic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+      # we just check if it is compilable, the actual compilation is now done in:
+      # - in the Dockefiles
+      # - in functional.yml (x86_64) only
+      # - in release.yml (aarch64, x86_64)
+      - run: cargo check
+        working-directory: rust

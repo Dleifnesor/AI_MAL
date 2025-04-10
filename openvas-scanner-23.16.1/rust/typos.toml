@@ -1,0 +1,17 @@
+[default.extend-identifiers]
+OpenVAS = "OpenVAS"
+des_ede_cbc_encrypt = "des_ede_cbc_encrypt"
+
+[default.extend-words]
+hd = "hd"
+guid = "guid"
+GOST = "GOST"
+fpr = "fpr"
+nversion = "nversion"
+
+[files]
+extend-exclude = [
+    "data/osp/response_*.xml",
+    "crates/smoketest/configs/client_sample.cert",
+    "*.notus",
+]

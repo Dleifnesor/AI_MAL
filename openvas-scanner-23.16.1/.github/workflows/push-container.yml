@@ -1,0 +1,142 @@
+name: Container
+
+on:
+  workflow_call:
+    inputs:
+      is_latest_tag:
+        required: true
+        type: string
+      is_version_tag:
+        required: true
+        type: string
+    secrets:
+      dockerhub_user:
+        required: true
+      dockerhub_token:
+        required: true
+      cosign_key_opensight:
+        required: true
+      cosign_password_opensight:
+        required: true
+      greenbone_bot_token:
+        required: true
+      greenbone_registry:
+        required: true
+      greenbone_registry_user:
+        required: true
+      greenbone_registry_token:
+        required: true
+      greenbone_registry_replication_user:
+        required: false
+      greenbone_registry_replication_token:
+        required: false
+      mattermost_webhook_url:
+        required: true
+
+# Grants rights to push to the Github container registry.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+
+  debian_stable_arm64:
+    name: ghcr:debian:stable:arm64
+    runs-on: self-hosted-generic-arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Container build and push 3rd gen
+        id: build-and-push
+        uses: greenbone/actions/container-build-push-generic@v3
+        with:
+          image-platforms: linux/arm64
+          build-docker-file: .docker/prod.Dockerfile
+          build-args: |
+            REPOSITORY=${{ github.repository }}
+          cosign-key: ${{ secrets.cosign_key_opensight }}
+          cosign-key-password: ${{ secrets.cosign_password_opensight }}
+          # The tlog function does not currently support an ed25519 key.
+          cosign-tlog-upload: "false"
+          image-labels: |
+            org.opencontainers.image.vendor=Greenbone
+            org.opencontainers.image.base.name=greenbone/gvm-libs
+          image-tags: |
+            # when IS_LATEST_TAG is set create a stable and a latest tag
+            type=raw,value=latest,enable=${{ inputs.is_latest_tag }}
+            type=raw,value=stable,enable=${{ inputs.is_latest_tag }}
+            # if tag version is set than create a version tags
+            type=semver,pattern={{version}},enable=${{ inputs.is_version_tag }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ inputs.is_version_tag }}
+            type=semver,pattern={{major}},enable=${{ inputs.is_version_tag }}
+            # if on main or a branch TODO calculate upfront
+            type=raw,value=edge,enable=${{ github.ref_name == 'main' }}
+            type=raw,value={{branch}}-{{sha}},enable=${{ github.ref_type == 'branch' && github.event_name == 'push' && github.ref_name != 'main' }}
+            # use pr-$PR_ID for pull requests (will not be uploaded)
+            type=ref,event=pr
+          registry: ${{ vars.IMAGE_REGISTRY }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+  
+  debian_stable:
+    name: ghcr:debian:stable
+    runs-on: "self-hosted-generic"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Container build and push 3rd gen
+        id: build-and-push
+        uses: greenbone/actions/container-build-push-generic@v3
+        with:
+          build-docker-file: .docker/prod.Dockerfile
+          build-args: |
+            REPOSITORY=${{ github.repository }}
+          cosign-key: ${{ secrets.cosign_key_opensight }}
+          cosign-key-password: ${{ secrets.cosign_password_opensight }}
+          # The tlog function does not currently support an ed25519 key.
+          cosign-tlog-upload: "false"
+          image-labels: |
+            org.opencontainers.image.vendor=Greenbone
+            org.opencontainers.image.base.name=greenbone/gvm-libs
+          image-tags: |
+            # when IS_LATEST_TAG is set create a stable and a latest tag
+            type=raw,value=latest,enable=${{ inputs.is_latest_tag }}
+            type=raw,value=stable,enable=${{ inputs.is_latest_tag }}
+            # if tag version is set than create a version tags
+            type=semver,pattern={{version}},enable=${{ inputs.is_version_tag }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ inputs.is_version_tag }}
+            type=semver,pattern={{major}},enable=${{ inputs.is_version_tag }}
+            # if on main or a branch TODO calculate upfront
+            type=raw,value=edge,enable=${{ github.ref_name == 'main' }}
+            type=raw,value={{branch}}-{{sha}},enable=${{ github.ref_type == 'branch' && github.event_name == 'push' && github.ref_name != 'main' }}
+            # use pr-$PR_ID for pull requests (will not be uploaded)
+            type=ref,event=pr
+          registry: ${{ vars.IMAGE_REGISTRY }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          scout-user: ${{ secrets.dockerhub_user }}
+          scout-password: ${{ secrets.dockerhub_token }}
+
+  greenbone_reg_debian_stable:
+    name: greenbone-reg:debian:stable
+    uses: greenbone/workflows/.github/workflows/container-build-push-2nd-gen.yml@main
+    with:
+      image-url: community/openvas-scanner
+      image-labels: |
+        org.opencontainers.image.vendor=Greenbone
+        org.opencontainers.image.base.name=greenbone/gvm-libs
+      service: openvas-scanner
+    secrets:
+      COSIGN_KEY_OPENSIGHT: ${{ secrets.cosign_key_opensight }}
+      COSIGN_KEY_PASSWORD_OPENSIGHT: ${{ secrets.cosign_password_opensight }}
+      DOCKERHUB_USERNAME: ${{ secrets.dockerhub_user }}
+      DOCKERHUB_TOKEN: ${{ secrets.dockerhub_token }}
+      GREENBONE_BOT_TOKEN: ${{ secrets.greenbone_bot_token }}
+      GREENBONE_REGISTRY: ${{ secrets.greenbone_registry }}
+      GREENBONE_REGISTRY_USER: ${{ secrets.greenbone_registry_user }}
+      GREENBONE_REGISTRY_TOKEN: ${{ secrets.greenbone_registry_token }}
+      GREENBONE_REGISTRY_REPLICATION_USER: ${{ secrets.greenbone_registry_replication_user }}
+      GREENBONE_REGISTRY_REPLICATION_TOKEN: ${{ secrets.greenbone_registry_replication_token }}
+      MATTERMOST_WEBHOOK_URL: ${{ secrets.mattermost_webhook_url }}
