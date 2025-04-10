@@ -157,4 +157,64 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. 
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## OpenVAS Integration
+
+AI_MAL now includes integration with OpenVAS (Open Vulnerability Assessment System) for advanced vulnerability scanning. This feature allows you to:
+
+- Run vulnerability scans against network targets
+- Automatically analyze vulnerabilities with AI
+- Generate detailed reports of security issues
+- Get AI-powered recommendations for remediation
+
+### Using OpenVAS with AI_MAL
+
+After installation, you can use the OpenVAS scanner with the following command:
+
+```bash
+python -m AI_MAL.openvas_scan <target_ip> [options]
+```
+
+#### Example Usage
+
+Basic scan of a target with default settings:
+```bash
+python -m AI_MAL.openvas_scan 192.168.1.1
+```
+
+Full scan with AI analysis:
+```bash
+python -m AI_MAL.openvas_scan 192.168.1.1 --scan-config full_and_very_deep --ai-analysis
+```
+
+Update OpenVAS feeds before scanning:
+```bash
+python -m AI_MAL.openvas_scan 192.168.1.1 --update-feeds
+```
+
+### Command-line Options
+
+The following options are available for the OpenVAS scanner:
+
+- `--scan-name`: Optional name for the scan
+- `--scan-config`: Scan configuration (full_and_fast, full_and_very_deep, discovery, etc.)
+- `--username`: OpenVAS username (default: admin)
+- `--password`: OpenVAS password
+- `--update-feeds`: Update OpenVAS vulnerability feeds before scanning
+- `--ai-analysis`: Perform AI analysis on scan results
+- `--output-dir`: Directory to save scan results (default: scan_results)
+- `--cleanup`: Clean up scan task and target after scanning
+- `--verbose`: Enable verbose output
+
+### Requirements
+
+The OpenVAS integration requires:
+
+1. A working installation of OpenVAS/Greenbone Vulnerability Manager
+2. Redis server for OpenVAS
+3. Administrative access to start services
+
+AI_MAL will attempt to install and configure OpenVAS on supported systems (Kali Linux) during installation, but you may need to manually install it on some systems.
+
+For more information on OpenVAS, visit [the Greenbone Community website](https://community.greenbone.net/). 

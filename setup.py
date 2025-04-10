@@ -17,8 +17,9 @@ setup(
     include_package_data=True,
     install_requires=requirements,
     entry_points={
-        "console_scripts": [
-            "AI_MAL=AI_MAL.main.scanner:main",
+        'console_scripts': [
+            'ai_mal=AI_MAL.main:main',
+            'ai_mal_openvas=AI_MAL.openvas_scan:main',
         ],
     },
     author="Dleifnesor",

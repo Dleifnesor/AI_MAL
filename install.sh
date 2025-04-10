@@ -1108,6 +1108,165 @@ retry_failed_packages() {
     fi
 }
 
+# OpenVAS installation and setup
+install_openvas() {
+    log_info "Starting OpenVAS installation and configuration..."
+    
+    # Create tools directory if it doesn't exist
+    mkdir -p "${SOURCE_DIR}/tools"
+    
+    # Check if we're on Kali Linux
+    if grep -q "Kali" /etc/os-release; then
+        log_info "Detected Kali Linux - installing OpenVAS using apt"
+        
+        # Install OpenVAS and dependencies
+        apt-get update || handle_error "Failed to update package lists"
+        apt-get install -y openvas gvm redis || handle_error "Failed to install OpenVAS packages"
+        
+        # Initialize OpenVAS setup
+        log_info "Running OpenVAS setup (gvm-setup). This may take 15-30 minutes..."
+        echo -e "${YELLOW}Setting up OpenVAS and downloading feeds. This process can take 15-30 minutes...${NC}"
+        gvm-setup || handle_error "Failed to run gvm-setup"
+        
+        # Start OpenVAS services
+        log_info "Starting OpenVAS services..."
+        systemctl start redis-server@openvas
+        systemctl start gvmd
+        systemctl start ospd-openvas
+        systemctl start gsad
+        
+        # Enable services on boot
+        log_info "Enabling OpenVAS services on system boot..."
+        systemctl enable redis-server@openvas
+        systemctl enable gvmd
+        systemctl enable ospd-openvas
+        systemctl enable gsad
+        
+        # Get admin password
+        admin_password=$(gvmd --get-users | grep admin | awk '{print $2}')
+        if [ -z "$admin_password" ]; then
+            log_info "Creating new admin user for OpenVAS..."
+            admin_password=$(< /dev/urandom tr -dc A-Za-z0-9 | head -c12)
+            gvmd --create-user=admin --password="$admin_password"
+        fi
+        
+        # Save admin password to a file
+        mkdir -p "${SOURCE_DIR}/credentials"
+        echo "OpenVAS admin password: ${admin_password}" > "${SOURCE_DIR}/credentials/openvas_credentials.txt"
+        chmod 600 "${SOURCE_DIR}/credentials/openvas_credentials.txt"
+        
+        log_info "OpenVAS installation complete! Admin credentials saved to ${SOURCE_DIR}/credentials/openvas_credentials.txt"
+        echo -e "${GREEN}OpenVAS installed successfully!${NC}"
+        echo -e "${YELLOW}Admin credentials saved to: ${SOURCE_DIR}/credentials/openvas_credentials.txt${NC}"
+        
+    else
+        # For non-Kali systems
+        log_info "Non-Kali Linux system detected"
+        echo -e "${YELLOW}Non-Kali Linux system detected. Installing OpenVAS using greenbone-feed-sync...${NC}"
+        
+        # Install dependencies
+        apt-get update || handle_error "Failed to update package lists"
+        apt-get install -y redis gvm || log_info "Could not install all OpenVAS packages. Some features may be limited."
+        
+        # Install python packages
+        python3 -m pip install greenbone-feed-sync || log_info "Could not install greenbone-feed-sync. Manual setup may be required."
+        
+        echo -e "${YELLOW}Basic OpenVAS components have been installed.${NC}"
+        echo -e "${YELLOW}For full OpenVAS setup, please see: https://greenbone.github.io/docs/latest/installation.html${NC}"
+    fi
+    
+    # Create a simple shell script to manage OpenVAS
+    cat > "${SOURCE_DIR}/tools/openvas-manager.sh" << 'EOF'
+#!/bin/bash
+
+# OpenVAS Manager script
+# This script helps manage OpenVAS services
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+case "$1" in
+    start)
+        echo -e "${CYAN}Starting OpenVAS services...${NC}"
+        sudo systemctl start redis-server@openvas
+        sudo systemctl start gvmd
+        sudo systemctl start ospd-openvas
+        sudo systemctl start gsad
+        echo -e "${GREEN}OpenVAS services started${NC}"
+        ;;
+    stop)
+        echo -e "${CYAN}Stopping OpenVAS services...${NC}"
+        sudo systemctl stop gsad
+        sudo systemctl stop ospd-openvas
+        sudo systemctl stop gvmd
+        sudo systemctl stop redis-server@openvas
+        echo -e "${GREEN}OpenVAS services stopped${NC}"
+        ;;
+    restart)
+        echo -e "${CYAN}Restarting OpenVAS services...${NC}"
+        sudo systemctl restart redis-server@openvas
+        sudo systemctl restart gvmd
+        sudo systemctl restart ospd-openvas
+        sudo systemctl restart gsad
+        echo -e "${GREEN}OpenVAS services restarted${NC}"
+        ;;
+    status)
+        echo -e "${CYAN}Checking OpenVAS services status...${NC}"
+        echo -e "${YELLOW}Redis:${NC}"
+        systemctl status redis-server@openvas --no-pager | grep Active
+        echo -e "${YELLOW}GVMD:${NC}"
+        systemctl status gvmd --no-pager | grep Active
+        echo -e "${YELLOW}OSPD-OpenVAS:${NC}"
+        systemctl status ospd-openvas --no-pager | grep Active
+        ;;
+    update)
+        echo -e "${CYAN}Updating OpenVAS feeds... This may take a while...${NC}"
+        sudo greenbone-feed-sync
+        echo -e "${GREEN}OpenVAS feeds updated${NC}"
+        ;;
+    *)
+        echo -e "${RED}Usage: $0 {start|stop|restart|status|update}${NC}"
+        exit 1
+        ;;
+esac
+
+exit 0
+EOF
+
+    # Make the script executable
+    chmod +x "${SOURCE_DIR}/tools/openvas-manager.sh"
+    
+    # Create a symlink to the script for easy access
+    if [ ! -d "/usr/local/bin" ]; then
+        mkdir -p /usr/local/bin
+    fi
+    ln -sf "${SOURCE_DIR}/tools/openvas-manager.sh" /usr/local/bin/openvas-manager
+    
+    log_info "Created OpenVAS manager script at /usr/local/bin/openvas-manager"
+    echo -e "${GREEN}Created OpenVAS manager script. Use 'openvas-manager {start|stop|restart|status|update}' to manage OpenVAS.${NC}"
+    
+    # Create AI_MAL command for OpenVAS
+    echo -ne "${CYAN}Creating AI_MAL OpenVAS command...${NC} "
+    cat > /usr/local/bin/ai_mal_openvas << 'EOF'
+#!/bin/bash
+# AI_MAL OpenVAS Scanner
+/opt/AI_MAL/venv/bin/python3 -m AI_MAL.openvas_scan "$@"
+EOF
+    chmod 755 /usr/local/bin/ai_mal_openvas
+    echo -e "${GREEN}Done${NC}"
+    
+    echo -e "${GREEN}=============================================${NC}"
+    echo -e "${GREEN}OpenVAS installation and configuration complete!${NC}"
+    echo -e "${GREEN}Commands available:${NC}"
+    echo -e "${YELLOW}- ai_mal_openvas${NC} - Run AI_MAL OpenVAS scanner"
+    echo -e "${YELLOW}- openvas-manager${NC} - Manage OpenVAS services"
+    echo -e "${GREEN}=============================================${NC}"
+}
+
 # Main installation process
 main() {
     echo -e "\n${YELLOW}>>> AI_MAL Installation${NC}"
@@ -1164,6 +1323,13 @@ main() {
     
     # Create temporary directory for any custom fixes
     mkdir -p /tmp/ai_mal_fixes
+    
+    # Install OpenVAS if not found
+    if ! check_checkpoint "openvas_installed"; then
+        echo -e "\n${CYAN}=== Installing OpenVAS ===${NC}"
+        install_openvas
+        save_checkpoint "openvas_installed"
+    fi
     
     # Install components - ensure each step is executed regardless of previous step status
     install_system_dependencies
