@@ -108,19 +108,37 @@ apt-get install -y openvas gvm
 echo "[+] Setting up OpenVAS..."
 gvm-setup
 
-# Start OpenVAS services
-echo "[+] Starting OpenVAS services..."
-gvm-start
-
 # Set up OpenVAS socket permissions
 echo "[+] Setting up OpenVAS socket permissions..."
 sudo chmod 666 /run/ospd/ospd.sock
-sudo chown gvm:gvm /run/ospd/ospd.sock
+sudo chown _gvm:_gvm /run/ospd/ospd.sock
+
+# Enable and start OpenVAS services
+echo "[+] Enabling and starting OpenVAS services..."
+sudo systemctl enable gvmd
+sudo systemctl enable ospd-openvas
+sudo systemctl start gvmd
+sudo systemctl start ospd-openvas
+
+# Wait for services to initialize
+echo "[+] Waiting for services to initialize..."
+sleep 10
+
+# Initialize SCAP database if missing
+echo "[+] Checking SCAP database..."
+if [ ! -d "/var/lib/gvm/scap-data" ]; then
+    echo "[+] Initializing SCAP database..."
+    sudo -u _gvm greenbone-feed-sync --type SCAP
+fi
 
 # Set up OpenVAS credentials
 echo "[+] Setting up OpenVAS credentials..."
-read -s -p "Enter OpenVAS password (default: admin): " GVM_PASSWORD
-GVM_PASSWORD=${GVM_PASSWORD:-admin}
+# Extract the generated password from gvm-setup output
+GVM_PASSWORD=$(grep "User created with password" /var/log/gvm/gvm-setup.log | awk -F"'" '{print $2}')
+if [ -z "$GVM_PASSWORD" ]; then
+    echo "[!] Could not find generated password in logs, using default"
+    GVM_PASSWORD="admin"
+fi
 
 # Add environment variables to .bashrc
 echo "export GVM_USERNAME=admin" >> ~/.bashrc
