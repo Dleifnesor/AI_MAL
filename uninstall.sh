@@ -11,6 +11,11 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Convert script to Unix format if needed
+if command -v dos2unix &>/dev/null; then
+  dos2unix "$0" &>/dev/null
+fi
+
 # Remove symbolic link
 echo "[+] Removing AI_MAL command..."
 if [ -L /usr/local/bin/AI_MAL ]; then
@@ -27,6 +32,24 @@ if [ -f /usr/share/applications/ai-mal.desktop ]; then
   echo "[+] Desktop shortcut removed"
 else
   echo "[!] Desktop shortcut not found"
+fi
+
+# Remove bash completion
+echo "[+] Removing command completion..."
+if [ -f /etc/bash_completion.d/ai_mal ]; then
+  rm -f /etc/bash_completion.d/ai_mal
+  echo "[+] Command completion removed"
+else
+  echo "[!] Command completion not found"
+fi
+
+# Remove environment variables
+echo "[+] Removing environment variables..."
+if [ -f /etc/profile.d/ai_mal.sh ]; then
+  rm -f /etc/profile.d/ai_mal.sh
+  echo "[+] Environment variables removed"
+else
+  echo "[!] Environment variables not found"
 fi
 
 # Ask if user wants to remove the entire installation

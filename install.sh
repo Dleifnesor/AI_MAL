@@ -45,10 +45,17 @@ EOF
   pip3 install -r requirements.txt
 }
 
-# Install system dependencies
+# Install system dependencies and dos2unix for line ending conversion
 echo "[+] Installing system dependencies..."
 apt-get update
-apt-get install -y nmap metasploit-framework hping3 apache2-utils 2>/dev/null
+apt-get install -y nmap metasploit-framework hping3 apache2-utils dos2unix 2>/dev/null
+
+# Convert all scripts to Unix format (fix line endings)
+echo "[+] Converting scripts to Unix format (fixing line endings)..."
+find . -type f -name "*.py" -exec dos2unix {} \;
+find . -type f -name "*.sh" -exec dos2unix {} \;
+find ./src -type f -exec dos2unix {} \; 2>/dev/null
+dos2unix AI_MAL.py
 
 # Install OpenVAS/Greenbone Vulnerability Manager - HIGH PRIORITY
 echo "[+] Installing OpenVAS/Greenbone Vulnerability Manager (PRIMARY VULNERABILITY SCANNER)..."
@@ -172,6 +179,7 @@ def main():
 if __name__ == "__main__":
     main()
 EOF
+dos2unix scripts/implants/example_implant.py
 chmod +x scripts/implants/example_implant.py
 
 # Create symbolic link to make AI_MAL a command
@@ -197,6 +205,7 @@ _ai_mal()
 }
 complete -F _ai_mal AI_MAL
 EOF
+dos2unix /etc/bash_completion.d/ai_mal
 
 # Create a desktop shortcut
 echo "[+] Creating desktop shortcut..."
@@ -227,6 +236,7 @@ alias advanced-threat='AI_MAL --msf --exploit --exfil --custom-scripts --execute
 alias full-auto='AI_MAL --full-auto --output-dir ./full-auto-assessment'
 EOF
 fi
+dos2unix /root/.bashrc
 
 # Set up environment variables for AI models
 if ! grep -q "AI_MAL environment" /etc/profile.d/ai_mal.sh 2>/dev/null; then
@@ -241,7 +251,17 @@ export AI_MAL_DEFAULT_VULN_SCANNER=openvas
 export AI_MAL_OPENVAS_CONFIG=full_and_fast
 EOF
   chmod +x /etc/profile.d/ai_mal.sh
+  dos2unix /etc/profile.d/ai_mal.sh
 fi
+
+# Verify all scripts have correct line endings
+echo "[+] Verifying line endings of important files..."
+find . -type f -name "*.py" | xargs file | grep -v "CRLF" || echo "[+] All Python files have correct line endings"
+find . -type f -name "*.sh" | xargs file | grep -v "CRLF" || echo "[+] All shell scripts have correct line endings"
+
+# Final check that the main script is executable with correct line endings
+file AI_MAL.py
+head -n 1 AI_MAL.py
 
 echo "[+] Installation complete!"
 echo "[+] Usage: AI_MAL [target] [options]"

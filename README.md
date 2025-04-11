@@ -16,17 +16,31 @@ AI_MAL is an advanced penetration testing tool that combines traditional scannin
 
 ## Installation
 
+### Easy Install (One-Liner)
+
+For a quick setup on Kali Linux, first switch to root and then use this one-liner to clone the repository and run the installation script:
+
+```bash
+sudo su
+git clone https://github.com/yourusername/AI_MAL.git && cd AI_MAL && bash install.sh
+```
+
+This command will switch to root privileges, clone the repository, navigate to the project directory, and run the installation script.
+
 ### Recommended: Kali Linux
 
 AI_MAL is designed to work best on Kali Linux, which has most required tools pre-installed.
 
 ```bash
+# Switch to root (recommended for full functionality)
+sudo su
+
 # Clone the repository
 git clone https://github.com/yourusername/AI_MAL.git
 cd AI_MAL
 
-# Run the installation script (requires root)
-sudo bash install.sh
+# Run the installation script
+bash install.sh
 ```
 
 The installation script will:
@@ -35,47 +49,61 @@ The installation script will:
 - Install and configure OpenVAS for vulnerability scanning
 - Install Ollama for AI functionality
 - Make AI_MAL available as a system command
+- Fix line ending issues (if cloned from Windows)
 - Create bash aliases for common scan types
 - Set up command completion
 - Create desktop shortcut
+
+> **Note**: If you're experiencing issues with line endings (e.g., errors like `/usr/bin/env: 'python3\r': No such file or directory`), the installation script automatically handles this by installing and running `dos2unix` on all scripts.
 
 ### Manual Installation
 
 If you prefer to install manually:
 
-1. Install system dependencies:
+1. Switch to root for full functionality:
    ```bash
-   sudo apt-get update
-   sudo apt-get install -y nmap metasploit-framework hping3 apache2-utils
+   sudo su
    ```
 
-2. Install OpenVAS (optional but recommended for vulnerability scanning):
+2. Install system dependencies:
    ```bash
-   sudo apt-get install -y openvas gvm
-   sudo gvm-setup
-   sudo gvm-start
+   apt-get update
+   apt-get install -y nmap metasploit-framework hping3 apache2-utils dos2unix
    ```
 
-3. Install Python dependencies:
+3. Fix line endings if cloned from Windows:
+   ```bash
+   find . -type f -name "*.py" -exec dos2unix {} \;
+   find . -type f -name "*.sh" -exec dos2unix {} \;
+   ```
+
+4. Install OpenVAS (optional but recommended for vulnerability scanning):
+   ```bash
+   apt-get install -y openvas gvm
+   gvm-setup
+   gvm-start
+   ```
+
+5. Install Python dependencies:
    ```bash
    pip3 install requests python-nmap pymetasploit3 ollama rich pyfiglet prettytable xmltodict cryptography python-dateutil numpy pyyaml colorama jinja2
    ```
 
-4. Install Ollama for AI functionality:
+6. Install Ollama for AI functionality:
    ```bash
    curl -fsSL https://ollama.com/install.sh | sh
    ollama pull artifish/llama3.2-uncensored
    ollama pull gemma3:1b
    ```
 
-5. Make AI_MAL.py executable:
+7. Make AI_MAL.py executable:
    ```bash
    chmod +x AI_MAL.py
    ```
 
-6. Create a symbolic link (optional):
+8. Create a symbolic link:
    ```bash
-   sudo ln -sf "$(pwd)/AI_MAL.py" /usr/local/bin/AI_MAL
+   ln -sf "$(pwd)/AI_MAL.py" /usr/local/bin/AI_MAL
    ```
 
 ## Basic Usage
