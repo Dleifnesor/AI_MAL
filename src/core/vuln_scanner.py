@@ -75,12 +75,7 @@ class VulnerabilityScanner:
             self.custom_vulns = []
     
     def is_openvas_available(self):
-        """
-        Check if OpenVAS is available.
-        
-        Returns:
-            bool: True if OpenVAS is available, False otherwise
-        """
+        """Check if OpenVAS services are running and accessible."""
         try:
             # Check if ospd-openvas service is running
             result = subprocess.run(
@@ -91,7 +86,7 @@ class VulnerabilityScanner:
             if result.returncode != 0:
                 self.logger.warning("ospd-openvas service is not running")
                 return False
-            
+
             # Check if gvmd service is running
             result = subprocess.run(
                 ["systemctl", "is-active", "gvmd"],
@@ -101,39 +96,18 @@ class VulnerabilityScanner:
             if result.returncode != 0:
                 self.logger.warning("gvmd service is not running")
                 return False
-            
-            # Try to connect to OpenVAS using OSP protocol
+
+            # Try to connect using OSP protocol with the current user
             try:
-                # Get the admin password from the terminal output
+                # First try the standard socket path
                 result = subprocess.run(
                     ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=5
+                    timeout=5,
+                    user=os.getenv('SUDO_USER', os.getenv('USER'))
                 )
                 
-                # If connection fails, try to get the password from the terminal output
-                if result.returncode != 0:
-                    # Try to get the password from the terminal output
-                    result = subprocess.run(
-                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=5
-                    )
-                    
-                # Extract password from output if available
-                output = result.stderr.decode()
-                if "password" in output.lower():
-                    password = output.split("password")[1].split()[0].strip("'\"")
-                    # Try connecting with the extracted password
-                    result = subprocess.run(
-                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", f"<help/>"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=5
-                    )
-                    
                 if result.returncode == 0:
                     return True
                 
@@ -142,7 +116,8 @@ class VulnerabilityScanner:
                     ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/var/run/ospd/ospd.sock", "--xml", "<help/>"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=5
+                    timeout=5,
+                    user=os.getenv('SUDO_USER', os.getenv('USER'))
                 )
                 if result.returncode == 0:
                     return True
@@ -161,64 +136,41 @@ class VulnerabilityScanner:
                             ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", socket_path, "--xml", "<help/>"],
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
-                            timeout=5
+                            timeout=5,
+                            user=os.getenv('SUDO_USER', os.getenv('USER'))
                         )
                         if result.returncode == 0:
                             return True
-                        
+                
+                return False
+                
             except Exception as e:
                 self.logger.warning(f"Error checking OSP connection: {e}")
+                return False
             
-            return False
         except Exception as e:
             self.logger.error(f"Error checking OpenVAS availability: {e}")
             return False
-    
+
     def connect_to_openvas(self):
-        """
-        Connect to OpenVAS and return the connection object.
-        
-        Returns:
-            object: OpenVAS connection object or None if connection fails
-        """
+        """Connect to OpenVAS and return the connection object."""
         try:
             # Check if OpenVAS services are running
             if not self.is_openvas_available():
                 self.logger.warning("OpenVAS services not available")
                 return None
             
-            # Try to connect using OSP protocol
+            # Try to connect using OSP protocol with the current user
             try:
                 # First try the standard socket path
                 result = subprocess.run(
                     ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=5
+                    timeout=5,
+                    user=os.getenv('SUDO_USER', os.getenv('USER'))
                 )
                 
-                # If connection fails, try to get the password from the terminal output
-                if result.returncode != 0:
-                    # Try to get the password from the terminal output
-                    result = subprocess.run(
-                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=5
-                    )
-                    
-                # Extract password from output if available
-                output = result.stderr.decode()
-                if "password" in output.lower():
-                    password = output.split("password")[1].split()[0].strip("'\"")
-                    # Try connecting with the extracted password
-                    result = subprocess.run(
-                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", f"<help/>"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=5
-                    )
-                    
                 if result.returncode == 0:
                     self.logger.info("Connected to OpenVAS using standard socket path")
                     return True
@@ -228,7 +180,8 @@ class VulnerabilityScanner:
                     ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/var/run/ospd/ospd.sock", "--xml", "<help/>"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=5
+                    timeout=5,
+                    user=os.getenv('SUDO_USER', os.getenv('USER'))
                 )
                 if result.returncode == 0:
                     self.logger.info("Connected to OpenVAS using alternative socket path")
@@ -248,17 +201,20 @@ class VulnerabilityScanner:
                             ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", socket_path, "--xml", "<help/>"],
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
-                            timeout=5
+                            timeout=5,
+                            user=os.getenv('SUDO_USER', os.getenv('USER'))
                         )
                         if result.returncode == 0:
                             self.logger.info(f"Connected to OpenVAS using service socket path: {socket_path}")
                             return True
-                        
+                
+                self.logger.warning("Could not connect to OpenVAS")
+                return None
+                
             except Exception as e:
                 self.logger.error(f"Error connecting to OpenVAS: {e}")
+                return None
             
-            self.logger.warning("Could not connect to OpenVAS")
-            return None
         except Exception as e:
             self.logger.error(f"Error in connect_to_openvas: {e}")
             return None
@@ -266,67 +222,106 @@ class VulnerabilityScanner:
     def display_scan_results(self, results):
         """Display scan results in a formatted table."""
         try:
-            table = Table(title="[bold cyan]Discovered Hosts[/bold cyan]")
+            if not results:
+                print("[!] No hosts discovered")
+                return
+            
+            # Create a table for the results
+            table = Table(title="Discovered Hosts", show_header=True, header_style="bold magenta")
             table.add_column("IP Address", style="cyan")
             table.add_column("Hostname", style="green")
             table.add_column("OS", style="yellow")
-            table.add_column("Open Ports", style="magenta")
+            table.add_column("Open Ports", style="blue")
             
+            # Add each host to the table
             for host in results:
-                ip = host.get('ip', 'Unknown')
-                hostname = host.get('hostname', 'Unknown')
-                os_info = host.get('os', 'Unknown')
-                ports = ', '.join(str(p) for p in host.get('ports', []))
+                # Ensure all values are strings and handle None/empty values
+                ip = str(host.get('ip', 'Unknown')).strip() or 'Unknown'
+                hostname = str(host.get('hostname', 'Unknown')).strip() or 'Unknown'
+                os_info = str(host.get('os', 'Unknown')).strip() or 'Unknown'
                 
-                table.add_row(ip, hostname, os_info, ports)
+                # Handle ports list
+                ports = host.get('ports', [])
+                if isinstance(ports, list):
+                    ports_str = ', '.join(str(p).strip() for p in ports if p)
+                else:
+                    ports_str = str(ports).strip()
+                ports_str = ports_str or 'None'
+                
+                # Add row to table
+                table.add_row(ip, hostname, os_info, ports_str)
             
-            console.print(table)
-            console.print()
+            # Print the table
+            print(table)
             
         except Exception as e:
-            self.logger.error(f"Error displaying scan results: {e}")
+            print(f"[!] Error displaying results: {e}")
             # Fallback to simple text display
-            console.print("[bold cyan]Discovered Hosts:[/bold cyan]")
+            print("\nDiscovered Hosts:")
             for host in results:
-                console.print(f"IP: {host.get('ip', 'Unknown')}")
-                console.print(f"Hostname: {host.get('hostname', 'Unknown')}")
-                console.print(f"OS: {host.get('os', 'Unknown')}")
-                console.print(f"Open Ports: {', '.join(str(p) for p in host.get('ports', []))}")
-                console.print()
+                ip = str(host.get('ip', 'Unknown')).strip() or 'Unknown'
+                hostname = str(host.get('hostname', 'Unknown')).strip() or 'Unknown'
+                os_info = str(host.get('os', 'Unknown')).strip() or 'Unknown'
+                ports = host.get('ports', [])
+                if isinstance(ports, list):
+                    ports_str = ', '.join(str(p).strip() for p in ports if p)
+                else:
+                    ports_str = str(ports).strip()
+                ports_str = ports_str or 'None'
+                
+                print(f"IP: {ip}")
+                print(f"Hostname: {hostname}")
+                print(f"OS: {os_info}")
+                print(f"Open Ports: {ports_str}")
+                print("---")
 
     def display_vulnerabilities(self, vulnerabilities):
-        """Display vulnerability scan results in a formatted table."""
+        """Display vulnerabilities in a formatted table."""
         try:
-            table = Table(title="[bold red]Vulnerabilities Found[/bold red]")
+            if not vulnerabilities:
+                print("[!] No vulnerabilities found")
+                return
+            
+            # Create a table for the results
+            table = Table(title="Discovered Vulnerabilities", show_header=True, header_style="bold magenta")
             table.add_column("Host", style="cyan")
             table.add_column("Port", style="green")
             table.add_column("Service", style="yellow")
-            table.add_column("Vulnerability", style="red")
-            table.add_column("Severity", style="magenta")
+            table.add_column("Vulnerability", style="blue")
+            table.add_column("Severity", style="red")
             
+            # Add each vulnerability to the table
             for vuln in vulnerabilities:
-                host = vuln.get('host', 'Unknown')
-                port = str(vuln.get('port', 'Unknown'))
-                service = vuln.get('service', 'Unknown')
-                name = vuln.get('name', 'Unknown')
-                severity = vuln.get('severity', 'Unknown')
+                # Ensure all values are strings and handle None/empty values
+                host = str(vuln.get('host', 'Unknown')).strip() or 'Unknown'
+                port = str(vuln.get('port', 'Unknown')).strip() or 'Unknown'
+                service = str(vuln.get('service', 'Unknown')).strip() or 'Unknown'
+                name = str(vuln.get('name', 'Unknown')).strip() or 'Unknown'
+                severity = str(vuln.get('severity', 'Unknown')).strip() or 'Unknown'
                 
+                # Add row to table
                 table.add_row(host, port, service, name, severity)
             
-            console.print(table)
-            console.print()
+            # Print the table
+            print(table)
             
         except Exception as e:
-            self.logger.error(f"Error displaying vulnerabilities: {e}")
+            print(f"[!] Error displaying vulnerabilities: {e}")
             # Fallback to simple text display
-            console.print("[bold red]Vulnerabilities Found:[/bold red]")
+            print("\nDiscovered Vulnerabilities:")
             for vuln in vulnerabilities:
-                console.print(f"Host: {vuln.get('host', 'Unknown')}")
-                console.print(f"Port: {vuln.get('port', 'Unknown')}")
-                console.print(f"Service: {vuln.get('service', 'Unknown')}")
-                console.print(f"Vulnerability: {vuln.get('name', 'Unknown')}")
-                console.print(f"Severity: {vuln.get('severity', 'Unknown')}")
-                console.print()
+                host = str(vuln.get('host', 'Unknown')).strip() or 'Unknown'
+                port = str(vuln.get('port', 'Unknown')).strip() or 'Unknown'
+                service = str(vuln.get('service', 'Unknown')).strip() or 'Unknown'
+                name = str(vuln.get('name', 'Unknown')).strip() or 'Unknown'
+                severity = str(vuln.get('severity', 'Unknown')).strip() or 'Unknown'
+                
+                print(f"Host: {host}")
+                print(f"Port: {port}")
+                print(f"Service: {service}")
+                print(f"Vulnerability: {name}")
+                print(f"Severity: {severity}")
+                print("---")
 
     def scan_with_openvas(self):
         """

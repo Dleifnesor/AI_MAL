@@ -100,69 +100,57 @@ echo "Converting line endings to Unix format..."
 find . -type f -name "*.py" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix
 find . -type f -name "*.sh" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix
 
-# Install OpenVAS/Greenbone Vulnerability Manager - HIGH PRIORITY
-echo "[+] Installing OpenVAS/Greenbone Vulnerability Manager (PRIMARY VULNERABILITY SCANNER)..."
+# Install OpenVAS/Greenbone Vulnerability Manager
+echo "[+] Installing OpenVAS/Greenbone Vulnerability Manager..."
 apt-get install -y openvas gvm
 
 # Run OpenVAS setup
-echo "[+] Setting up OpenVAS (this may take a while)..."
-
-# Run the GVM setup and start services
+echo "[+] Setting up OpenVAS..."
 gvm-setup
 
-# Wait for user confirmation after password generation
-echo ""
-echo "╔═════════════════════════════════════════════════════════════════════════╗"
-echo "║                       !!! PASSWORD CONFIRMATION !!!                     ║"
-echo "║                                                                         ║"
-echo "║ Did you save the OpenVAS admin password displayed above?                ║"
-echo "║ If not, please scroll up and find the line that says:                   ║"
-echo "║ [*] User created with password 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.  ║"
-echo "║                           Username:admin                                ║"
-echo "║                                                                         ║"
-echo "║ Type 'y' to confirm you have saved the password, or 'n' to exit:        ║"
-echo "╚═════════════════════════════════════════════════════════════════════════╝"
-echo ""
-
-while true; do
-    read -r -p "[?] Have you saved the OpenVAS admin password? (y/n): " response
-    case "$response" in
-        [yY])
-            break
-            ;;
-        [nN])
-            echo "[!] Please save the OpenVAS admin password and run the installation again."
-            exit 1
-            ;;
-        *)
-            echo "[!] Please enter 'y' or 'n'."
-            ;;
-    esac
-done
-
 # Start OpenVAS services
+echo "[+] Starting OpenVAS services..."
 gvm-start
 
-echo "[+] OpenVAS installed and configured as the default vulnerability scanner"
-echo "[+] Default OpenVAS credentials - username: admin, password: (the password you saved above)"
+# Set up OpenVAS socket permissions
+echo "[+] Setting up OpenVAS socket permissions..."
+sudo chmod 666 /run/ospd/ospd.sock
+sudo chown gvm:gvm /run/ospd/ospd.sock
 
-# Configure OpenVAS integration
-echo "[+] Configuring OpenVAS integration with AI_MAL..."
-mkdir -p scripts/openvas
-cat > scripts/openvas/config.yml << EOF
-# OpenVAS Configuration for AI_MAL
-default: true
-hostname: localhost
-port: 9390
-username: admin
-scan_configs:
-  full_and_fast: "daba56c8-73ec-11df-a475-002264764cea"
-  full_and_fast_ultimate: "698f691e-7489-11df-9d8c-002264764cea"
-  full_and_very_deep: "708f25c4-7489-11df-8094-002264764cea"
-  empty: "085569ce-73ed-11df-83c3-002264764cea"
-  discovery: "8715c877-47a0-438d-98a3-27c7a6ab2196"
-  host_discovery: "2d3f051c-55ba-11e3-bf43-406186ea4fc5"
-EOF
+# Set up OpenVAS credentials
+echo "[+] Setting up OpenVAS credentials..."
+read -s -p "Enter OpenVAS password (default: admin): " GVM_PASSWORD
+GVM_PASSWORD=${GVM_PASSWORD:-admin}
+
+# Add environment variables to .bashrc
+echo "export GVM_USERNAME=admin" >> ~/.bashrc
+echo "export GVM_PASSWORD='$GVM_PASSWORD'" >> ~/.bashrc
+source ~/.bashrc
+
+# Verify OpenVAS service is running
+echo "[+] Verifying OpenVAS service..."
+if ! systemctl is-active --quiet gvmd; then
+    echo "[+] Starting OpenVAS service..."
+    sudo systemctl start gvmd
+    sleep 5  # Wait for service to initialize
+fi
+
+# Test OpenVAS connection
+echo "[+] Testing OpenVAS connection..."
+if gvm-cli socket --xml "<get_version/>" > /dev/null 2>&1; then
+    echo "[+] OpenVAS connection successful!"
+else
+    echo "[!] Warning: Could not connect to OpenVAS. Please check the service status."
+    echo "[+] Attempting to restart OpenVAS services..."
+    sudo systemctl restart gvmd
+    sudo systemctl restart ospd-openvas
+    sleep 5
+    if gvm-cli socket --xml "<get_version/>" > /dev/null 2>&1; then
+        echo "[+] OpenVAS connection successful after restart!"
+    else
+        echo "[!] Error: Could not connect to OpenVAS after restart. Please check the logs."
+    fi
+fi
 
 # Install Ollama for AI features if not present
 if ! command -v ollama &> /dev/null; then
