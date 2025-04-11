@@ -22,6 +22,27 @@ if ! grep -q 'Kali' /etc/os-release; then
   fi
 fi
 
+# Function to check if Ollama is running
+check_ollama_running() {
+  max_attempts=10
+  attempt=1
+  echo "[+] Verifying Ollama service is running..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
+      echo "[+] Ollama service is running!"
+      return 0
+    else
+      echo "[*] Waiting for Ollama service to start (attempt $attempt/$max_attempts)..."
+      sleep 3
+      attempt=$((attempt+1))
+    fi
+  done
+  
+  echo "[!] Ollama service did not start properly after multiple attempts."
+  return 1
+}
+
 # Install Python dependencies
 echo "[+] Installing Python dependencies..."
 pip3 install -r requirements.txt 2>/dev/null || {
@@ -63,13 +84,40 @@ apt-get install -y openvas gvm
 
 # Run OpenVAS setup
 echo "[+] Setting up OpenVAS (this may take a while)..."
+echo ""
+echo "╔═════════════════════════════════════════════════════════════════════════╗"
+echo "║                       !!! IMPORTANT NOTICE !!!                          ║"
+echo "║                                                                         ║"
+echo "║ An OpenVAS admin password will be generated during setup.               ║"
+echo "║ PLEASE WATCH FOR AND SAVE THIS PASSWORD when it appears below.          ║"
+echo "║ It will look like: [*] User created with password 'xxx-xxx-xxx-xxx'.    ║"
+echo "║                                                                         ║"
+echo "╚═════════════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Run the GVM setup and start services
 gvm-setup
+
+# Pause to give the user time to see and save the password
+echo ""
+echo "╔═════════════════════════════════════════════════════════════════════════╗"
+echo "║                       !!! PASSWORD NOTICE !!!                           ║"
+echo "║                                                                         ║"
+echo "║ Did you save the OpenVAS admin password displayed above?                ║"
+echo "║ If not, please scroll up and find the line that says:                   ║"
+echo "║ [*] User created with password '4a1efbf3-e920-4ea8-aca1-a3824b17ccd9'.   ║"
+echo "║                                                                         ║"
+echo "║ SAVE THIS PASSWORD NOW - You will need it for vulnerability scanning!   ║"
+echo "╚═════════════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "[?] Press Enter when you have saved the OpenVAS admin password..."
+read -r
 
 # Start OpenVAS services
 gvm-start
 
 echo "[+] OpenVAS installed and configured as the default vulnerability scanner"
-echo "[+] Default OpenVAS credentials - username: admin, password: Check output above"
+echo "[+] Default OpenVAS credentials - username: admin, password: (the password you saved above)"
 
 # Configure OpenVAS integration
 echo "[+] Configuring OpenVAS integration with AI_MAL..."
@@ -94,17 +142,68 @@ if ! command -v ollama &> /dev/null; then
   echo "[+] Installing Ollama for AI features..."
   curl -fsSL https://ollama.com/install.sh | sh
   
-  # Pull default models
-  echo "[+] Downloading primary AI models (this may take a while)..."
-  ollama pull artifish/llama3.2-uncensored
-  ollama pull gemma3:1b
+  # Make sure Ollama is running before continuing
+  echo "[+] Starting Ollama service..."
+  ollama serve &>/dev/null &
   
-  # Ask if user wants to download additional models
-  echo "[?] Do you want to download additional AI models mentioned in use cases? (approx. 15GB more) (y/n)"
-  read -r response
-  if [[ "$response" == "y" ]]; then
-    echo "[+] Downloading additional AI models..."
-    ollama pull qwen2.5-coder:7b
+  # Wait for Ollama service to start
+  echo "[+] Waiting for Ollama service to initialize..."
+  sleep 10  # Initial wait
+  
+  # Check if Ollama is running
+  if ! check_ollama_running; then
+    echo "[!] WARNING: Ollama service is not responding. You may need to manually start it."
+    echo "[!] After installation, run: 'ollama serve' in a terminal"
+    echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored gemma3:1b'"
+    echo "[!] Press Enter to continue with installation anyway..."
+    read -r
+  else
+    # Pull default models
+    echo "[+] Downloading primary AI models (this may take a while)..."
+    ollama pull artifish/llama3.2-uncensored
+    ollama pull gemma3:1b
+    
+    # Ask if user wants to download additional models
+    echo "[?] Do you want to download additional AI model qwen2.5-coder:7b (approx. 3GB more) (y/n)"
+    read -r response
+    if [[ "$response" == "y" ]]; then
+      echo "[+] Downloading additional AI model..."
+      ollama pull qwen2.5-coder:7b
+    fi
+  fi
+else
+  echo "[+] Ollama already installed, checking if service is running..."
+  
+  # Check if Ollama service is running
+  if ! check_ollama_running; then
+    echo "[+] Starting Ollama service..."
+    ollama serve &>/dev/null &
+    sleep 10
+    
+    if check_ollama_running; then
+      echo "[+] Ollama service started successfully!"
+    else
+      echo "[!] WARNING: Could not start Ollama service automatically."
+      echo "[!] After installation, run: 'ollama serve' in a terminal"
+      echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored gemma3:1b'"
+      echo "[!] Press Enter to continue with installation anyway..."
+      read -r
+    fi
+  else
+    echo "[+] Ollama service is already running"
+    
+    # Pull default models
+    echo "[+] Downloading primary AI models (this may take a while)..."
+    ollama pull artifish/llama3.2-uncensored
+    ollama pull gemma3:1b
+    
+    # Ask if user wants to download additional models
+    echo "[?] Do you want to download additional AI models mentioned in use cases? (approx. 15GB more) (y/n)"
+    read -r response
+    if [[ "$response" == "y" ]]; then
+      echo "[+] Downloading additional AI models..."
+      ollama pull qwen2.5-coder:7b
+    fi
   fi
 fi
 
@@ -263,12 +362,27 @@ find . -type f -name "*.sh" | xargs file | grep -v "CRLF" || echo "[+] All shell
 file AI_MAL.py
 head -n 1 AI_MAL.py
 
+# Test that AI_MAL runs without errors
+echo ""
+echo "[+] Verifying AI_MAL functionality..."
+if AI_MAL --help > /dev/null 2>&1; then
+  echo "[+] AI_MAL is functioning correctly!"
+else
+  echo "[!] WARNING: There may be issues with AI_MAL. Please check the error messages and consult the troubleshooting section in the README."
+  echo "[!] You might need to fix any import or dependency issues before using the tool."
+  echo ""
+  echo "[?] Press Enter to continue with installation anyway..."
+  read -r
+fi
+
 echo "[+] Installation complete!"
 echo "[+] Usage: AI_MAL [target] [options]"
 echo "[+] For help: AI_MAL --help"
 echo "[+] Examples can be found in use_cases.md"
 echo ""
 echo "[+] OpenVAS has been configured as the DEFAULT vulnerability scanner"
+echo "[+] OpenVAS credentials - username: admin, password: (the password you saved during setup)"
+echo ""
 echo "[+] Special aliases created:"
 echo "    web-scan [target] - Quick web server assessment"
 echo "    network-scan [target] - Network reconnaissance"
@@ -278,4 +392,21 @@ echo "    critical-server-scan [target] - Thorough assessment with deep OpenVAS 
 echo "    advanced-threat [target] - Exploitation with data exfiltration and implant deployment"
 echo "    full-auto [target] - Complete automated assessment"
 echo ""
-echo "[+] Example implant available at: ./scripts/implants/example_implant.py" 
+echo "[+] Example implant available at: ./scripts/implants/example_implant.py"
+echo ""
+echo "╔═════════════════════════════════════════════════════════════════════════╗"
+echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                        ║"
+echo "║                                                                          ║"
+if check_ollama_running; then
+  echo "║  ✓ Ollama service is running properly!                                 ║"
+  echo "║                                                                          ║"
+  echo "║  AI features will work automatically.                                    ║"
+else
+  echo "║  ⚠ Ollama service is NOT running properly!                              ║"
+  echo "║                                                                          ║"
+  echo "║  To enable AI features, you must manually start Ollama:                  ║"
+  echo "║  1. Open a terminal and run: ollama serve                                ║"
+  echo "║  2. Open another terminal and run: ollama pull artifish/llama3.2-uncensored ║"
+  echo "║  3. Then run: ollama pull gemma3:1b                                      ║"
+fi
+echo "╚═════════════════════════════════════════════════════════════════════════╝" 

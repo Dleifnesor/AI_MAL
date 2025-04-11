@@ -27,6 +27,8 @@ git clone https://github.com/yourusername/AI_MAL.git && cd AI_MAL && bash instal
 
 This command will switch to root privileges, clone the repository, navigate to the project directory, and run the installation script.
 
+> **IMPORTANT**: During the OpenVAS setup, the installer will generate an admin password. Make sure to save this password as you'll need it to access the OpenVAS interface. Look for a line like: `[*] User created with password '4a1efbf3-e920-4ea8-aca1-a3824b17ccd9'`.
+
 ### Recommended: Kali Linux
 
 AI_MAL is designed to work best on Kali Linux, which has most required tools pre-installed.
@@ -54,7 +56,34 @@ The installation script will:
 - Set up command completion
 - Create desktop shortcut
 
+> **OpenVAS Setup Note**: During installation, when OpenVAS is being configured, an admin password will be generated and displayed in the terminal. Be sure to copy and save this password, as it will be required for OpenVAS access. The password will appear in a line similar to:
+> ```
+> [*] User created with password '4a1efbf3-e920-4ea8-aca1-a3824b17ccd9'.
+> ```
+
 > **Note**: If you're experiencing issues with line endings (e.g., errors like `/usr/bin/env: 'python3\r': No such file or directory`), the installation script automatically handles this by installing and running `dos2unix` on all scripts.
+
+### Troubleshooting Ollama Issues
+
+If you encounter errors related to Ollama not being able to connect during installation or when running AI_MAL, you may need to manually start the Ollama service:
+
+1. Start the Ollama service in a terminal:
+   ```bash
+   ollama serve
+   ```
+
+2. In another terminal, pull the required models:
+   ```bash
+   ollama pull artifish/llama3.2-uncensored
+   ollama pull gemma3:1b
+   ```
+
+3. Verify the Ollama service is running:
+   ```bash
+   curl http://localhost:11434/api/version
+   ```
+
+The installation script attempts to automatically start and verify the Ollama service, but in some environments, manual intervention may be needed.
 
 ### Manual Installation
 
@@ -83,6 +112,8 @@ If you prefer to install manually:
    gvm-setup
    gvm-start
    ```
+   
+   > **Important**: During the OpenVAS setup, an admin password will be generated. Make sure to save this password - you'll need it for vulnerability scanning.
 
 5. Install Python dependencies:
    ```bash
@@ -92,6 +123,8 @@ If you prefer to install manually:
 6. Install Ollama for AI functionality:
    ```bash
    curl -fsSL https://ollama.com/install.sh | sh
+   ollama serve &  # Start the Ollama service
+   sleep 10  # Wait for the service to initialize
    ollama pull artifish/llama3.2-uncensored
    ollama pull gemma3:1b
    ```

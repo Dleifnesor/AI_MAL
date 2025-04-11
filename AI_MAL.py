@@ -105,6 +105,9 @@ def parse_arguments():
 
 def main():
     """Main function to execute the AI_MAL tool."""
+    # Import datetime in case the global import didn't work
+    from datetime import datetime
+    
     # Parse arguments
     args = parse_arguments()
     
@@ -239,7 +242,6 @@ def main():
             logger.info(f"Continuous scanning enabled with {args.delay} seconds delay.")
             try:
                 import time
-                from datetime import datetime
                 
                 scan_count = 1
                 while True:
