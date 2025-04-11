@@ -99,12 +99,14 @@ class TerminalGUI:
         
         # ASCII art logo
         self.logo = r"""
-    _   ___ __  __    _    _     
-   /_\ |_ _|  \/  |  /_\  | |    
-  / _ \ | || |\/| | / _ \ | |__  
- /_/ \_\___|_|  |_|/_/ \_\|____|
-                                
- AI-Powered Penetration Testing
+   █████╗ ██╗      ███╗   ███╗ █████╗ ██╗     
+  ██╔══██╗██║      ████╗ ████║██╔══██╗██║     
+  ███████║██║█████╗██╔████╔██║███████║██║     
+  ██╔══██║██║╚════╝██║╚██╔╝██║██╔══██║██║     
+  ██║  ██║██║      ██║ ╚═╝ ██║██║  ██║███████╗
+  ╚═╝  ╚═╝╚═╝      ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝
+                                                
+  AI-Powered Penetration Testing Tool
 """
     
     def _get_terminal_size(self):
@@ -576,4 +578,18 @@ class TerminalGUI:
         if self.quiet:
             return
         
-        print(f"{Colors.MAGENTA}[DEBUG]{Colors.RESET} {message}") 
+        print(f"{Colors.MAGENTA}[DEBUG]{Colors.RESET} {message}")
+    
+    def _show_banner(self):
+        """Show the AI_MAL welcome banner"""
+        banner = """
+   █████╗ ██╗      ███╗   ███╗ █████╗ ██╗     
+  ██╔══██╗██║      ████╗ ████║██╔══██╗██║     
+  ███████║██║█████╗██╔████╔██║███████║██║     
+  ██╔══██║██║╚════╝██║╚██╔╝██║██╔══██║██║     
+  ██║  ██║██║      ██║ ╚═╝ ██║██║  ██║███████╗
+  ╚═╝  ╚═╝╚═╝      ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝
+                                                
+  AI-Powered Penetration Testing Tool
+        """
+        print(f"{Colors.BOLD}{Colors.CYAN}{banner}{Colors.RESET}") 

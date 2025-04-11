@@ -105,7 +105,7 @@ echo "║                       !!! PASSWORD NOTICE !!!                         
 echo "║                                                                         ║"
 echo "║ Did you save the OpenVAS admin password displayed above?                ║"
 echo "║ If not, please scroll up and find the line that says:                   ║"
-echo "║ [*] User created with password '4a1efbf3-e920-4ea8-aca1-a3824b17ccd9'.   ║"
+echo "║ [*] User created with password 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.  ║"
 echo "║                                                                         ║"
 echo "║ SAVE THIS PASSWORD NOW - You will need it for vulnerability scanning!   ║"
 echo "╚═════════════════════════════════════════════════════════════════════════╝"
@@ -140,7 +140,7 @@ EOF
 # Install Ollama for AI features if not present
 if ! command -v ollama &> /dev/null; then
   echo "[+] Installing Ollama for AI features..."
-  curl -fsSL https://ollama.com/install.sh | sh
+  curl -fsSL https://ollama.com/install.sh | sh > /dev/null 2>&1
   
   # Make sure Ollama is running before continuing
   echo "[+] Starting Ollama service..."
@@ -154,21 +154,20 @@ if ! command -v ollama &> /dev/null; then
   if ! check_ollama_running; then
     echo "[!] WARNING: Ollama service is not responding. You may need to manually start it."
     echo "[!] After installation, run: 'ollama serve' in a terminal"
-    echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored gemma3:1b'"
+    echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored"
     echo "[!] Press Enter to continue with installation anyway..."
     read -r
   else
     # Pull default models
     echo "[+] Downloading primary AI models (this may take a while)..."
-    ollama pull artifish/llama3.2-uncensored
-    ollama pull gemma3:1b
+    ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
     
     # Ask if user wants to download additional models
     echo "[?] Do you want to download additional AI model qwen2.5-coder:7b (approx. 3GB more) (y/n)"
     read -r response
     if [[ "$response" == "y" ]]; then
       echo "[+] Downloading additional AI model..."
-      ollama pull qwen2.5-coder:7b
+      ollama pull qwen2.5-coder:7b > /dev/null 2>&1
     fi
   fi
 else
@@ -185,7 +184,7 @@ else
     else
       echo "[!] WARNING: Could not start Ollama service automatically."
       echo "[!] After installation, run: 'ollama serve' in a terminal"
-      echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored gemma3:1b'"
+      echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored'"
       echo "[!] Press Enter to continue with installation anyway..."
       read -r
     fi
@@ -194,15 +193,14 @@ else
     
     # Pull default models
     echo "[+] Downloading primary AI models (this may take a while)..."
-    ollama pull artifish/llama3.2-uncensored
-    ollama pull gemma3:1b
+    ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
     
     # Ask if user wants to download additional models
     echo "[?] Do you want to download additional AI models mentioned in use cases? (approx. 15GB more) (y/n)"
     read -r response
     if [[ "$response" == "y" ]]; then
       echo "[+] Downloading additional AI models..."
-      ollama pull qwen2.5-coder:7b
+      ollama pull qwen2.5-coder:7b > /dev/null 2>&1
     fi
   fi
 fi
@@ -348,6 +346,7 @@ export OLLAMA_FALLBACK_MODEL=gemma3:1b
 # Default to OpenVAS for vulnerability scanning
 export AI_MAL_DEFAULT_VULN_SCANNER=openvas
 export AI_MAL_OPENVAS_CONFIG=full_and_fast
+export AI_MAL_OPENVAS_USERNAME=admin
 EOF
   chmod +x /etc/profile.d/ai_mal.sh
   dos2unix /etc/profile.d/ai_mal.sh
@@ -394,19 +393,18 @@ echo "    full-auto [target] - Complete automated assessment"
 echo ""
 echo "[+] Example implant available at: ./scripts/implants/example_implant.py"
 echo ""
-echo "╔═════════════════════════════════════════════════════════════════════════╗"
-echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                        ║"
-echo "║                                                                          ║"
+echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
+echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
+echo "║                                                                               ║"
 if check_ollama_running; then
-  echo "║  ✓ Ollama service is running properly!                                 ║"
-  echo "║                                                                          ║"
-  echo "║  AI features will work automatically.                                    ║"
+  echo "║         Ollama service is running properly!                                 ║"
+  echo "║                                                                             ║"
+  echo "║      AI features will work automatically.                                   ║"
 else
-  echo "║  ⚠ Ollama service is NOT running properly!                              ║"
-  echo "║                                                                          ║"
-  echo "║  To enable AI features, you must manually start Ollama:                  ║"
-  echo "║  1. Open a terminal and run: ollama serve                                ║"
+  echo "║     Ollama service is NOT running properly!                                 ║"
+  echo "║                                                                             ║"
+  echo "║  To enable AI features, you must manually start Ollama:                     ║"
+  echo "║  1. Open a terminal and run: ollama serve                                   ║"
   echo "║  2. Open another terminal and run: ollama pull artifish/llama3.2-uncensored ║"
-  echo "║  3. Then run: ollama pull gemma3:1b                                      ║"
 fi
 echo "╚═════════════════════════════════════════════════════════════════════════╝" 
