@@ -488,6 +488,10 @@ class MetasploitFramework:
         exploit_results = []
         
         # Check if scan results contain vulnerabilities
+        if not isinstance(scan_results, dict):
+            self.logger.error("Invalid scan results format. Expected dictionary.")
+            return exploit_results
+            
         if "vulnerabilities" not in scan_results:
             self.logger.warning("No vulnerabilities found in scan results. Skipping exploitation.")
             return exploit_results
@@ -495,20 +499,24 @@ class MetasploitFramework:
         # Extract unique targets and their vulnerabilities
         targets = {}
         for vuln in scan_results["vulnerabilities"]:
+            if not isinstance(vuln, dict):
+                self.logger.warning(f"Skipping invalid vulnerability entry: {vuln}")
+                continue
+                
             # Skip if no host or port information
             if not vuln.get("host") or not vuln.get("port"):
+                self.logger.warning(f"Skipping vulnerability with missing host/port: {vuln}")
                 continue
             
             host = vuln["host"]
             port_info = vuln["port"]
             
             # Extract port number from port info (format: "80/tcp")
-            port = port_info.split("/")[0] if "/" in port_info else port_info
-            
-            # Skip if not a valid port
             try:
+                port = port_info.split("/")[0] if "/" in port_info else port_info
                 port = int(port)
-            except ValueError:
+            except (ValueError, AttributeError) as e:
+                self.logger.warning(f"Invalid port format: {port_info}")
                 continue
             
             # Create target key
@@ -522,56 +530,53 @@ class MetasploitFramework:
         
         # Attempt to exploit each target
         for target_key, vulns in targets.items():
-            host, port = target_key.split(":")
-            port = int(port)
-            
-            # Try to find exploits for each vulnerability
-            for vuln in vulns:
-                # Check if the vulnerability has a CVE
-                cve_ids = []
-                if vuln.get("cve") and vuln["cve"] != "N/A":
-                    # Split CVEs if multiple are present
-                    if "," in vuln["cve"]:
-                        cve_ids = [cve.strip() for cve in vuln["cve"].split(",")]
-                    else:
-                        cve_ids = [vuln["cve"].strip()]
+            try:
+                host, port = target_key.split(":")
+                port = int(port)
                 
-                # Find exploits for each CVE
-                exploits = []
-                for cve_id in cve_ids:
-                    cve_exploits = self.find_exploits_for_cve(cve_id)
-                    if cve_exploits:
-                        exploits.extend(cve_exploits)
-                
-                # If no exploits found via CVEs, try to find exploits for the service
-                if not exploits and "service" in scan_results:
-                    for host_data in scan_results["hosts"]:
-                        for port_data in host_data["ports"]:
-                            if int(port_data["portid"]) == port and port_data["service"]["name"]:
-                                service_name = port_data["service"]["name"]
-                                service_version = port_data["service"].get("version", "")
-                                service_exploits = self.find_exploits_for_service(service_name, service_version)
-                                if service_exploits:
-                                    exploits.extend(service_exploits)
-                
-                # Attempt each exploit
-                for exploit in exploits:
-                    exploit_name = exploit["name"]
+                # Try to find exploits for each vulnerability
+                for vuln in vulns:
+                    # Check if the vulnerability has a CVE
+                    cve_ids = []
+                    if vuln.get("cve") and vuln["cve"] != "N/A":
+                        # Split CVEs if multiple are present
+                        if "," in vuln["cve"]:
+                            cve_ids = [cve.strip() for cve in vuln["cve"].split(",")]
+                        else:
+                            cve_ids = [vuln["cve"].strip()]
                     
-                    # Run the exploit
-                    result = self.run_exploit(exploit_name, host, port)
+                    # Find exploits for each CVE
+                    exploits = []
+                    for cve_id in cve_ids:
+                        cve_exploits = self.find_exploits_for_cve(cve_id)
+                        if cve_exploits:
+                            exploits.extend(cve_exploits)
                     
-                    # Add vulnerability information to the result
-                    result["vulnerability"] = {
-                        "name": vuln.get("name", ""),
-                        "description": vuln.get("description", ""),
-                        "severity": vuln.get("severity", ""),
-                        "cve": vuln.get("cve", "")
-                    }
+                    # If no exploits found via CVEs, try to find exploits for the service
+                    if not exploits and "hosts" in scan_results:
+                        for host_data in scan_results["hosts"]:
+                            if not isinstance(host_data, dict) or "ports" not in host_data:
+                                continue
+                                
+                            for port_data in host_data["ports"]:
+                                if not isinstance(port_data, dict):
+                                    continue
+                                    
+                                if int(port_data.get("portid", 0)) == port and port_data.get("service", {}).get("name"):
+                                    service_name = port_data["service"]["name"]
+                                    service_version = port_data["service"].get("version", "")
+                                    service_exploits = self.find_exploits_for_service(service_name, service_version)
+                                    if service_exploits:
+                                        exploits.extend(service_exploits)
                     
-                    exploit_results.append(result)
-                    
-                    # If successful, move to the next vulnerability
-                    if result["status"] == "success":
-                        self.logger.info(f"Successfully exploited {host}:{port} using {exploit_name}")
-                        break 
+                    # Run exploits if found
+                    if exploits:
+                        for exploit in exploits:
+                            result = self.run_exploit(exploit, host, port)
+                            if result:
+                                exploit_results.append(result)
+            except Exception as e:
+                self.logger.error(f"Error processing target {target_key}: {str(e)}")
+                continue
+        
+        return exploit_results 

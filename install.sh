@@ -66,6 +66,30 @@ EOF
   pip3 install -r requirements.txt
 }
 
+# Set up virtual environment
+echo "[+] Setting up Python virtual environment..."
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    echo "[+] Virtual environment created successfully"
+else
+    echo "[*] Virtual environment already exists"
+fi
+
+# Activate virtual environment and install dependencies
+echo "[+] Activating virtual environment and installing dependencies..."
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Create activation script
+echo "[+] Creating environment activation script..."
+cat > activate_venv.sh << EOF
+#!/bin/bash
+source venv/bin/activate
+export PYTHONPATH=\$PYTHONPATH:\$(pwd)
+EOF
+chmod +x activate_venv.sh
+
 # Install system dependencies and dos2unix for line ending conversion
 echo "[+] Installing system dependencies..."
 apt-get update
@@ -183,56 +207,22 @@ if ! command -v ollama &> /dev/null; then
     echo ""
     read -r
   else
-    # Pull default models
-    echo "[+] Downloading primary AI models (this may take a while)..."
-    ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
-    
-    # Ask if user wants to download additional models
-    echo "[?] Do you want to download additional AI model qwen2.5-coder:7b (approx. 3GB more) (y/n)"
-    read -r response
-    if [[ "$response" == "y" ]]; then
-      echo "[+] Downloading additional AI model..."
-      ollama pull qwen2.5-coder:7b > /dev/null 2>&1
-    fi
-  fi
-else
-  echo "[+] Ollama already installed, checking if service is running..."
-  
-  # Check if Ollama service is running
-  if ! check_ollama_running; then
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
     echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
     echo "║                                                                               ║"
-    echo "║ [!] Ollama service is not running!                                            ║"
-    echo "║                                                                               ║"
-    echo "║ To enable AI features, please run:                                            ║"
-    echo "║     ollama serve                                                              ║"
-    echo "║                                                                               ║"
-    echo "║ Then in another terminal:                                                     ║"
-    echo "║     ollama pull artifish/llama3.2-uncensored gemma3:1b                        ║"
-    echo "║                                                                               ║"
-    echo "║ Press Enter to continue with installation anyway...                            ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
-    echo ""
-    read -r
-  else
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
-    echo "║                                                                               ║"
-    echo "║ [+] Ollama service is running properly!                                        ║"
+    echo "║ [+] Ollama service is running properly!                                       ║"
     echo "║                                                                               ║"
     echo "║ AI features will work automatically.                                          ║"
     echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
     echo ""
     
     # Pull default models
-    echo "[+] Downloading primary AI models (this may take a while)..."
+    echo "[+] Downloading artifish/llama3.2-uncensored (this may take a while)..."
     ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
     
     # Ask if user wants to download additional models
-    echo "[?] Do you want to download additional AI models mentioned in use cases? (approx. 15GB more) (y/n)"
+    echo "[?] Do you want to download the backup model qwen2.5-coder:7b (will take approx 3GB) (y/n)"
     read -r response
     if [[ "$response" == "y" ]]; then
       echo "[+] Downloading additional AI models..."

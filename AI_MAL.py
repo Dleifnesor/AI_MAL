@@ -14,6 +14,7 @@ import sys
 import argparse
 import logging
 from datetime import datetime
+import subprocess
 
 # Import core modules
 from src.core.logger import setup_logger
@@ -151,12 +152,34 @@ def main():
         # Run vulnerability scanning if enabled
         if args.vuln:
             logger.info("Starting vulnerability scanning...")
-            vuln_scanner = VulnerabilityScanner(
-                target=args.target,
-                scan_config="full_and_fast",
-                timeout=3600,
-                use_nmap=not args.openvas  # Use nmap if OpenVAS is not available
-            )
+            # First try to use OpenVAS
+            try:
+                # Check if OpenVAS is available
+                if subprocess.run(["gvm-cli", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+                    logger.info("Using OpenVAS for vulnerability scanning")
+                    vuln_scanner = VulnerabilityScanner(
+                        target=args.target,
+                        scan_config=args.scan_config,
+                        timeout=3600,
+                        use_nmap=False  # Force OpenVAS
+                    )
+                else:
+                    logger.warning("OpenVAS not found, falling back to nmap")
+                    vuln_scanner = VulnerabilityScanner(
+                        target=args.target,
+                        scan_config=args.scan_config,
+                        timeout=3600,
+                        use_nmap=True
+                    )
+            except Exception as e:
+                logger.warning(f"Error checking OpenVAS: {e}, falling back to nmap")
+                vuln_scanner = VulnerabilityScanner(
+                    target=args.target,
+                    scan_config=args.scan_config,
+                    timeout=3600,
+                    use_nmap=True
+                )
+            
             vuln_results = vuln_scanner.scan()
             scan_results['vulnerabilities'] = vuln_results
             logger.info(f"Vulnerability scanning completed. Found {len(vuln_results)} vulnerabilities.")
