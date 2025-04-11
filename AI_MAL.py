@@ -154,9 +154,37 @@ def main():
             logger.info("Starting vulnerability scanning...")
             # First try to use OpenVAS
             try:
-                # Check if OpenVAS is available
+                # Check if OpenVAS is available and running
+                openvas_available = False
+                
+                # Try to start GVM service if not running
+                try:
+                    if subprocess.run(["systemctl", "is-active", "gvmd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0:
+                        logger.info("Starting GVM service...")
+                        subprocess.run(["sudo", "systemctl", "start", "gvmd"], check=True)
+                        logger.info("GVM service started successfully")
+                        # Wait a few seconds for the service to fully initialize
+                        import time
+                        time.sleep(5)
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Failed to start GVM service: {e}")
+                
+                # Check if gvm-cli is installed
                 if subprocess.run(["gvm-cli", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
-                    logger.info("Using OpenVAS for vulnerability scanning")
+                    # Check if OpenVAS service is running
+                    if subprocess.run(["systemctl", "is-active", "gvmd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+                        # Try to connect to OpenVAS
+                        if subprocess.run(["gvm-cli", "socket", "--xml", "<get_version/>"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+                            openvas_available = True
+                            logger.info("OpenVAS is available and running")
+                        else:
+                            logger.warning("OpenVAS is installed but not responding properly")
+                    else:
+                        logger.warning("OpenVAS service (gvmd) is not running")
+                else:
+                    logger.warning("gvm-cli is not installed")
+                
+                if openvas_available:
                     vuln_scanner = VulnerabilityScanner(
                         target=args.target,
                         scan_config=args.scan_config,
@@ -164,7 +192,7 @@ def main():
                         use_nmap=False  # Force OpenVAS
                     )
                 else:
-                    logger.warning("OpenVAS not found, falling back to nmap")
+                    logger.warning("OpenVAS not available, falling back to nmap")
                     vuln_scanner = VulnerabilityScanner(
                         target=args.target,
                         scan_config=args.scan_config,

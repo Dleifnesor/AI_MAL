@@ -108,16 +108,6 @@ apt-get install -y openvas gvm
 
 # Run OpenVAS setup
 echo "[+] Setting up OpenVAS (this may take a while)..."
-echo ""
-echo "╔═════════════════════════════════════════════════════════════════════════╗"
-echo "║                       !!! IMPORTANT NOTICE !!!                          ║"
-echo "║                                                                         ║"
-echo "║ An OpenVAS admin password will be generated during setup.               ║"
-echo "║ PLEASE WATCH FOR AND SAVE THIS PASSWORD when it appears below.          ║"
-echo "║ It will look like: [*] User created with password 'xxx-xxx-xxx-xxx'.    ║"
-echo "║                                                                         ║"
-echo "╚═════════════════════════════════════════════════════════════════════════╝"
-echo ""
 
 # Run the GVM setup and start services
 gvm-setup
@@ -130,6 +120,7 @@ echo "║                                                                       
 echo "║ Did you save the OpenVAS admin password displayed above?                ║"
 echo "║ If not, please scroll up and find the line that says:                   ║"
 echo "║ [*] User created with password 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.  ║"
+echo "║                           Username:admin                                ║"
 echo "║                                                                         ║"
 echo "║ Type 'y' to confirm you have saved the password, or 'n' to exit:        ║"
 echo "╚═════════════════════════════════════════════════════════════════════════╝"
@@ -423,14 +414,14 @@ echo "╔═══════════════════════�
 echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
 echo "║                                                                               ║"
 if check_ollama_running; then
-  echo "║         Ollama service is running properly!                                 ║"
-  echo "║                                                                             ║"
-  echo "║      AI features will work automatically.                                   ║"
+  echo "║         Ollama service is running properly!                                   ║"
+  echo "║                                                                               ║"
+  echo "║      AI features will work automatically.                                     ║"
 else
-  echo "║     Ollama service is NOT running properly!                                 ║"
-  echo "║                                                                             ║"
-  echo "║  To enable AI features, you must manually start Ollama:                     ║"
-  echo "║  1. Open a terminal and run: ollama serve                                   ║"
-  echo "║  2. Open another terminal and run: ollama pull artifish/llama3.2-uncensored ║"
+  echo "║     Ollama service is NOT running properly!                                   ║"
+  echo "║                                                                               ║"
+  echo "║  To enable AI features, you must manually start Ollama:                       ║"
+  echo "║  1. Open a terminal and run: ollama serve                                     ║"
+  echo "║  2. Open another terminal and run: ollama pull artifish/llama3.2-uncensored   ║"
 fi
-echo "╚═════════════════════════════════════════════════════════════════════════╝" 
+echo "╚═══════════════════════════════════════════════════════════════════════════════╝" 
