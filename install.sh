@@ -182,30 +182,30 @@ if ! command -v ollama &> /dev/null; then
   # Check if Ollama is running
   if ! check_ollama_running; then
     echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
-    echo "║                                                                               ║"
-    echo "║ [!] Ollama service is not running!                                            ║"
-    echo "║                                                                               ║"
-    echo "║ To enable AI features, please run:                                            ║"
-    echo "║     ollama serve                                                              ║"
-    echo "║                                                                               ║"
-    echo "║ Then in another terminal:                                                     ║"
-    echo "║     ollama pull artifish/llama3.2-uncensored gemma3:1b                        ║"
-    echo "║                                                                               ║"
-    echo "║ Press Enter to continue with installation anyway...                            ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║              IMPORTANT: OLLAMA SERVICE STATUS             ║"
+    echo "║                                                           ║"
+    echo "║ [!] Ollama service is not running!                        ║"
+    echo "║                                                           ║"
+    echo "║ To enable AI features, please run:                        ║"
+    echo "║     ollama serve                                          ║"
+    echo "║                                                           ║"
+    echo "║ Then in another terminal:                                 ║"
+    echo "║     ollama pull artifish/llama3.2-uncensored gemma3:1b    ║"
+    echo "║                                                           ║"
+    echo "║ Press Enter to continue with installation anyway...       ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
     echo ""
     read -r
   else
     echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
-    echo "║                                                                               ║"
-    echo "║ [+] Ollama service is running properly!                                       ║"
-    echo "║                                                                               ║"
-    echo "║ AI features will work automatically.                                          ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS         ║"
+    echo "║                                                           ║"
+    echo "║ [+] Ollama service is running properly!                   ║"
+    echo "║                                                           ║"
+    echo "║ AI features will work automatically.                      ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
     echo ""
     
     # Pull default models
@@ -424,4 +424,32 @@ else
   echo "║  1. Open a terminal and run: ollama serve                                     ║"
   echo "║  2. Open another terminal and run: ollama pull artifish/llama3.2-uncensored   ║"
 fi
-echo "╚═══════════════════════════════════════════════════════════════════════════════╝" 
+echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+
+# Set up OpenVAS credentials
+echo "Setting up OpenVAS credentials..."
+read -s -p "Enter OpenVAS password (default: admin): " GVM_PASSWORD
+GVM_PASSWORD=${GVM_PASSWORD:-admin}  # Use 'admin' if no input provided
+
+# Add environment variables to .bashrc
+echo "export GVM_USERNAME=admin" >> ~/.bashrc
+echo "export GVM_PASSWORD='$GVM_PASSWORD'" >> ~/.bashrc
+
+# Source the updated .bashrc
+source ~/.bashrc
+
+# Verify OpenVAS service is running
+echo "Verifying OpenVAS service..."
+if ! systemctl is-active --quiet gvmd; then
+    echo "Starting OpenVAS service..."
+    sudo systemctl start gvmd
+    sleep 5  # Wait for service to initialize
+fi
+
+# Test OpenVAS connection
+echo "Testing OpenVAS connection..."
+if gvm-cli socket --xml "<get_version/>" > /dev/null 2>&1; then
+    echo "OpenVAS connection successful!"
+else
+    echo "Warning: Could not connect to OpenVAS. Please check the service status."
+fi 

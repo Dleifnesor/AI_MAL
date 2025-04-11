@@ -475,108 +475,49 @@ class MetasploitFramework:
         # Return the last result if we've exhausted all retries
         return result
     
-    def run_exploits(self, scan_results):
-        """
-        Run appropriate exploits based on scan results.
+    def run_exploits(self, vulnerabilities):
+        """Run exploits based on vulnerability scan results."""
+        successful_exploits = []
         
-        Args:
-            scan_results (dict): Scan results containing vulnerabilities
+        if not vulnerabilities:
+            self.logger.warning("No vulnerabilities provided for exploitation")
+            return successful_exploits
         
-        Returns:
-            list: Exploit results
-        """
-        exploit_results = []
-        
-        # Check if scan results contain vulnerabilities
-        if not isinstance(scan_results, dict):
-            self.logger.error("Invalid scan results format. Expected dictionary.")
-            return exploit_results
-            
-        if "vulnerabilities" not in scan_results:
-            self.logger.warning("No vulnerabilities found in scan results. Skipping exploitation.")
-            return exploit_results
-        
-        # Extract unique targets and their vulnerabilities
-        targets = {}
-        for vuln in scan_results["vulnerabilities"]:
-            if not isinstance(vuln, dict):
-                self.logger.warning(f"Skipping invalid vulnerability entry: {vuln}")
-                continue
-                
-            # Skip if no host or port information
-            if not vuln.get("host") or not vuln.get("port"):
-                self.logger.warning(f"Skipping vulnerability with missing host/port: {vuln}")
-                continue
-            
-            host = vuln["host"]
-            port_info = vuln["port"]
-            
-            # Extract port number from port info (format: "80/tcp")
+        for vuln in vulnerabilities:
             try:
-                port = port_info.split("/")[0] if "/" in port_info else port_info
-                port = int(port)
-            except (ValueError, AttributeError) as e:
-                self.logger.warning(f"Invalid port format: {port_info}")
-                continue
-            
-            # Create target key
-            target_key = f"{host}:{port}"
-            
-            # Add vulnerability to target
-            if target_key not in targets:
-                targets[target_key] = []
-            
-            targets[target_key].append(vuln)
-        
-        # Attempt to exploit each target
-        for target_key, vulns in targets.items():
-            try:
-                host, port = target_key.split(":")
-                port = int(port)
+                # Ensure vuln is a dictionary
+                if isinstance(vuln, str):
+                    self.logger.warning(f"Skipping invalid vulnerability entry: {vuln}")
+                    continue
+                    
+                # Extract vulnerability details
+                host = vuln.get('host', '')
+                port = vuln.get('port', '')
+                service = vuln.get('service', '')
+                cve = vuln.get('cve', '')
                 
-                # Try to find exploits for each vulnerability
-                for vuln in vulns:
-                    # Check if the vulnerability has a CVE
-                    cve_ids = []
-                    if vuln.get("cve") and vuln["cve"] != "N/A":
-                        # Split CVEs if multiple are present
-                        if "," in vuln["cve"]:
-                            cve_ids = [cve.strip() for cve in vuln["cve"].split(",")]
-                        else:
-                            cve_ids = [vuln["cve"].strip()]
+                if not all([host, port, service]):
+                    self.logger.warning(f"Skipping incomplete vulnerability entry: {vuln}")
+                    continue
                     
-                    # Find exploits for each CVE
-                    exploits = []
-                    for cve_id in cve_ids:
-                        cve_exploits = self.find_exploits_for_cve(cve_id)
-                        if cve_exploits:
-                            exploits.extend(cve_exploits)
+                # Find matching exploit
+                exploit = self.find_exploit(service, cve)
+                if not exploit:
+                    continue
                     
-                    # If no exploits found via CVEs, try to find exploits for the service
-                    if not exploits and "hosts" in scan_results:
-                        for host_data in scan_results["hosts"]:
-                            if not isinstance(host_data, dict) or "ports" not in host_data:
-                                continue
-                                
-                            for port_data in host_data["ports"]:
-                                if not isinstance(port_data, dict):
-                                    continue
-                                    
-                                if int(port_data.get("portid", 0)) == port and port_data.get("service", {}).get("name"):
-                                    service_name = port_data["service"]["name"]
-                                    service_version = port_data["service"].get("version", "")
-                                    service_exploits = self.find_exploits_for_service(service_name, service_version)
-                                    if service_exploits:
-                                        exploits.extend(service_exploits)
+                # Run the exploit
+                result = self.run_exploit(exploit, host, port)
+                if result:
+                    successful_exploits.append({
+                        'host': host,
+                        'port': port,
+                        'service': service,
+                        'exploit': exploit,
+                        'result': result
+                    })
                     
-                    # Run exploits if found
-                    if exploits:
-                        for exploit in exploits:
-                            result = self.run_exploit(exploit, host, port)
-                            if result:
-                                exploit_results.append(result)
             except Exception as e:
-                self.logger.error(f"Error processing target {target_key}: {str(e)}")
+                self.logger.error(f"Error running exploit: {e}")
                 continue
-        
-        return exploit_results 
+            
+        return successful_exploits 

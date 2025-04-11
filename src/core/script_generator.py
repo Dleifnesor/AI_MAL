@@ -16,6 +16,7 @@ import subprocess
 import requests
 from datetime import datetime
 from .logger import LoggerWrapper
+import time
 
 class ScriptGenerator:
     """
@@ -716,4 +717,41 @@ Provide ONLY the Ruby code without any additional explanation.
             result = self.execute_script(script)
             results.append(result)
         
-        return results 
+        return results
+
+    def generate_script(self, target, script_type="python"):
+        """Generate a script for the target."""
+        try:
+            # Increase timeout and add retry logic
+            max_retries = 3
+            retry_delay = 5  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    # Generate script using Ollama with increased timeout
+                    response = self.generate_with_ollama(self._build_prompt(target, script_type), self.model)
+                    
+                    if response and response.get('response'):
+                        script_content = response['response']
+                        filename = f"enum_{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{script_type}"
+                        filepath = os.path.join(self.output_dir, filename)
+                        
+                        with open(filepath, 'w') as f:
+                            f.write(script_content)
+                            
+                        self.logger.info(f"Saved enumeration script to {filepath}")
+                        return filepath
+                            
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        self.logger.error(f"Error generating with Ollama after {max_retries} attempts: {e}")
+                        raise
+                    
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate enumeration script for {target}: {e}")
+            return None 

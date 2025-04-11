@@ -15,6 +15,17 @@ import argparse
 import logging
 from datetime import datetime
 import subprocess
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.syntax import Syntax
+from rich.markdown import Markdown
+import gvm
+from gvm.connections import TLSConnection
+from gvm.protocols.latest import Gmp
+from gvm.transforms import EtreeTransform
+from gvm.xml import pretty_print
 
 # Import core modules
 from src.core.logger import setup_logger
@@ -29,6 +40,9 @@ from src.core.exfiltration import DataExfiltration  # Import the exfiltration mo
 from src.core.implant import ImplantDeployer  # Import the implant deployer module
 
 __version__ = "1.0.0"
+
+# Initialize rich console
+console = Console()
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -104,235 +118,234 @@ def parse_arguments():
     
     return parser.parse_args()
 
+def display_scan_results(scan_results):
+    """Display scan results in a rich format."""
+    # Create a table for hosts
+    hosts_table = Table(title="[bold cyan]Discovered Hosts[/bold cyan]")
+    hosts_table.add_column("IP Address", style="cyan")
+    hosts_table.add_column("Hostname", style="green")
+    hosts_table.add_column("OS", style="yellow")
+    hosts_table.add_column("Open Ports", style="magenta")
+    
+    for host in scan_results.get('hosts', []):
+        hosts_table.add_row(
+            host.get('ip', 'N/A'),
+            host.get('hostname', 'N/A'),
+            host.get('os', 'N/A'),
+            ', '.join(str(p) for p in host.get('ports', []))
+        )
+    
+    console.print(Panel(hosts_table, title="[bold]Network Scan Results[/bold]"))
+
+def display_vulnerabilities(vuln_results):
+    """Display vulnerability scan results in a rich format."""
+    if not vuln_results:
+        return
+    
+    vuln_table = Table(title="[bold red]Vulnerabilities Found[/bold red]")
+    vuln_table.add_column("Host", style="cyan")
+    vuln_table.add_column("Port", style="green")
+    vuln_table.add_column("Service", style="yellow")
+    vuln_table.add_column("Vulnerability", style="red")
+    vuln_table.add_column("Severity", style="magenta")
+    
+    for vuln in vuln_results:
+        vuln_table.add_row(
+            vuln.get('host', 'N/A'),
+            str(vuln.get('port', 'N/A')),
+            vuln.get('service', 'N/A'),
+            vuln.get('name', 'N/A'),
+            vuln.get('severity', 'N/A')
+        )
+    
+    console.print(Panel(vuln_table, title="[bold]Vulnerability Scan Results[/bold]"))
+
+def display_ai_analysis(analysis_results):
+    """Display AI analysis results in a rich format."""
+    if not analysis_results:
+        return
+    
+    # Create panels for different aspects of AI analysis
+    console.print(Panel(
+        Markdown(analysis_results.get('summary', 'No analysis available')),
+        title="[bold green]AI Analysis Summary[/bold green]"
+    ))
+    
+    if 'recommendations' in analysis_results:
+        console.print(Panel(
+            Markdown('\n'.join(f"- {rec}" for rec in analysis_results['recommendations'])),
+            title="[bold yellow]Recommended Actions[/bold yellow]"
+        ))
+    
+    if 'exploitation_paths' in analysis_results:
+        console.print(Panel(
+            Markdown('\n'.join(f"- {path}" for path in analysis_results['exploitation_paths'])),
+            title="[bold red]Potential Exploitation Paths[/bold red]"
+        ))
+
+def connect_to_openvas():
+    """Connect to OpenVAS/GVM and return the connection."""
+    try:
+        # Try to connect to OpenVAS on localhost:9392
+        connection = TLSConnection(hostname='127.0.0.1', port=9392)
+        transform = EtreeTransform()
+        gmp = Gmp(connection, transform=transform)
+        
+        # Get credentials from environment variables
+        username = os.getenv('GVM_USERNAME', 'admin')
+        password = os.getenv('GVM_PASSWORD', 'admin')
+        
+        # Authenticate with credentials
+        gmp.authenticate(username, password)
+        console.print("[green]Successfully connected to OpenVAS[/green]")
+        return gmp
+    except Exception as e:
+        console.print(f"[red]Failed to connect to OpenVAS: {e}[/red]")
+        return None
+
+def check_openvas_availability():
+    """Check if OpenVAS is available and running."""
+    try:
+        # Check if gvm-cli is installed
+        if not subprocess.run(["which", "gvm-cli"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
+            console.print("[yellow]gvm-cli is not installed[/yellow]")
+            return False
+            
+        # Check if OpenVAS service is running
+        if not subprocess.run(["systemctl", "is-active", "--quiet", "gvmd"]).returncode == 0:
+            console.print("[yellow]OpenVAS service (gvmd) is not running[/yellow]")
+            return False
+            
+        # Try to connect to OpenVAS
+        gmp = connect_to_openvas()
+        if gmp:
+            return True
+            
+        return False
+    except Exception as e:
+        console.print(f"[red]Error checking OpenVAS availability: {e}[/red]")
+        return False
+
 def main():
     """Main function to execute the AI_MAL tool."""
-    # Import datetime in case the global import didn't work
-    from datetime import datetime
-    
     # Parse arguments
     args = parse_arguments()
-    
-    # Handle --full-auto flag
-    if args.full_auto:
-        args.msf = True
-        args.exploit = True
-        args.vuln = True
-        args.ai_analysis = True
-        args.custom_scripts = True
-        args.execute_scripts = True
     
     # Setup logging
     log_level = getattr(logging, args.log_level.upper())
     logger = setup_logger(log_level, args.log_file, args.quiet)
     
-    logger.info(f"AI_MAL v{__version__} starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Target: {args.target}")
+    console.print(Panel.fit(
+        f"[bold cyan]AI_MAL v{__version__}[/bold cyan]\n"
+        f"[yellow]Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/yellow]\n"
+        f"[green]Target: {args.target}[/green]",
+        title="[bold]AI_MAL Penetration Testing Tool[/bold]"
+    ))
     
     try:
-        # Initialize terminal GUI if not disabled
-        if not args.no_gui:
-            gui = TerminalGUI(args.quiet)
-            gui.show_header()
-        
-        # Initialize scanner
-        scanner = Scanner(
-            target=args.target,
-            scan_type=args.scan_type,
-            stealth=args.stealth,
-            services=args.services or args.vuln,  # Always enable service detection if vuln scanning is enabled
-            version=args.version or args.vuln,    # Always enable version detection if vuln scanning is enabled
-            os_detection=args.os
-        )
-        
-        # Run initial scan
-        logger.info("Starting initial scan...")
-        scan_results = scanner.scan()
-        logger.info(f"Initial scan completed. Found {len(scan_results['hosts'])} hosts.")
-        
-        # Run vulnerability scanning if enabled
-        if args.vuln:
-            logger.info("Starting vulnerability scanning...")
-            # First try to use OpenVAS
-            try:
-                # Check if OpenVAS is available and running
-                openvas_available = False
-                
-                # Try to start GVM service if not running
+        # Initialize scanner with progress bar
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("[cyan]Initializing scanner...", total=None)
+            
+            scanner = Scanner(
+                target=args.target,
+                scan_type=args.scan_type,
+                stealth=args.stealth,
+                services=args.services or args.vuln,
+                version=args.version or args.vuln,
+                os_detection=args.os
+            )
+            
+            # Run initial scan
+            progress.update(task, description="[cyan]Running initial scan...")
+            scan_results = scanner.scan()
+            progress.update(task, description="[green]Initial scan completed!")
+            
+            # Display scan results
+            display_scan_results(scan_results)
+            
+            # Run vulnerability scanning if enabled
+            if args.vuln:
+                logger.info("Starting vulnerability scanning...")
+                # First try to use OpenVAS
                 try:
-                    if subprocess.run(["systemctl", "is-active", "gvmd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0:
-                        logger.info("Starting GVM service...")
-                        subprocess.run(["sudo", "systemctl", "start", "gvmd"], check=True)
-                        logger.info("GVM service started successfully")
-                        # Wait a few seconds for the service to fully initialize
-                        import time
-                        time.sleep(5)
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to start GVM service: {e}")
-                
-                # Check if gvm-cli is installed
-                if subprocess.run(["gvm-cli", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
-                    # Check if OpenVAS service is running
-                    if subprocess.run(["systemctl", "is-active", "gvmd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
-                        # Try to connect to OpenVAS
-                        if subprocess.run(["gvm-cli", "socket", "--xml", "<get_version/>"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0:
-                            openvas_available = True
-                            logger.info("OpenVAS is available and running")
-                        else:
-                            logger.warning("OpenVAS is installed but not responding properly")
+                    # Check if OpenVAS is available and running
+                    openvas_available = check_openvas_availability()
+                    
+                    if openvas_available:
+                        vuln_scanner = VulnerabilityScanner(
+                            target=args.target,
+                            scan_config=args.scan_config,
+                            timeout=3600,
+                            use_nmap=False,  # Force OpenVAS
+                            gmp_connection=connect_to_openvas()  # Pass the GMP connection
+                        )
+                        logger.info("Using OpenVAS for vulnerability scanning")
                     else:
-                        logger.warning("OpenVAS service (gvmd) is not running")
-                else:
-                    logger.warning("gvm-cli is not installed")
-                
-                if openvas_available:
-                    vuln_scanner = VulnerabilityScanner(
-                        target=args.target,
-                        scan_config=args.scan_config,
-                        timeout=3600,
-                        use_nmap=False  # Force OpenVAS
-                    )
-                else:
-                    logger.warning("OpenVAS not available, falling back to nmap")
+                        logger.warning("OpenVAS not available, falling back to nmap")
+                        vuln_scanner = VulnerabilityScanner(
+                            target=args.target,
+                            scan_config=args.scan_config,
+                            timeout=3600,
+                            use_nmap=True
+                        )
+                except Exception as e:
+                    logger.warning(f"Error checking OpenVAS: {e}, falling back to nmap")
                     vuln_scanner = VulnerabilityScanner(
                         target=args.target,
                         scan_config=args.scan_config,
                         timeout=3600,
                         use_nmap=True
                     )
-            except Exception as e:
-                logger.warning(f"Error checking OpenVAS: {e}, falling back to nmap")
-                vuln_scanner = VulnerabilityScanner(
-                    target=args.target,
-                    scan_config=args.scan_config,
-                    timeout=3600,
-                    use_nmap=True
-                )
-            
-            vuln_results = vuln_scanner.scan()
-            scan_results['vulnerabilities'] = vuln_results
-            logger.info(f"Vulnerability scanning completed. Found {len(vuln_results)} vulnerabilities.")
-        
-        # Run Metasploit integration if enabled
-        if args.msf:
-            logger.info("Initializing Metasploit Framework...")
-            msf = MetasploitFramework()
-            if args.exploit:
-                logger.info("Attempting exploitation...")
-                exploit_results = msf.run_exploits(scan_results)
-                scan_results['exploits'] = exploit_results
-                logger.info(f"Exploitation completed. Successful exploits: {len([e for e in exploit_results if e['status'] == 'success'])}")
-            else:
-                # Just initialize the MSF console without running exploits
-                msf_info = msf.get_info()
-                scan_results['msf_info'] = msf_info
-                logger.info("Metasploit Framework initialized.")
-        
-        # Generate custom scripts if enabled
-        if args.custom_scripts:
-            logger.info(f"Generating {args.script_type} scripts...")
-            script_gen = ScriptGenerator(
-                script_type=args.script_type,
-                output_dir=args.script_output,
-                script_format=args.script_format
-            )
-            scripts = script_gen.generate_scripts(scan_results)
-            scan_results['scripts'] = scripts
-            
-            # Execute scripts if enabled
-            if args.execute_scripts and scripts:
-                logger.info("Executing generated scripts...")
-                execution_results = script_gen.execute_scripts(scripts)
-                scan_results['script_execution'] = execution_results
-        
-        # Run AI analysis if enabled
-        if args.ai_analysis:
-            logger.info("Running AI analysis...")
-            ai_analyzer = AIAnalyzer(
-                model=args.model,
-                fallback_model=args.fallback_model
-            )
-            analysis_results = ai_analyzer.analyze(scan_results)
-            scan_results['ai_analysis'] = analysis_results
-            logger.info("AI analysis completed.")
-        
-        # Run data exfiltration if enabled
-        if args.exfil:
-            logger.info("Attempting data exfiltration...")
-            exfiltrator = DataExfiltration(scan_results)
-            exfil_results = exfiltrator.exfiltrate()
-            scan_results['exfiltration'] = exfil_results
-            logger.info(f"Exfiltration completed. Results: {exfil_results['summary']}")
-            
-        # Deploy implant if specified
-        if args.implant:
-            logger.info(f"Deploying implant from {args.implant}...")
-            deployer = ImplantDeployer(scan_results)
-            implant_results = deployer.deploy_implant(args.implant)
-            scan_results['implant'] = implant_results
-            logger.info(f"Implant deployment completed. Success rate: {implant_results['success_rate']}%")
-        
-        # Run DoS testing if enabled
-        if args.dos:
-            logger.info("Running DoS testing...")
-            # Implement DoS testing logic
-            scan_results['dos_testing'] = {"status": "completed", "details": "DoS testing results would be here"}
-            logger.info("DoS testing completed.")
-        
-        # Generate report
-        logger.info("Generating report...")
-        report_gen = ReportGenerator(
-            output_dir=args.output_dir,
-            output_format=args.output_format
-        )
-        report_path = report_gen.generate_report(scan_results)
-        logger.info(f"Report generated: {report_path}")
-        
-        # Set up continuous scanning if enabled
-        if args.continuous:
-            logger.info(f"Continuous scanning enabled with {args.delay} seconds delay.")
-            try:
-                import time
                 
-                scan_count = 1
-                while True:
-                    logger.info(f"Waiting {args.delay} seconds until next scan...")
-                    time.sleep(args.delay)
-                    
-                    scan_count += 1
-                    logger.info(f"Starting scan #{scan_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                    
-                    # Re-run the scan
-                    new_scan_results = scanner.scan()
-                    
-                    # Compare with previous results to identify changes
-                    # This is a simplified implementation - a more robust one would be needed
-                    new_host_count = len(new_scan_results['hosts'])
-                    logger.info(f"Scan #{scan_count} completed. Found {new_host_count} hosts.")
-                    
-                    # Generate a new report for this scan
-                    report_path = report_gen.generate_report(new_scan_results, f"scan_{scan_count}")
-                    logger.info(f"Report for scan #{scan_count} generated: {report_path}")
-                    
-                    # Update scan_results for the next iteration
-                    scan_results = new_scan_results
-                    
-            except KeyboardInterrupt:
-                logger.info("Continuous scanning stopped by user.")
-        
-        # Show footer if GUI is enabled
-        if not args.no_gui:
-            gui.show_footer()
-        
-        logger.info(f"AI_MAL completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        return 0
-        
+                vuln_results = vuln_scanner.scan()
+                scan_results['vulnerabilities'] = vuln_results
+                logger.info(f"Vulnerability scanning completed. Found {len(vuln_results)} vulnerabilities.")
+                
+                # Display vulnerability results
+                display_vulnerabilities(vuln_results)
+            
+            # Run AI analysis if enabled
+            if args.ai_analysis:
+                progress.update(task, description="[cyan]Running AI analysis...")
+                ai_analyzer = AIAnalyzer(
+                    model=args.model,
+                    fallback_model=args.fallback_model
+                )
+                analysis_results = ai_analyzer.analyze(scan_results)
+                scan_results['ai_analysis'] = analysis_results
+                progress.update(task, description="[green]AI analysis completed!")
+                
+                # Display AI analysis results
+                display_ai_analysis(analysis_results)
+            
+            # Generate report
+            progress.update(task, description="[cyan]Generating report...")
+            report_gen = ReportGenerator(
+                output_dir=args.output_dir,
+                output_format=args.output_format
+            )
+            report_path = report_gen.generate_report(scan_results)
+            progress.update(task, description="[green]Report generated!")
+            
+            console.print(Panel(
+                f"[bold green]Report saved to:[/bold green] {report_path}",
+                title="[bold]Operation Complete[/bold]"
+            ))
+            
     except KeyboardInterrupt:
-        logger.warning("Operation interrupted by user.")
+        console.print("[yellow]Operation interrupted by user.[/yellow]")
         return 1
     except Exception as e:
-        logger.error(f"An error occurred: {str(e)}")
+        console.print(f"[bold red]An error occurred:[/bold red] {str(e)}")
         if args.debug:
-            logger.exception("Detailed error information:")
+            console.print_exception()
         return 1
 
 if __name__ == "__main__":
