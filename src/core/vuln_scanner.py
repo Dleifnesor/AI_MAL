@@ -104,13 +104,36 @@ class VulnerabilityScanner:
             
             # Try to connect to OpenVAS using OSP protocol
             try:
-                # First try the standard socket path
+                # Get the admin password from the terminal output
                 result = subprocess.run(
                     ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     timeout=5
                 )
+                
+                # If connection fails, try to get the password from the terminal output
+                if result.returncode != 0:
+                    # Try to get the password from the terminal output
+                    result = subprocess.run(
+                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=5
+                    )
+                    
+                # Extract password from output if available
+                output = result.stderr.decode()
+                if "password" in output.lower():
+                    password = output.split("password")[1].split()[0].strip("'\"")
+                    # Try connecting with the extracted password
+                    result = subprocess.run(
+                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", f"<help/>"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=5
+                    )
+                    
                 if result.returncode == 0:
                     return True
                 
@@ -142,6 +165,7 @@ class VulnerabilityScanner:
                         )
                         if result.returncode == 0:
                             return True
+                        
             except Exception as e:
                 self.logger.warning(f"Error checking OSP connection: {e}")
             
@@ -172,6 +196,29 @@ class VulnerabilityScanner:
                     stderr=subprocess.PIPE,
                     timeout=5
                 )
+                
+                # If connection fails, try to get the password from the terminal output
+                if result.returncode != 0:
+                    # Try to get the password from the terminal output
+                    result = subprocess.run(
+                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=5
+                    )
+                    
+                # Extract password from output if available
+                output = result.stderr.decode()
+                if "password" in output.lower():
+                    password = output.split("password")[1].split()[0].strip("'\"")
+                    # Try connecting with the extracted password
+                    result = subprocess.run(
+                        ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", f"<help/>"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=5
+                    )
+                    
                 if result.returncode == 0:
                     self.logger.info("Connected to OpenVAS using standard socket path")
                     return True
@@ -206,6 +253,7 @@ class VulnerabilityScanner:
                         if result.returncode == 0:
                             self.logger.info(f"Connected to OpenVAS using service socket path: {socket_path}")
                             return True
+                        
             except Exception as e:
                 self.logger.error(f"Error connecting to OpenVAS: {e}")
             

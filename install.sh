@@ -95,12 +95,10 @@ echo "[+] Installing system dependencies..."
 apt-get update
 apt-get install -y nmap metasploit-framework hping3 apache2-utils dos2unix 2>/dev/null
 
-# Convert all scripts to Unix format (fix line endings)
-echo "[+] Converting scripts to Unix format (fixing line endings)..."
-find . -type f -name "*.py" -exec dos2unix {} \;
-find . -type f -name "*.sh" -exec dos2unix {} \;
-find ./src -type f -exec dos2unix {} \; 2>/dev/null
-dos2unix AI_MAL.py
+# Convert line endings to Unix format (only for project files)
+echo "Converting line endings to Unix format..."
+find . -type f -name "*.py" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix
+find . -type f -name "*.sh" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix
 
 # Install OpenVAS/Greenbone Vulnerability Manager - HIGH PRIORITY
 echo "[+] Installing OpenVAS/Greenbone Vulnerability Manager (PRIMARY VULNERABILITY SCANNER)..."
@@ -200,7 +198,7 @@ if ! command -v ollama &> /dev/null; then
   else
     echo ""
     echo "╔═══════════════════════════════════════════════════════════╗"
-    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS         ║"
+    echo "║             IMPORTANT: OLLAMA SERVICE STATUS              ║"
     echo "║                                                           ║"
     echo "║ [+] Ollama service is running properly!                   ║"
     echo "║                                                           ║"
