@@ -273,6 +273,8 @@ def main():
             # Run vulnerability scanning if enabled
             if args.vuln:
                 logger.info("Starting vulnerability scanning...")
+                progress.update(task, description="[cyan]Running vulnerability scan...")
+                
                 # First try to use OpenVAS
                 try:
                     # Check if OpenVAS is available and running
@@ -306,7 +308,7 @@ def main():
                 
                 vuln_results = vuln_scanner.scan()
                 scan_results['vulnerabilities'] = vuln_results
-                logger.info(f"Vulnerability scanning completed. Found {len(vuln_results)} vulnerabilities.")
+                progress.update(task, description="[green]Vulnerability scan completed!")
                 
                 # Display vulnerability results
                 display_vulnerabilities(vuln_results)

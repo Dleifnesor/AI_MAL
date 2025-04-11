@@ -15,13 +15,20 @@ import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from .logger import LoggerWrapper
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+
+# Initialize rich console
+console = Console()
 
 class VulnerabilityScanner:
     """
     Vulnerability scanner class that uses OpenVAS for comprehensive vulnerability scanning.
     """
     
-    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None, use_nmap=False):
+    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None, use_nmap=False, gmp_connection=None):
         """
         Initialize the vulnerability scanner.
         
@@ -31,12 +38,14 @@ class VulnerabilityScanner:
             timeout (int): Scan timeout in seconds
             custom_vuln_file (str, optional): Path to custom vulnerability file
             use_nmap (bool): Whether to use nmap instead of OpenVAS (default: False)
+            gmp_connection (str, optional): GMP connection string
         """
         self.target = target
         self.scan_config = scan_config
         self.timeout = timeout
         self.custom_vuln_file = custom_vuln_file
         self.use_nmap = use_nmap
+        self.gmp_connection = gmp_connection
         self.logger = LoggerWrapper("VulnScanner")
         
         # Define OpenVAS scan configurations
@@ -73,16 +82,43 @@ class VulnerabilityScanner:
             bool: True if OpenVAS is available, False otherwise
         """
         try:
-            # Check for gvm-cli command
-            subprocess.run(["gvm-cli", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return True
-        except FileNotFoundError:
-            try:
-                # Try omp as fallback for older versions
-                subprocess.run(["omp", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                return True
-            except FileNotFoundError:
+            # Check if ospd-openvas service is running
+            result = subprocess.run(
+                ["systemctl", "is-active", "ospd-openvas"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            if result.returncode != 0:
+                self.logger.warning("ospd-openvas service is not running")
                 return False
+            
+            # Check if gvmd service is running
+            result = subprocess.run(
+                ["systemctl", "is-active", "gvmd"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            if result.returncode != 0:
+                self.logger.warning("gvmd service is not running")
+                return False
+            
+            # Try to connect to OpenVAS using OSP protocol
+            try:
+                result = subprocess.run(
+                    ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", "<help/>"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception as e:
+                self.logger.warning(f"Error checking OSP connection: {e}")
+            
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking OpenVAS availability: {e}")
+            return False
     
     def scan_with_openvas(self):
         """
@@ -93,186 +129,92 @@ class VulnerabilityScanner:
         """
         self.logger.info(f"Starting OpenVAS vulnerability scan on {self.target}")
         
-        # Get scan config ID
-        config_id = self.openvas_configs.get(self.scan_config, self.openvas_configs["full_and_fast"])
-        
         try:
-            # Check if we're using gvm-cli or omp
-            use_gvm = True
-            try:
-                subprocess.run(["gvm-cli", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            except FileNotFoundError:
-                use_gvm = False
-            
-            # Create a target in OpenVAS with proper naming for web interface visibility
-            target_name = f"AI_MAL_Target_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            self.logger.debug(f"Creating target in OpenVAS: {target_name}")
-            
-            if use_gvm:
-                cmd = [
-                    "gvm-cli", "socket", "--xml", 
-                    f"<create_target><name>{target_name}</name><hosts>{self.target}</hosts><comment>Created by AI_MAL</comment></create_target>"
-                ]
-            else:
-                cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", 
-                       f"<create_target><name>{target_name}</name><hosts>{self.target}</hosts><comment>Created by AI_MAL</comment></create_target>"]
-            
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                self.logger.error(f"OpenVAS target creation failed: {stderr.decode()}")
-                return {"error": "OpenVAS target creation failed"}
-            
-            # Parse target ID
-            target_xml = ET.fromstring(stdout.decode())
-            target_id = target_xml.get("id")
-            
-            if not target_id:
-                self.logger.error("Failed to get target ID from OpenVAS")
-                return {"error": "Failed to get target ID from OpenVAS"}
-            
-            # Create a task in OpenVAS with proper naming and configuration
-            task_name = f"AI_MAL_Scan_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            self.logger.debug(f"Creating scan task in OpenVAS: {task_name}")
-            
-            if use_gvm:
-                cmd = [
-                    "gvm-cli", "socket", "--xml", 
-                    f"<create_task><name>{task_name}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/><comment>Created by AI_MAL</comment><preferences><preference><scanner_name>source_iface</scanner_name><value>eth0</value></preference></preferences></create_task>"
-                ]
-            else:
-                cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", 
-                       f"<create_task><name>{task_name}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/><comment>Created by AI_MAL</comment><preferences><preference><scanner_name>source_iface</scanner_name><value>eth0</value></preference></preferences></create_task>"]
-            
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                self.logger.error(f"OpenVAS task creation failed: {stderr.decode()}")
-                return {"error": "OpenVAS task creation failed"}
-            
-            # Parse task ID
-            task_xml = ET.fromstring(stdout.decode())
-            task_id = task_xml.get("id")
-            
-            if not task_id:
-                self.logger.error("Failed to get task ID from OpenVAS")
-                return {"error": "Failed to get task ID from OpenVAS"}
-            
-            # Start the task
-            self.logger.debug("Starting OpenVAS scan task")
-            if use_gvm:
-                cmd = ["gvm-cli", "socket", "--xml", f"<start_task task_id=\"{task_id}\"/>"]
-            else:
-                cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", f"<start_task task_id=\"{task_id}\"/>"]
-            
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                self.logger.error(f"Failed to start OpenVAS task: {stderr.decode()}")
-                return {"error": "Failed to start OpenVAS task"}
-            
-            # Parse report ID
-            report_xml = ET.fromstring(stdout.decode())
-            report_id = report_xml.find(".//report_id").text
-            
-            if not report_id:
-                self.logger.error("Failed to get report ID from OpenVAS")
-                return {"error": "Failed to get report ID from OpenVAS"}
-            
-            # Wait for the scan to complete
-            self.logger.info(f"OpenVAS scan started. Task ID: {task_id}")
-            self.logger.info("You can monitor progress in the Greenbone web interface.")
-            self.logger.info("Waiting for scan completion...")
-            
-            start_time = time.time()
-            while True:
-                # Check task status
-                if use_gvm:
-                    cmd = ["gvm-cli", "socket", "--xml", f"<get_tasks task_id=\"{task_id}\"/>"]
-                else:
-                    cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", f"<get_tasks task_id=\"{task_id}\"/>"]
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Connecting to OpenVAS...", total=None)
                 
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                stdout, stderr = process.communicate()
+                # Check if OpenVAS services are running
+                if not self.is_openvas_available():
+                    progress.update(task, description="[red]OpenVAS services not available")
+                    return []
+                    
+                progress.update(task, description="[cyan]Creating OpenVAS target...")
                 
-                if process.returncode != 0:
-                    self.logger.error(f"OpenVAS task status check failed: {stderr.decode()}")
-                    return {"error": "OpenVAS task status check failed"}
+                # Create target using OSP protocol
+                target_id = self.create_target_ospd()
+                if not target_id:
+                    progress.update(task, description="[red]Failed to create target")
+                    return []
+                    
+                progress.update(task, description="[cyan]Creating scan task...")
                 
-                # Parse task status
-                task_xml = ET.fromstring(stdout.decode())
-                status = task_xml.find(".//status").text
+                # Create task using OSP protocol
+                task_id = self.create_task_ospd(target_id)
+                if not task_id:
+                    progress.update(task, description="[red]Failed to create task")
+                    return []
+                    
+                progress.update(task, description="[cyan]Starting vulnerability scan...")
                 
-                if status == "Done":
-                    break
+                # Start scan using OSP protocol
+                if not self.start_task_ospd(task_id):
+                    progress.update(task, description="[red]Failed to start task")
+                    return []
+                    
+                progress.update(task, description="[cyan]Scan in progress...")
                 
-                # Check timeout
-                if time.time() - start_time > self.timeout:
-                    self.logger.warning("OpenVAS scan timed out. Retrieving partial results.")
-                    break
+                # Monitor scan progress
+                while True:
+                    status = self.get_task_status_ospd(task_id)
+                    if status == "Done":
+                        progress.update(task, description="[green]Scan completed!")
+                        break
+                    elif status == "Failed":
+                        progress.update(task, description="[red]Scan failed!")
+                        return []
+                    time.sleep(10)
+                    
+                # Get results
+                progress.update(task, description="[cyan]Retrieving scan results...")
+                results = self.get_scan_results_ospd(task_id)
                 
-                # Wait before checking again
-                time.sleep(10)
-            
-            # Get the report
-            self.logger.debug("Retrieving OpenVAS scan results")
-            if use_gvm:
-                cmd = ["gvm-cli", "socket", "--xml", 
-                       f"<get_reports report_id=\"{report_id}\" format_id=\"a994b278-1f62-11e1-96ac-406186ea4fc5\"/>"]
-            else:
-                cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", 
-                       f"<get_reports report_id=\"{report_id}\" format_id=\"a994b278-1f62-11e1-96ac-406186ea4fc5\"/>"]
-            
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                self.logger.error(f"OpenVAS report retrieval failed: {stderr.decode()}")
-                return {"error": "OpenVAS report retrieval failed"}
-            
-            # Parse the XML report
-            self.logger.debug("Parsing OpenVAS report XML")
-            report_xml = ET.fromstring(stdout.decode())
-            
-            # Extract vulnerabilities
-            results = {
-                "scan_info": {
-                    "scanner": "OpenVAS",
-                    "scan_start": report_xml.find(".//creation_time").text if report_xml.find(".//creation_time") is not None else "",
-                    "scan_end": report_xml.find(".//modification_time").text if report_xml.find(".//modification_time") is not None else "",
-                    "target": self.target,
-                    "scan_config": self.scan_config,
-                    "task_id": task_id,
-                    "task_name": task_name,
-                    "target_id": target_id,
-                    "target_name": target_name
-                },
-                "vulnerabilities": []
-            }
-            
-            for result in report_xml.findall(".//result"):
-                vuln = {
-                    "name": result.find(".//name").text if result.find(".//name") is not None else "",
-                    "host": result.find(".//host").text if result.find(".//host") is not None else "",
-                    "port": result.find(".//port").text if result.find(".//port") is not None else "",
-                    "severity": result.find(".//severity").text if result.find(".//severity") is not None else "",
-                    "description": result.find(".//description").text if result.find(".//description") is not None else "",
-                    "cve": result.find(".//cve").text if result.find(".//cve") is not None else "",
-                    "solution": result.find(".//solution").text if result.find(".//solution") is not None else "",
-                    "nvt_oid": result.find(".//nvt").get("oid") if result.find(".//nvt") is not None else ""
-                }
-                results["vulnerabilities"].append(vuln)
-            
-            self.logger.info(f"OpenVAS scan completed. Found {len(results['vulnerabilities'])} vulnerabilities.")
-            self.logger.info(f"Results are available in the Greenbone web interface (Task ID: {task_id})")
-            return results
-            
+                # Display results in a table
+                if results:
+                    self.display_results_table(results)
+                    
+                return results
+                
         except Exception as e:
-            self.logger.error(f"OpenVAS scan failed: {str(e)}")
-            return {"error": f"OpenVAS scan failed: {str(e)}"}
+            self.logger.error(f"Error during OpenVAS scan: {e}")
+            return []
+    
+    def display_results_table(self, results):
+        """Display scan results in a rich table."""
+        table = Table(title="[bold red]OpenVAS Scan Results[/bold red]")
+        table.add_column("Host", style="cyan")
+        table.add_column("Port", style="green")
+        table.add_column("Service", style="yellow")
+        table.add_column("Vulnerability", style="red")
+        table.add_column("Severity", style="magenta")
+        table.add_column("CVSS", style="blue")
+        
+        for result in results:
+            table.add_row(
+                result.get('host', 'N/A'),
+                str(result.get('port', 'N/A')),
+                result.get('service', 'N/A'),
+                result.get('name', 'N/A'),
+                result.get('severity', 'N/A'),
+                str(result.get('cvss', 'N/A'))
+            )
+            
+        console.print(Panel(table, title="[bold]Vulnerability Scan Results[/bold]"))
     
     def scan_with_nmap(self):
         """
@@ -284,72 +226,49 @@ class VulnerabilityScanner:
         self.logger.info(f"Starting nmap vulnerability scan on {self.target}")
         
         try:
-            # Build the nmap command with NSE scripts
-            cmd = [
-                "nmap", "-sV", "--script=vuln", "-oX", "-",  # Output in XML format to stdout
-                self.target
-            ]
-            
-            # Run the nmap scan
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            
-            if process.returncode != 0:
-                self.logger.error(f"Nmap scan failed: {stderr.decode()}")
-                return {"error": f"Nmap scan failed: {stderr.decode()}"}
-            
-            # Parse the XML output
-            root = ET.fromstring(stdout.decode())
-            
-            # Initialize results
-            results = {
-                "scan_info": {
-                    "scanner": "nmap",
-                    "scan_start": root.get("start", ""),
-                    "scan_end": root.get("end", ""),
-                    "target": self.target,
-                    "scan_config": "nmap_vuln"
-                },
-                "vulnerabilities": []
-            }
-            
-            # Parse each host
-            for host in root.findall(".//host"):
-                host_ip = host.find(".//address[@addrtype='ipv4']").get("addr", "")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Starting nmap vulnerability scan...", total=None)
                 
-                # Parse each port
-                for port in host.findall(".//port"):
-                    port_id = port.get("portid", "")
-                    protocol = port.get("protocol", "")
+                # Run nmap scan
+                results = self.run_nmap_scan()
+                
+                progress.update(task, description="[green]Nmap scan completed!")
+                
+                # Display results in a table
+                if results:
+                    self.display_nmap_results_table(results)
                     
-                    # Parse service information
-                    service = port.find("service")
-                    service_name = service.get("name", "") if service is not None else ""
-                    service_version = service.get("version", "") if service is not None else ""
-                    
-                    # Parse script results
-                    for script in port.findall(".//script"):
-                        script_id = script.get("id", "")
-                        script_output = script.get("output", "")
-                        
-                        # Create vulnerability entry
-                        vuln = {
-                            "name": f"{script_id} - {service_name}",
-                            "host": host_ip,
-                            "port": f"{port_id}/{protocol}",
-                            "severity": "Unknown",  # Nmap doesn't provide severity levels
-                            "description": script_output,
-                            "service": service_name,
-                            "version": service_version
-                        }
-                        results["vulnerabilities"].append(vuln)
-            
-            self.logger.info(f"Nmap vulnerability scan completed. Found {len(results['vulnerabilities'])} potential vulnerabilities.")
-            return results
-            
+                return results
+                
         except Exception as e:
-            self.logger.exception(f"Error during nmap vulnerability scanning: {str(e)}")
-            return {"error": f"Error during nmap vulnerability scanning: {str(e)}"}
+            self.logger.error(f"Error during nmap scan: {e}")
+            return []
+            
+    def display_nmap_results_table(self, results):
+        """Display nmap scan results in a rich table."""
+        table = Table(title="[bold red]Nmap Vulnerability Scan Results[/bold red]")
+        table.add_column("Host", style="cyan")
+        table.add_column("Port", style="green")
+        table.add_column("Service", style="yellow")
+        table.add_column("Vulnerability", style="red")
+        table.add_column("Severity", style="magenta")
+        
+        for result in results:
+            table.add_row(
+                result.get('host', 'N/A'),
+                str(result.get('port', 'N/A')),
+                result.get('service', 'N/A'),
+                result.get('name', 'N/A'),
+                result.get('severity', 'N/A')
+            )
+            
+        console.print(Panel(table, title="[bold]Nmap Scan Results[/bold]"))
     
     def scan(self):
         """
@@ -399,4 +318,154 @@ class VulnerabilityScanner:
             
         except Exception as e:
             self.logger.warning(f"Error retrieving CVE details for {cve_id}: {str(e)}")
-            return {"id": cve_id, "description": "Details not available", "severity": "N/A"} 
+            return {"id": cve_id, "description": "Details not available", "severity": "N/A"}
+    
+    def create_target_ospd(self):
+        """Create a target in OpenVAS using OSP protocol."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Create target XML
+            target_xml = f"""
+            <create_target>
+                <name>AI_MAL_Target_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}</name>
+                <hosts>{self.target}</hosts>
+                <comment>Created by AI_MAL</comment>
+            </create_target>
+            """
+            
+            # Send request using OSP protocol
+            result = subprocess.run(
+                ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", target_xml],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if result.returncode == 0:
+                root = ET.fromstring(result.stdout.decode())
+                return root.get('id')
+            return None
+        except Exception as e:
+            self.logger.error(f"Error creating target: {e}")
+            return None
+    
+    def create_task_ospd(self, target_id):
+        """Create a task in OpenVAS using OSP protocol."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Create task XML
+            task_xml = f"""
+            <create_task>
+                <name>AI_MAL_Scan_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}</name>
+                <target_id>{target_id}</target_id>
+                <config>
+                    <scanner>
+                        <name>{self.scan_config}</name>
+                    </scanner>
+                </config>
+            </create_task>
+            """
+            
+            # Send request using OSP protocol
+            result = subprocess.run(
+                ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", task_xml],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if result.returncode == 0:
+                root = ET.fromstring(result.stdout.decode())
+                return root.get('id')
+            return None
+        except Exception as e:
+            self.logger.error(f"Error creating task: {e}")
+            return None
+    
+    def start_task_ospd(self, task_id):
+        """Start a task in OpenVAS using OSP protocol."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Create start task XML
+            start_task_xml = f"""
+            <start_task>
+                <task_id>{task_id}</task_id>
+            </start_task>
+            """
+            
+            # Send request using OSP protocol
+            result = subprocess.run(
+                ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", start_task_xml],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if result.returncode == 0:
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error starting task: {e}")
+            return False
+    
+    def get_task_status_ospd(self, task_id):
+        """Get the status of a task in OpenVAS using OSP protocol."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Create get status XML
+            status_xml = f"""
+            <get_tasks task_id="{task_id}"/>
+            """
+            
+            # Send request using OSP protocol
+            result = subprocess.run(
+                ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", status_xml],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if result.returncode == 0:
+                root = ET.fromstring(result.stdout.decode())
+                status = root.find('.//status')
+                if status is not None:
+                    return status.text
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting task status: {e}")
+            return None
+    
+    def get_scan_results_ospd(self, task_id):
+        """Get the scan results of a task in OpenVAS using OSP protocol."""
+        try:
+            import xml.etree.ElementTree as ET
+            
+            # Create get results XML
+            results_xml = f"""
+            <get_results task_id="{task_id}"/>
+            """
+            
+            # Send request using OSP protocol
+            result = subprocess.run(
+                ["gvm-cli", "--protocol", "OSP", "socket", "--sockpath", "/run/ospd/ospd.sock", "--xml", results_xml],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            if result.returncode == 0:
+                root = ET.fromstring(result.stdout.decode())
+                results = []
+                for result in root.findall('.//result'):
+                    results.append({
+                        'host': result.get('host'),
+                        'port': result.get('port'),
+                        'service': result.get('service'),
+                        'name': result.get('name'),
+                        'severity': result.get('severity'),
+                        'cvss': result.get('cvss')
+                    })
+                return results
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting scan results: {e}")
+            return None 
