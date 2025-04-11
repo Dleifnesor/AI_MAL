@@ -435,22 +435,61 @@ install_python_dependencies() {
     echo -e "${CYAN}Installing Python dependencies...${NC}"
     log_info "Starting Python dependencies installation"
     
-    # Create and activate virtual environment
-    echo -ne "${CYAN}Creating virtual environment...${NC} "
-    python3 -m venv venv >>"$INSTALLATION_LOG" 2>&1 || handle_error "Failed to create virtual environment"
-    source venv/bin/activate
-    echo -e "${GREEN}Done${NC}"
-    
-    # Verify the virtual environment is activated
-    if [ -z "$VIRTUAL_ENV" ]; then
-        log_error "Failed to activate virtual environment"
-        handle_error "Virtual environment activation failed"
+    # Check if we are on Kali Linux
+    IS_KALI=false
+    if grep -q "Kali" /etc/os-release; then
+        IS_KALI=true
+        log_info "Detected Kali Linux - using system-compatible Python installation methods"
+        
+        # Install pipx if not already installed
+        if ! command -v pipx &> /dev/null; then
+            echo -ne "${CYAN}Installing pipx...${NC} "
+            log_info "Installing pipx"
+            apt-get install -y pipx >>"$INSTALLATION_LOG" 2>&1 || handle_error "Failed to install pipx"
+            echo -e "${GREEN}Done${NC}"
+        fi
     fi
     
-    # Upgrade pip
-    echo -ne "${CYAN}Upgrading pip...${NC} "
-    pip install --upgrade pip >>"$INSTALLATION_LOG" 2>&1 || log_error "Failed to upgrade pip"
-    echo -e "${GREEN}Done${NC}"
+    # If on Kali Linux, use venv instead of modifying system Python
+    if $IS_KALI; then
+        echo -ne "${CYAN}Creating virtual environment for AI_MAL...${NC} "
+        mkdir -p /opt/AI_MAL
+        python3 -m venv /opt/AI_MAL/venv >>"$INSTALLATION_LOG" 2>&1 || handle_error "Failed to create virtual environment"
+        echo -e "${GREEN}Done${NC}"
+        
+        # Activate the virtual environment
+        echo -ne "${CYAN}Activating virtual environment...${NC} "
+        source /opt/AI_MAL/venv/bin/activate
+        echo -e "${GREEN}Done${NC}"
+        
+        # Verify the virtual environment is activated
+        if [ -z "$VIRTUAL_ENV" ]; then
+            log_error "Failed to activate virtual environment"
+            handle_error "Virtual environment activation failed"
+        fi
+        
+        # Upgrade pip in the virtual environment
+        echo -ne "${CYAN}Upgrading pip in virtual environment...${NC} "
+        /opt/AI_MAL/venv/bin/pip install --upgrade pip >>"$INSTALLATION_LOG" 2>&1 || log_error "Failed to upgrade pip"
+        echo -e "${GREEN}Done${NC}"
+    else
+        # Create and activate virtual environment (non-Kali systems)
+        echo -ne "${CYAN}Creating virtual environment...${NC} "
+        python3 -m venv venv >>"$INSTALLATION_LOG" 2>&1 || handle_error "Failed to create virtual environment"
+        source venv/bin/activate
+        echo -e "${GREEN}Done${NC}"
+        
+        # Verify the virtual environment is activated
+        if [ -z "$VIRTUAL_ENV" ]; then
+            log_error "Failed to activate virtual environment"
+            handle_error "Virtual environment activation failed"
+        fi
+        
+        # Upgrade pip
+        echo -ne "${CYAN}Upgrading pip...${NC} "
+        pip install --upgrade pip >>"$INSTALLATION_LOG" 2>&1 || log_error "Failed to upgrade pip"
+        echo -e "${GREEN}Done${NC}"
+    fi
     
     # Install python-ldap dependencies before attempting to install the package
     install_python_ldap_deps || log_error "Failed to install all python-ldap dependencies"
@@ -473,6 +512,12 @@ install_python_dependencies() {
         "cffi" "pycparser" "bcrypt"
     )
     
+    # Select correct pip command based on environment
+    PIP_CMD="pip"
+    if $IS_KALI; then
+        PIP_CMD="/opt/AI_MAL/venv/bin/pip"
+    fi
+    
     # Install essential packages first
     local total=${#essential_packages[@]}
     local count=0
@@ -486,12 +531,12 @@ install_python_dependencies() {
         log_info "Installing essential Python package: $package"
         
         # Try multiple installation methods
-        if pip install "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        if $PIP_CMD install "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done${NC}"
-        elif pip install --no-deps "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        elif $PIP_CMD install --no-deps "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done (without dependencies)${NC}"
             log_info "Installed $package without dependencies"
-        elif pip install --no-binary :all: "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        elif $PIP_CMD install --no-binary :all: "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done (from source)${NC}"
             log_info "Installed $package from source"
         else
@@ -520,12 +565,12 @@ install_python_dependencies() {
         log_info "Installing optional Python package: $package"
         
         # Try multiple installation methods but continue on failure
-        if pip install "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        if $PIP_CMD install "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done${NC}"
-        elif pip install --no-deps "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        elif $PIP_CMD install --no-deps "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done (without dependencies)${NC}"
             log_info "Installed $package without dependencies"
-        elif pip install --no-binary :all: "$package" >>"$INSTALLATION_LOG" 2>&1; then
+        elif $PIP_CMD install --no-binary :all: "$package" >>"$INSTALLATION_LOG" 2>&1; then
             echo -e "${GREEN}Done (from source)${NC}"
             log_info "Installed $package from source"
         else
@@ -534,6 +579,15 @@ install_python_dependencies() {
             failed_packages+=("$package")
         fi
     done
+    
+    # Save our python installation path for later use
+    if $IS_KALI; then
+        echo -e "PYTHON_PATH=/opt/AI_MAL/venv/bin/python3" > /etc/AI_MAL/python_path
+        echo -e "PIP_PATH=/opt/AI_MAL/venv/bin/pip" >> /etc/AI_MAL/python_path
+    else
+        echo -e "PYTHON_PATH=$(which python3)" > /etc/AI_MAL/python_path
+        echo -e "PIP_PATH=$(which pip)" >> /etc/AI_MAL/python_path
+    fi
     
     # Report on failed non-essential packages
     if [ ${#failed_packages[@]} -gt 0 ]; then
@@ -885,6 +939,27 @@ install_package() {
     echo -ne "${CYAN}Copying files to installation directory...${NC} "
     mkdir -p /opt/AI_MAL
     
+    # Check if we are on Kali Linux
+    IS_KALI=false
+    if grep -q "Kali" /etc/os-release; then
+        IS_KALI=true
+        log_info "Detected Kali Linux - using compatible installation method"
+    fi
+    
+    # Set Python paths
+    if [ -f "/etc/AI_MAL/python_path" ]; then
+        source /etc/AI_MAL/python_path
+    else
+        # Default paths if file doesn't exist
+        if [ -d "/opt/AI_MAL/venv" ]; then
+            PYTHON_PATH="/opt/AI_MAL/venv/bin/python3"
+            PIP_PATH="/opt/AI_MAL/venv/bin/pip"
+        else
+            PYTHON_PATH=$(which python3)
+            PIP_PATH=$(which pip)
+        fi
+    fi
+    
     # Copy all files from source to installation directory
     if [ -d "$SOURCE_DIR/AI_MAL" ]; then
         cp -r "$SOURCE_DIR/AI_MAL" /opt/AI_MAL/
@@ -916,10 +991,18 @@ setup(
 )
 EOF
         
-        # Install the package in development mode
-        if [ -d "/opt/AI_MAL/venv" ]; then
+        # Install the package in development mode within the virtual environment
+        if $IS_KALI && [ -d "/opt/AI_MAL/venv" ]; then
             echo -e "${GREEN}Done${NC}"
-            echo -ne "${CYAN}Installing Python module...${NC} "
+            echo -ne "${CYAN}Installing Python module in Kali-compatible mode...${NC} "
+            # In Kali, we must use the virtual environment's pip
+            /opt/AI_MAL/venv/bin/pip install -e /opt/AI_MAL >>"$INSTALLATION_LOG" 2>&1 || {
+                echo -e "${YELLOW}Warning${NC}"
+                log_error "Failed to install AI_MAL Python package in development mode"
+            }
+        elif [ -d "/opt/AI_MAL/venv" ]; then
+            echo -e "${GREEN}Done${NC}"
+            echo -ne "${CYAN}Installing Python module using virtual environment...${NC} "
             /opt/AI_MAL/venv/bin/pip install -e /opt/AI_MAL >>"$INSTALLATION_LOG" 2>&1 || {
                 echo -e "${YELLOW}Warning${NC}"
                 log_error "Failed to install AI_MAL Python package in development mode"
@@ -968,17 +1051,31 @@ if [ -f /etc/AI_MAL/environment ]; then
     source /etc/AI_MAL/environment
 fi
 
+# Source Python paths if available
+if [ -f /etc/AI_MAL/python_path ]; then
+    source /etc/AI_MAL/python_path
+fi
+
 # Set directory paths
 AI_MAL_DIR="/opt/AI_MAL"
 VENV_DIR="\$AI_MAL_DIR/venv"
-PYTHON_CMD="python3"
 
-# Activate virtual environment if it exists
-if [ -d "\$VENV_DIR" ]; then
+# Determine if we're on Kali Linux
+IS_KALI=false
+if grep -q "Kali" /etc/os-release 2>/dev/null; then
+    IS_KALI=true
+fi
+
+# Determine Python command - prefer virtual environment Python on Kali
+if [ -d "\$VENV_DIR" ] && (\$IS_KALI || [ -z "\$PYTHON_PATH" ]); then
+    PYTHON_CMD="\$VENV_DIR/bin/python3"
     source "\$VENV_DIR/bin/activate"
     VENV_ACTIVATED=1
-    PYTHON_CMD="\$VENV_DIR/bin/python3"
+elif [ -n "\$PYTHON_PATH" ]; then
+    PYTHON_CMD="\$PYTHON_PATH"
+    VENV_ACTIVATED=0
 else
+    PYTHON_CMD="python3"
     VENV_ACTIVATED=0
 fi
 
@@ -998,14 +1095,24 @@ elif [ -f "\$AI_MAL_DIR/AI_MAL/main/scanner.py" ]; then
 else
     echo "Error: Could not find AI_MAL module or scanner.py script."
     echo "Make sure the AI_MAL module is installed properly."
-    echo "You may need to run: pip install -e /opt/AI_MAL"
+    
+    if \$IS_KALI; then
+        echo "On Kali Linux, you need to use the virtual environment."
+        echo "The installation may not be complete. Try reinstalling with:"
+        echo "cd /opt/AI_MAL && \$VENV_DIR/bin/pip install -e ."
+    else
+        echo "You may need to run: pip install -e /opt/AI_MAL"
+    fi
+    
     exit 1
 fi
 
 EXIT_CODE=\$?
 
 # Deactivate virtual environment if activated
-[ \$VENV_ACTIVATED -eq 1 ] && deactivate
+if [ \$VENV_ACTIVATED -eq 1 ]; then
+    deactivate
+fi
 
 # Exit with same code as python script
 exit \$EXIT_CODE
@@ -1309,7 +1416,67 @@ EOF
     cat > /usr/local/bin/ai_mal_openvas << 'EOF'
 #!/bin/bash
 # AI_MAL OpenVAS Scanner
-/opt/AI_MAL/venv/bin/python3 -m AI_MAL.openvas_scan "$@"
+
+# Source environment and Python paths if available
+if [ -f /etc/AI_MAL/environment ]; then
+    source /etc/AI_MAL/environment
+fi
+
+if [ -f /etc/AI_MAL/python_path ]; then
+    source /etc/AI_MAL/python_path
+fi
+
+# Determine if we're on Kali Linux
+IS_KALI=false
+if grep -q "Kali" /etc/os-release 2>/dev/null; then
+    IS_KALI=true
+fi
+
+# Set directory paths
+AI_MAL_DIR="/opt/AI_MAL"
+VENV_DIR="$AI_MAL_DIR/venv"
+
+# Determine Python command
+if [ -d "$VENV_DIR" ] && ($IS_KALI || [ -z "$PYTHON_PATH" ]); then
+    # Use the virtual environment on Kali or if Python path is not set
+    PYTHON_CMD="$VENV_DIR/bin/python3"
+    source "$VENV_DIR/bin/activate" 2>/dev/null
+    VENV_ACTIVATED=1
+elif [ -n "$PYTHON_PATH" ]; then
+    # Use the specified Python path if available
+    PYTHON_CMD="$PYTHON_PATH"
+    VENV_ACTIVATED=0
+else
+    # Default to system Python as a fallback
+    PYTHON_CMD="python3"
+    VENV_ACTIVATED=0
+fi
+
+# Change to the installation directory to ensure proper imports
+cd "$AI_MAL_DIR"
+
+# Make sure AI_MAL is in the Python path
+export PYTHONPATH="$AI_MAL_DIR:$PYTHONPATH"
+
+# Run OpenVAS scan module
+if $PYTHON_CMD -c "import AI_MAL" >/dev/null 2>&1; then
+    $PYTHON_CMD -m AI_MAL.openvas_scan "$@"
+elif [ -f "$AI_MAL_DIR/AI_MAL/openvas_scan.py" ]; then
+    $PYTHON_CMD "$AI_MAL_DIR/AI_MAL/openvas_scan.py" "$@"
+else
+    echo "Error: Could not find AI_MAL OpenVAS module."
+    echo "Make sure AI_MAL is installed correctly."
+    exit 1
+fi
+
+EXIT_CODE=$?
+
+# Deactivate virtual environment if it was activated
+if [ $VENV_ACTIVATED -eq 1 ]; then
+    deactivate 2>/dev/null
+fi
+
+exit $EXIT_CODE
 EOF
     chmod 755 /usr/local/bin/ai_mal_openvas
     echo -e "${GREEN}Done${NC}"
