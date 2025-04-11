@@ -153,10 +153,9 @@ def main():
             logger.info("Starting vulnerability scanning...")
             vuln_scanner = VulnerabilityScanner(
                 target=args.target,
-                openvas=True,  # Default to OpenVAS
-                use_nmap=args.use_nmap,
-                scan_config=args.scan_config,
-                custom_vuln_file=args.custom_vuln
+                scan_config="full_and_fast",
+                timeout=3600,
+                use_nmap=not args.openvas  # Use nmap if OpenVAS is not available
             )
             vuln_results = vuln_scanner.scan()
             scan_results['vulnerabilities'] = vuln_results

@@ -98,20 +98,34 @@ echo ""
 # Run the GVM setup and start services
 gvm-setup
 
-# Pause to give the user time to see and save the password
+# Wait for user confirmation after password generation
 echo ""
 echo "╔═════════════════════════════════════════════════════════════════════════╗"
-echo "║                       !!! PASSWORD NOTICE !!!                           ║"
+echo "║                       !!! PASSWORD CONFIRMATION !!!                     ║"
 echo "║                                                                         ║"
 echo "║ Did you save the OpenVAS admin password displayed above?                ║"
 echo "║ If not, please scroll up and find the line that says:                   ║"
 echo "║ [*] User created with password 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.  ║"
 echo "║                                                                         ║"
-echo "║ SAVE THIS PASSWORD NOW - You will need it for vulnerability scanning!   ║"
+echo "║ Type 'y' to confirm you have saved the password, or 'n' to exit:        ║"
 echo "╚═════════════════════════════════════════════════════════════════════════╝"
 echo ""
-echo "[?] Press Enter when you have saved the OpenVAS admin password..."
-read -r
+
+while true; do
+    read -r -p "[?] Have you saved the OpenVAS admin password? (y/n): " response
+    case "$response" in
+        [yY])
+            break
+            ;;
+        [nN])
+            echo "[!] Please save the OpenVAS admin password and run the installation again."
+            exit 1
+            ;;
+        *)
+            echo "[!] Please enter 'y' or 'n'."
+            ;;
+    esac
+done
 
 # Start OpenVAS services
 gvm-start

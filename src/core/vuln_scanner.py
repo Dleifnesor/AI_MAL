@@ -21,7 +21,7 @@ class VulnerabilityScanner:
     Vulnerability scanner class that uses OpenVAS for comprehensive vulnerability scanning.
     """
     
-    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None, openvas=True):
+    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None, use_nmap=False):
         """
         Initialize the vulnerability scanner.
         
@@ -30,13 +30,13 @@ class VulnerabilityScanner:
             scan_config (str): OpenVAS scan configuration type
             timeout (int): Scan timeout in seconds
             custom_vuln_file (str, optional): Path to custom vulnerability file
-            openvas (bool): Whether to use OpenVAS for scanning (default: True)
+            use_nmap (bool): Whether to use nmap instead of OpenVAS (default: False)
         """
         self.target = target
         self.scan_config = scan_config
         self.timeout = timeout
         self.custom_vuln_file = custom_vuln_file
-        self.use_openvas = openvas
+        self.use_nmap = use_nmap
         self.logger = LoggerWrapper("VulnScanner")
         
         # Define OpenVAS scan configurations
@@ -104,16 +104,18 @@ class VulnerabilityScanner:
             except FileNotFoundError:
                 use_gvm = False
             
-            # Create a target in OpenVAS
-            self.logger.debug("Creating target in OpenVAS")
+            # Create a target in OpenVAS with proper naming for web interface visibility
+            target_name = f"AI_MAL_Target_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.logger.debug(f"Creating target in OpenVAS: {target_name}")
+            
             if use_gvm:
                 cmd = [
                     "gvm-cli", "socket", "--xml", 
-                    f"<create_target><name>AI_MAL_{int(time.time())}</name><hosts>{self.target}</hosts></create_target>"
+                    f"<create_target><name>{target_name}</name><hosts>{self.target}</hosts><comment>Created by AI_MAL</comment></create_target>"
                 ]
             else:
                 cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", 
-                       f"<create_target><name>AI_MAL_{int(time.time())}</name><hosts>{self.target}</hosts></create_target>"]
+                       f"<create_target><name>{target_name}</name><hosts>{self.target}</hosts><comment>Created by AI_MAL</comment></create_target>"]
             
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = process.communicate()
@@ -130,16 +132,18 @@ class VulnerabilityScanner:
                 self.logger.error("Failed to get target ID from OpenVAS")
                 return {"error": "Failed to get target ID from OpenVAS"}
             
-            # Create a task in OpenVAS
-            self.logger.debug("Creating scan task in OpenVAS")
+            # Create a task in OpenVAS with proper naming and configuration
+            task_name = f"AI_MAL_Scan_{self.target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.logger.debug(f"Creating scan task in OpenVAS: {task_name}")
+            
             if use_gvm:
                 cmd = [
                     "gvm-cli", "socket", "--xml", 
-                    f"<create_task><name>AI_MAL_Scan_{int(time.time())}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/></create_task>"
+                    f"<create_task><name>{task_name}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/><comment>Created by AI_MAL</comment><preferences><preference><scanner_name>source_iface</scanner_name><value>eth0</value></preference></preferences></create_task>"
                 ]
             else:
                 cmd = ["omp", "-C", "-u", "admin", "-w", "admin", "--xml", 
-                       f"<create_task><name>AI_MAL_Scan_{int(time.time())}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/></create_task>"]
+                       f"<create_task><name>{task_name}</name><target id=\"{target_id}\"/><config id=\"{config_id}\"/><comment>Created by AI_MAL</comment><preferences><preference><scanner_name>source_iface</scanner_name><value>eth0</value></preference></preferences></create_task>"]
             
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = process.communicate()
@@ -167,8 +171,8 @@ class VulnerabilityScanner:
             stdout, stderr = process.communicate()
             
             if process.returncode != 0:
-                self.logger.error(f"OpenVAS task start failed: {stderr.decode()}")
-                return {"error": "OpenVAS task start failed"}
+                self.logger.error(f"Failed to start OpenVAS task: {stderr.decode()}")
+                return {"error": "Failed to start OpenVAS task"}
             
             # Parse report ID
             report_xml = ET.fromstring(stdout.decode())
@@ -179,7 +183,10 @@ class VulnerabilityScanner:
                 return {"error": "Failed to get report ID from OpenVAS"}
             
             # Wait for the scan to complete
-            self.logger.info("OpenVAS scan started. Waiting for completion...")
+            self.logger.info(f"OpenVAS scan started. Task ID: {task_id}")
+            self.logger.info("You can monitor progress in the Greenbone web interface.")
+            self.logger.info("Waiting for scan completion...")
+            
             start_time = time.time()
             while True:
                 # Check task status
@@ -237,7 +244,11 @@ class VulnerabilityScanner:
                     "scan_start": report_xml.find(".//creation_time").text if report_xml.find(".//creation_time") is not None else "",
                     "scan_end": report_xml.find(".//modification_time").text if report_xml.find(".//modification_time") is not None else "",
                     "target": self.target,
-                    "scan_config": self.scan_config
+                    "scan_config": self.scan_config,
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "target_id": target_id,
+                    "target_name": target_name
                 },
                 "vulnerabilities": []
             }
@@ -250,16 +261,18 @@ class VulnerabilityScanner:
                     "severity": result.find(".//severity").text if result.find(".//severity") is not None else "",
                     "description": result.find(".//description").text if result.find(".//description") is not None else "",
                     "cve": result.find(".//cve").text if result.find(".//cve") is not None else "",
-                    "solution": result.find(".//solution").text if result.find(".//solution") is not None else ""
+                    "solution": result.find(".//solution").text if result.find(".//solution") is not None else "",
+                    "nvt_oid": result.find(".//nvt").get("oid") if result.find(".//nvt") is not None else ""
                 }
                 results["vulnerabilities"].append(vuln)
             
             self.logger.info(f"OpenVAS scan completed. Found {len(results['vulnerabilities'])} vulnerabilities.")
+            self.logger.info(f"Results are available in the Greenbone web interface (Task ID: {task_id})")
             return results
             
         except Exception as e:
-            self.logger.exception(f"Error during OpenVAS scanning: {str(e)}")
-            return {"error": f"Error during OpenVAS scanning: {str(e)}"}
+            self.logger.error(f"OpenVAS scan failed: {str(e)}")
+            return {"error": f"OpenVAS scan failed: {str(e)}"}
     
     def scan_with_nmap(self):
         """
@@ -340,21 +353,17 @@ class VulnerabilityScanner:
     
     def scan(self):
         """
-        Perform a vulnerability scan using OpenVAS.
+        Perform vulnerability scanning based on configuration.
         
         Returns:
             dict: Scan results
         """
-        if self.use_openvas:
-            if not self.is_openvas_available():
-                self.logger.error("OpenVAS is not available. Please install and configure OpenVAS.")
-                return {"error": "OpenVAS is not available. Please install and configure OpenVAS."}
-            
+        if self.use_nmap:
+            self.logger.info("Using nmap for vulnerability scanning")
+            return self.scan_with_nmap()
+        else:
             self.logger.info("Using OpenVAS for vulnerability scanning")
             return self.scan_with_openvas()
-        else:
-            self.logger.info("Using nmap NSE scripts for vulnerability scanning")
-            return self.scan_with_nmap()
     
     def get_cve_details(self, cve_id):
         """
