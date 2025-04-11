@@ -152,10 +152,21 @@ if ! command -v ollama &> /dev/null; then
   
   # Check if Ollama is running
   if ! check_ollama_running; then
-    echo "[!] WARNING: Ollama service is not responding. You may need to manually start it."
-    echo "[!] After installation, run: 'ollama serve' in a terminal"
-    echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored"
-    echo "[!] Press Enter to continue with installation anyway..."
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
+    echo "║                                                                               ║"
+    echo "║ [!] Ollama service is not running!                                            ║"
+    echo "║                                                                               ║"
+    echo "║ To enable AI features, please run:                                            ║"
+    echo "║     ollama serve                                                              ║"
+    echo "║                                                                               ║"
+    echo "║ Then in another terminal:                                                     ║"
+    echo "║     ollama pull artifish/llama3.2-uncensored gemma3:1b                        ║"
+    echo "║                                                                               ║"
+    echo "║ Press Enter to continue with installation anyway...                            ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo ""
     read -r
   else
     # Pull default models
@@ -175,21 +186,32 @@ else
   
   # Check if Ollama service is running
   if ! check_ollama_running; then
-    echo "[+] Starting Ollama service..."
-    ollama serve &>/dev/null &
-    sleep 10
-    
-    if check_ollama_running; then
-      echo "[+] Ollama service started successfully!"
-    else
-      echo "[!] WARNING: Could not start Ollama service automatically."
-      echo "[!] After installation, run: 'ollama serve' in a terminal"
-      echo "[!] Then in another terminal: 'ollama pull artifish/llama3.2-uncensored'"
-      echo "[!] Press Enter to continue with installation anyway..."
-      read -r
-    fi
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
+    echo "║                                                                               ║"
+    echo "║ [!] Ollama service is not running!                                            ║"
+    echo "║                                                                               ║"
+    echo "║ To enable AI features, please run:                                            ║"
+    echo "║     ollama serve                                                              ║"
+    echo "║                                                                               ║"
+    echo "║ Then in another terminal:                                                     ║"
+    echo "║     ollama pull artifish/llama3.2-uncensored gemma3:1b                        ║"
+    echo "║                                                                               ║"
+    echo "║ Press Enter to continue with installation anyway...                            ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo ""
+    read -r
   else
-    echo "[+] Ollama service is already running"
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
+    echo "║                                                                               ║"
+    echo "║ [+] Ollama service is running properly!                                        ║"
+    echo "║                                                                               ║"
+    echo "║ AI features will work automatically.                                          ║"
+    echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
+    echo ""
     
     # Pull default models
     echo "[+] Downloading primary AI models (this may take a while)..."

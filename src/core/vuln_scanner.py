@@ -21,7 +21,7 @@ class VulnerabilityScanner:
     Vulnerability scanner class that uses OpenVAS for comprehensive vulnerability scanning.
     """
     
-    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None):
+    def __init__(self, target, scan_config="full_and_fast", timeout=3600, custom_vuln_file=None, openvas=True):
         """
         Initialize the vulnerability scanner.
         
@@ -30,11 +30,13 @@ class VulnerabilityScanner:
             scan_config (str): OpenVAS scan configuration type
             timeout (int): Scan timeout in seconds
             custom_vuln_file (str, optional): Path to custom vulnerability file
+            openvas (bool): Whether to use OpenVAS for scanning (default: True)
         """
         self.target = target
         self.scan_config = scan_config
         self.timeout = timeout
         self.custom_vuln_file = custom_vuln_file
+        self.use_openvas = openvas
         self.logger = LoggerWrapper("VulnScanner")
         
         # Define OpenVAS scan configurations
@@ -259,6 +261,83 @@ class VulnerabilityScanner:
             self.logger.exception(f"Error during OpenVAS scanning: {str(e)}")
             return {"error": f"Error during OpenVAS scanning: {str(e)}"}
     
+    def scan_with_nmap(self):
+        """
+        Perform a vulnerability scan using nmap NSE scripts.
+        
+        Returns:
+            dict: Scan results
+        """
+        self.logger.info(f"Starting nmap vulnerability scan on {self.target}")
+        
+        try:
+            # Build the nmap command with NSE scripts
+            cmd = [
+                "nmap", "-sV", "--script=vuln", "-oX", "-",  # Output in XML format to stdout
+                self.target
+            ]
+            
+            # Run the nmap scan
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = process.communicate()
+            
+            if process.returncode != 0:
+                self.logger.error(f"Nmap scan failed: {stderr.decode()}")
+                return {"error": f"Nmap scan failed: {stderr.decode()}"}
+            
+            # Parse the XML output
+            root = ET.fromstring(stdout.decode())
+            
+            # Initialize results
+            results = {
+                "scan_info": {
+                    "scanner": "nmap",
+                    "scan_start": root.get("start", ""),
+                    "scan_end": root.get("end", ""),
+                    "target": self.target,
+                    "scan_config": "nmap_vuln"
+                },
+                "vulnerabilities": []
+            }
+            
+            # Parse each host
+            for host in root.findall(".//host"):
+                host_ip = host.find(".//address[@addrtype='ipv4']").get("addr", "")
+                
+                # Parse each port
+                for port in host.findall(".//port"):
+                    port_id = port.get("portid", "")
+                    protocol = port.get("protocol", "")
+                    
+                    # Parse service information
+                    service = port.find("service")
+                    service_name = service.get("name", "") if service is not None else ""
+                    service_version = service.get("version", "") if service is not None else ""
+                    
+                    # Parse script results
+                    for script in port.findall(".//script"):
+                        script_id = script.get("id", "")
+                        script_output = script.get("output", "")
+                        
+                        # Create vulnerability entry
+                        vuln = {
+                            "name": f"{script_id} - {service_name}",
+                            "host": host_ip,
+                            "port": f"{port_id}/{protocol}",
+                            "severity": "Unknown",  # Nmap doesn't provide severity levels
+                            "description": script_output,
+                            "service": service_name,
+                            "version": service_version
+                        }
+                        results["vulnerabilities"].append(vuln)
+            
+            self.logger.info(f"Nmap vulnerability scan completed. Found {len(results['vulnerabilities'])} potential vulnerabilities.")
+            return results
+            
+        except Exception as e:
+            self.logger.exception(f"Error during nmap vulnerability scanning: {str(e)}")
+            return {"error": f"Error during nmap vulnerability scanning: {str(e)}"}
+    
     def scan(self):
         """
         Perform a vulnerability scan using OpenVAS.
@@ -266,12 +345,16 @@ class VulnerabilityScanner:
         Returns:
             dict: Scan results
         """
-        if not self.is_openvas_available():
-            self.logger.error("OpenVAS is not available. Please install and configure OpenVAS.")
-            return {"error": "OpenVAS is not available. Please install and configure OpenVAS."}
-        
-        self.logger.info("Using OpenVAS for vulnerability scanning")
-        return self.scan_with_openvas()
+        if self.use_openvas:
+            if not self.is_openvas_available():
+                self.logger.error("OpenVAS is not available. Please install and configure OpenVAS.")
+                return {"error": "OpenVAS is not available. Please install and configure OpenVAS."}
+            
+            self.logger.info("Using OpenVAS for vulnerability scanning")
+            return self.scan_with_openvas()
+        else:
+            self.logger.info("Using nmap NSE scripts for vulnerability scanning")
+            return self.scan_with_nmap()
     
     def get_cve_details(self, cve_id):
         """
