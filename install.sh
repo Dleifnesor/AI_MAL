@@ -871,7 +871,7 @@ EOF
     save_checkpoint "environment"
 }
 
-# Function to install the package
+# Function to install and setup the AI_MAL package
 install_package() {
     if check_checkpoint "package"; then
         echo -e "${GREEN}Package already installed. Skipping...${NC}"
@@ -881,17 +881,66 @@ install_package() {
     echo -e "${CYAN}Installing AI_MAL package...${NC}"
     log_info "Installing AI_MAL package"
     
-    # Copy files to installation directory
+    # Create installation directory
     echo -ne "${CYAN}Copying files to installation directory...${NC} "
-    if [ -n "$SOURCE_DIR" ] && [ -d "$SOURCE_DIR" ]; then
-        cp -r "${SOURCE_DIR}/." /opt/AI_MAL/ >>"$INSTALLATION_LOG" 2>&1 || handle_error "Failed to copy files to installation directory"
+    mkdir -p /opt/AI_MAL
+    
+    # Copy all files from source to installation directory
+    if [ -d "$SOURCE_DIR/AI_MAL" ]; then
+        cp -r "$SOURCE_DIR/AI_MAL" /opt/AI_MAL/
+        
+        # Ensure all necessary __init__.py files exist
+        echo -ne "${CYAN}Setting up Python module structure...${NC} "
+        mkdir -p /opt/AI_MAL/AI_MAL/main
+        mkdir -p /opt/AI_MAL/AI_MAL/core
+        
+        # Create minimal __init__.py files if they don't exist
+        [ -f /opt/AI_MAL/AI_MAL/__init__.py ] || echo '"""AI_MAL - AI-Powered Penetration Testing Framework"""' > /opt/AI_MAL/AI_MAL/__init__.py
+        [ -f /opt/AI_MAL/AI_MAL/main/__init__.py ] || echo '"""AI_MAL main package"""' > /opt/AI_MAL/AI_MAL/main/__init__.py
+        [ -f /opt/AI_MAL/AI_MAL/core/__init__.py ] || echo '"""AI_MAL core modules"""' > /opt/AI_MAL/AI_MAL/core/__init__.py
+        
+        echo -e "${GREEN}Done${NC}"
+        
+        # Create a setup.py file for proper Python package installation
+        cat > /opt/AI_MAL/setup.py << 'EOF'
+from setuptools import setup, find_packages
+
+setup(
+    name="AI_MAL",
+    version="0.1.0",
+    packages=find_packages(),
+    description="AI-Powered Penetration Testing Framework",
+    author="Dleifnesor",
+    author_email="phlegmenthusiast@gmail.com",
+    python_requires=">=3.6",
+)
+EOF
+        
+        # Install the package in development mode
+        if [ -d "/opt/AI_MAL/venv" ]; then
+            echo -e "${GREEN}Done${NC}"
+            echo -ne "${CYAN}Installing Python module...${NC} "
+            /opt/AI_MAL/venv/bin/pip install -e /opt/AI_MAL >>"$INSTALLATION_LOG" 2>&1 || {
+                echo -e "${YELLOW}Warning${NC}"
+                log_error "Failed to install AI_MAL Python package in development mode"
+            }
+        else
+            echo -e "${GREEN}Done${NC}"
+            echo -ne "${CYAN}Installing Python module...${NC} "
+            pip install -e /opt/AI_MAL >>"$INSTALLATION_LOG" 2>&1 || {
+                echo -e "${YELLOW}Warning${NC}"
+                log_error "Failed to install AI_MAL Python package in development mode"
+            }
+        fi
         echo -e "${GREEN}Done${NC}"
     else
-        echo -e "${RED}Failed - Source directory not found${NC}"
-        handle_error "Source directory not found"
+        mkdir -p /opt/AI_MAL/AI_MAL
+        touch /opt/AI_MAL/AI_MAL/__init__.py
+        echo -e "${YELLOW}No AI_MAL directory found, created empty structure${NC}"
+        log_warning "AI_MAL directory not found in source, created minimal structure"
     fi
     
-    # Create empty log directories if they don't exist
+    # Ensure log directories exist
     echo -ne "${CYAN}Ensuring log directories exist...${NC} "
     mkdir -p /opt/AI_MAL/logs >>"$INSTALLATION_LOG" 2>&1
     echo -e "${GREEN}Done${NC}"
@@ -922,29 +971,35 @@ fi
 # Set directory paths
 AI_MAL_DIR="/opt/AI_MAL"
 VENV_DIR="\$AI_MAL_DIR/venv"
+PYTHON_CMD="python3"
 
 # Activate virtual environment if it exists
 if [ -d "\$VENV_DIR" ]; then
     source "\$VENV_DIR/bin/activate"
     VENV_ACTIVATED=1
+    PYTHON_CMD="\$VENV_DIR/bin/python3"
 else
     VENV_ACTIVATED=0
 fi
 
-# Run scanner module with all arguments
+# Change to the installation directory
 cd "\$AI_MAL_DIR"
 
-# Try to determine how to run the scanner
-if [ -f "\$AI_MAL_DIR/AI_MAL/main/scanner.py" ]; then
-    python3 "\$AI_MAL_DIR/AI_MAL/main/scanner.py" "\$@"
-elif [ -d "\$AI_MAL_DIR/ai_mal" ]; then
-    python3 -m ai_mal.main.scanner "\$@"
+# Make sure AI_MAL is in the Python path
+export PYTHONPATH="\$AI_MAL_DIR:\$PYTHONPATH"
+
+# Try to run the scanner module with all arguments
+if \$PYTHON_CMD -c "import AI_MAL" >/dev/null 2>&1; then
+    # AI_MAL module can be imported directly
+    \$PYTHON_CMD -m AI_MAL.main.scanner "\$@"
+elif [ -f "\$AI_MAL_DIR/AI_MAL/main/scanner.py" ]; then
+    # Try to run the scanner directly
+    \$PYTHON_CMD "\$AI_MAL_DIR/AI_MAL/main/scanner.py" "\$@"
 else
-    # Try several possible module paths
-    python3 -m AI_MAL.main.scanner "\$@" 2>/dev/null || 
-    python3 -m ai_mal.main.scanner "\$@" 2>/dev/null ||
-    python3 -m main.scanner "\$@" 2>/dev/null ||
-    python3 "\$AI_MAL_DIR/main/scanner.py" "\$@"
+    echo "Error: Could not find AI_MAL module or scanner.py script."
+    echo "Make sure the AI_MAL module is installed properly."
+    echo "You may need to run: pip install -e /opt/AI_MAL"
+    exit 1
 fi
 
 EXIT_CODE=\$?
