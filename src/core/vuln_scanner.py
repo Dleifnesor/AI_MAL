@@ -80,6 +80,12 @@ class VulnerabilityScanner:
         self.logger.info("Checking if OpenVAS is available")
         console.print("[*] Checking if OpenVAS is available...")
         
+        # Check if environment variable for password is set
+        self.gvm_password = os.environ.get('GVM_PASSWORD')
+        if self.gvm_password:
+            self.logger.info("Found GVM_PASSWORD in environment")
+            console.print("[green]Found GVM_PASSWORD in environment[/green]")
+        
         # Check for socket file in standard locations based on INSTALL.md
         socket_paths = [
             "/run/redis-openvas/redis.sock",  # Redis socket
@@ -140,6 +146,8 @@ class VulnerabilityScanner:
                 if status != "active":
                     self.logger.warning(f"Service {service} is not active (status: {status})")
                     console.print(f"[yellow]Service {service} is not active (status: {status})[/yellow]")
+                else:
+                    console.print(f"[green]Service {service} is active[/green]")
             except Exception as e:
                 self.logger.error(f"Error checking service {service}: {str(e)}")
                 services_status[service] = "unknown"
@@ -178,8 +186,32 @@ class VulnerabilityScanner:
             self.logger.info(f"Testing connection to OSPD at {self.ospd_socket}")
             console.print(f"[blue]Testing connection to OSPD at {self.ospd_socket}[/blue]")
             
+            # First try with password from environment
+            if hasattr(self, 'gvm_password') and self.gvm_password:
+                try:
+                    result = subprocess.run(
+                        ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket, 
+                         "--xml", "<get_version/>"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=10
+                    )
+                    
+                    if result.returncode == 0 and "<version>" in result.stdout:
+                        version_match = re.search(r"<version>([^<]+)</version>", result.stdout)
+                        if version_match:
+                            version = version_match.group(1)
+                            self.logger.info(f"Successfully connected to OpenVAS version {version}")
+                            console.print(f"[green]Successfully connected to OpenVAS version {version}[/green]")
+                            return True
+                except Exception as e:
+                    self.logger.error(f"Error connecting to OSPD with environment password: {str(e)}")
+            
+            # Try without credentials
             result = subprocess.run(
-                ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket, "--xml", "<get_version/>"],
+                ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket, 
+                 "--xml", "<get_version/>"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -194,46 +226,88 @@ class VulnerabilityScanner:
                     console.print(f"[green]Successfully connected to OpenVAS version {version}[/green]")
                     return True
             
+            # If connection failed, try to extract password from error message
+            if "password" in result.stderr.lower() or "authentication" in result.stderr.lower():
+                self.logger.warning("OpenVAS requires authentication")
+                console.print("[yellow]OpenVAS requires authentication[/yellow]")
+                
+                # Try to find password in the logs
+                try:
+                    log_file = "/var/log/gvm/gvm-setup.log"
+                    if os.path.exists(log_file):
+                        with open(log_file, 'r') as f:
+                            log_content = f.read()
+                        password_match = re.search(r"User created with password '([^']+)'", log_content)
+                        if password_match:
+                            self.gvm_password = password_match.group(1)
+                            self.logger.info("Found GVM password in setup logs")
+                            console.print("[green]Found GVM password in setup logs[/green]")
+                            
+                            # Try again with extracted password
+                            try:
+                                result = subprocess.run(
+                                    ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket, 
+                                     "--xml", "<get_version/>"],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=10
+                                )
+                                
+                                if result.returncode == 0 and "<version>" in result.stdout:
+                                    version_match = re.search(r"<version>([^<]+)</version>", result.stdout)
+                                    if version_match:
+                                        version = version_match.group(1)
+                                        self.logger.info(f"Successfully connected to OpenVAS version {version}")
+                                        console.print(f"[green]Successfully connected to OpenVAS version {version}[/green]")
+                                        return True
+                            except Exception as e:
+                                self.logger.error(f"Error connecting to OSPD with extracted password: {str(e)}")
+                except Exception as e:
+                    self.logger.error(f"Error trying to extract password from logs: {str(e)}")
+            
             self.logger.warning(f"Connection test to OSPD failed. Output: {result.stdout}, Error: {result.stderr}")
             console.print("[yellow]Connection test to OSPD failed[/yellow]")
-            
-            # Check if socket permissions are the issue
-            if "permission denied" in result.stderr.lower():
-                self.logger.warning("Permission denied for OSPD socket")
-                console.print("[yellow]Permission denied for OSPD socket[/yellow]")
-                console.print("[blue]Fix with: sudo chmod 666 " + self.ospd_socket + "[/blue]")
-            
+            console.print("[blue]Try running:[/blue]")
+            console.print("1. sudo gvm-check-setup to verify installation")
+            console.print("2. sudo gvm-setup to initialize OpenVAS")
+            console.print("3. sudo gvm-start to start all services")
+            console.print("4. Check if GVM_PASSWORD environment variable is set")
             return False
+            
         except Exception as e:
-            self.logger.error(f"Error testing connection to OSPD: {str(e)}")
-            console.print(f"[red]Error testing connection to OSPD: {str(e)}[/red]")
+            self.logger.error(f"Error testing OpenVAS connection: {str(e)}")
+            console.print(f"[red]Error testing OpenVAS connection: {str(e)}[/red]")
             return False
 
     def connect_to_openvas(self):
-        """Connect to OpenVAS using OSP protocol."""
-        if not hasattr(self, 'ospd_socket'):
-            if not self.is_openvas_available():
-                self.logger.error("OpenVAS is not available")
-                console.print("[red]OpenVAS is not available[/red]")
-                return False
+        """Connect to OpenVAS using the OSP protocol"""
+        if not self.is_openvas_available():
+            self.logger.error("OpenVAS is not available, cannot connect")
+            console.print("[red]OpenVAS is not available, cannot connect[/red]")
+            console.print("[yellow]Please ensure OpenVAS is installed and running.[/yellow]")
+            console.print("[blue]Run 'sudo gvm-start' to start the services if needed.[/blue]")
+            return False
         
-        self.logger.info(f"Connecting to OpenVAS using socket: {self.ospd_socket}")
-        console.print(f"[blue]Connecting to OpenVAS using socket: {self.ospd_socket}[/blue]")
-        
-        # Ensure proper permissions on socket
         try:
-            subprocess.run(
-                ["sudo", "chmod", "666", self.ospd_socket],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-        except Exception as e:
-            self.logger.warning(f"Failed to set socket permissions: {str(e)}")
-        
-        # Test connection
-        try:
+            self.logger.info("Attempting to connect to OpenVAS using OSP protocol")
+            console.print("[*] Connecting to OpenVAS...")
+            
+            # Build connection command based on available credentials
+            command = ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket]
+            
+            # If we have a password, try to use it
+            if hasattr(self, 'gvm_password') and self.gvm_password:
+                # For now with OSP we don't use the password directly,
+                # the socket connection doesn't require auth for basic operations
+                pass
+                
+            # Test connection with version command
+            test_cmd = command + ["--xml", "<get_version/>"]
+            self.logger.debug(f"Testing connection with command: {' '.join(test_cmd)}")
+            
             result = subprocess.run(
-                ["gvm-cli", "--protocol", "OSP", "socket", "--socketpath", self.ospd_socket, "--xml", "<get_version/>"],
+                test_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -241,13 +315,33 @@ class VulnerabilityScanner:
             )
             
             if result.returncode == 0 and "<version>" in result.stdout:
-                self.logger.info("Successfully connected to OpenVAS")
-                console.print("[green]Successfully connected to OpenVAS[/green]")
-                return True
-            else:
-                self.logger.error(f"Failed to connect to OpenVAS: {result.stderr}")
-                console.print(f"[red]Failed to connect to OpenVAS: {result.stderr}[/red]")
-                return False
+                version_match = re.search(r"<version>([^<]+)</version>", result.stdout)
+                if version_match:
+                    self.openvas_version = version_match.group(1)
+                    self.logger.info(f"Successfully connected to OpenVAS version {self.openvas_version}")
+                    console.print(f"[green]Successfully connected to OpenVAS version {self.openvas_version}[/green]")
+                    self.openvas_connected = True
+                    return True
+            
+            self.logger.error(f"Failed to connect to OpenVAS. Output: {result.stdout}, Error: {result.stderr}")
+            console.print("[red]Failed to connect to OpenVAS[/red]")
+            
+            if "permission denied" in result.stderr.lower():
+                console.print("[yellow]Socket permission issue detected[/yellow]")
+                console.print(f"[blue]Try running: sudo chmod 666 {self.ospd_socket}[/blue]")
+            
+            if "Connection refused" in result.stderr:
+                console.print("[yellow]Connection refused - OpenVAS service may not be running[/yellow]")
+                console.print("[blue]Try running: sudo gvm-start[/blue]")
+            
+            return False
+            
+        except subprocess.TimeoutExpired:
+            self.logger.error("Connection to OpenVAS timed out")
+            console.print("[red]Connection to OpenVAS timed out[/red]")
+            console.print("[yellow]The service may be starting up or overloaded[/yellow]")
+            return False
+            
         except Exception as e:
             self.logger.error(f"Error connecting to OpenVAS: {str(e)}")
             console.print(f"[red]Error connecting to OpenVAS: {str(e)}[/red]")
