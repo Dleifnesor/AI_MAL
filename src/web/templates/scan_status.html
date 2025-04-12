@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Scan Status - AI_MAL{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-lg-12">
+        <h1 class="mb-4">
+            <i class="fas fa-tasks me-2"></i> Scan Status
+        </h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card mb-4 scan-status-card">
+            <div class="card-header bg-dark text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-chart-line me-1"></i>
+                        Scan Progress
+                    </div>
+                    <div>
+                        <span id="scan-status" class="badge bg-primary">Running</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">{{ status.target }}</h5>
+                        <span class="text-muted">Started: {{ status.start_time }}</span>
+                    </div>
+                    
+                    <div class="progress" id="scan-progress" data-scan-id="{{ scan_id }}">
+                        <div id="scan-progress-bar" class="progress-bar bg-primary" role="progressbar" style="width: {{ status.progress }}%;" aria-valuenow="{{ status.progress }}" aria-valuemin="0" aria-valuemax="100">{{ status.progress }}%</div>
+                    </div>
+                    
+                    <p id="scan-progress-text" class="mt-2">{{ status.message }}</p>
+                </div>
+                
+                <div class="mb-3">
+                    <h5><i class="fas fa-cogs me-2"></i> Scan Configuration</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr>
+                                    <th style="width: 35%">Target</th>
+                                    <td>{{ status.target }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Scan Type</th>
+                                    <td>{{ status.options.scan_type|default('quick')|title }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Vulnerability Scanning</th>
+                                    <td>
+                                        {% if status.options.vuln %}
+                                        <span class="badge bg-success">Enabled</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Disabled</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>Metasploit Integration</th>
+                                    <td>
+                                        {% if status.options.msf %}
+                                        <span class="badge bg-success">Enabled</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Disabled</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>AI Analysis</th>
+                                    <td>
+                                        {% if status.options.ai_analysis %}
+                                        <span class="badge bg-success">Enabled</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Disabled</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>Custom Scripts</th>
+                                    <td>
+                                        {% if status.options.custom_scripts %}
+                                        <span class="badge bg-success">Enabled</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">Disabled</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <div id="scan-results-container">
+                    {% if status.complete %}
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i> Scan completed successfully
+                    </div>
+                    
+                    <!-- Results will be loaded here via JavaScript -->
+                    {% endif %}
+                </div>
+                
+                <div class="d-flex gap-2 mt-3">
+                    <a href="{{ url_for('scans') }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-1"></i> Back to Scans
+                    </a>
+                    
+                    {% if status.complete %}
+                    <a href="{{ url_for('results', scan_id=scan_id) }}" id="view-results-button" class="btn btn-primary">
+                        <i class="fas fa-chart-bar me-1"></i> View Full Results
+                    </a>
+                    {% else %}
+                    <a href="{{ url_for('results', scan_id=scan_id) }}" id="view-results-button" class="btn btn-primary d-none">
+                        <i class="fas fa-chart-bar me-1"></i> View Full Results
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <i class="fas fa-terminal me-1"></i>
+                Scan Log
+            </div>
+            <div class="card-body p-0">
+                <div id="log-output" class="log-container p-3" style="height: 500px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; background-color: #f8f9fa;">
+                    <div class="log-entry">
+                        <span class="log-time">[{{ status.start_time }}]</span> Scan started for target: {{ status.target }}
+                    </div>
+                    
+                    {% if status.message %}
+                    <div class="log-entry">
+                        <span class="log-time">[{{ status.start_time }}]</span> {{ status.message }}
+                    </div>
+                    {% endif %}
+                    
+                    {% if status.complete %}
+                    <div class="log-entry text-success">
+                        <span class="log-time">[{{ status.end_time }}]</span> Scan completed
+                    </div>
+                    {% endif %}
+                    
+                    {% if status.error %}
+                    <div class="log-entry text-danger">
+                        <span class="log-time">[{{ status.end_time }}]</span> Error: {{ status.error }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-footer d-flex justify-content-between align-items-center">
+                <small class="text-muted">Real-time log updates</small>
+                <span id="connection-status">
+                    <span class="badge bg-success">Connected</span>
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Automatically scroll log to bottom
+        const logOutput = document.getElementById('log-output');
+        if (logOutput) {
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+        
+        // If scan is complete, load results
+        {% if status.complete %}
+        setTimeout(function() {
+            loadScanResults('{{ scan_id }}');
+        }, 1000);
+        {% endif %}
+    });
+</script>
+{% endblock %} 

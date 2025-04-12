@@ -892,4 +892,240 @@ class ReportGenerator:
             return self.generate_html_report(scan_results)
         else:
             self.logger.warning(f"Unsupported output format: {self.output_format}, defaulting to JSON")
-            return self.generate_json_report(scan_results) 
+            return self.generate_json_report(scan_results)
+
+    def display_msf_exploits(self, exploits):
+        """Display Metasploit exploit results in Rich formatted panels."""
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.console import Console
+            from rich.box import DOUBLE_EDGE
+            from rich.text import Text
+            
+            if not exploits or len(exploits) == 0:
+                console.print(Panel("[bold yellow]No Metasploit exploits were executed[/bold yellow]", 
+                                  title="Exploit Results", 
+                                  border_style="yellow",
+                                  box=DOUBLE_EDGE))
+                return
+            
+            # Create a table for exploits
+            exploit_table = Table(title="Executed Exploits", box=DOUBLE_EDGE, show_header=True, header_style="bold red")
+            exploit_table.add_column("Target", style="cyan")
+            exploit_table.add_column("Exploit", style="yellow")
+            exploit_table.add_column("Payload", style="green")
+            exploit_table.add_column("Status", style="red")
+            
+            # Add each exploit to the table
+            for exploit in exploits:
+                # Set status color based on success/failure
+                status = exploit.get('status', 'Unknown')
+                if status.lower() == 'success':
+                    status_text = Text(status, style="bold green")
+                elif status.lower() == 'failed':
+                    status_text = Text(status, style="bold red")
+                else:
+                    status_text = Text(status, style="yellow")
+                
+                # Add the row
+                exploit_table.add_row(
+                    exploit.get('target', 'Unknown'),
+                    exploit.get('exploit', 'Unknown'),
+                    exploit.get('payload', 'Unknown'),
+                    status_text
+                )
+            
+            # Create panel to contain the table
+            exploit_panel = Panel(
+                exploit_table,
+                title="[bold red]Metasploit Exploit Results[/bold red]",
+                border_style="red",
+                box=DOUBLE_EDGE
+            )
+            
+            console.print(exploit_panel)
+            
+            # Display additional exploit details in separate panels if available
+            if any('details' in e or 'output' in e for e in exploits):
+                console.print("\n[bold]Exploit Details:[/bold]")
+                for i, exploit in enumerate(exploits):
+                    details = exploit.get('details', exploit.get('output', ''))
+                    if details:
+                        # Truncate long outputs
+                        if len(details) > 500:
+                            details = details[:500] + "..."
+                        
+                        # Determine panel color based on status
+                        border_style = "green" if exploit.get('status', '').lower() == 'success' else "red"
+                        
+                        detail_panel = Panel(
+                            details,
+                            title=f"[bold]{exploit.get('exploit', 'Unknown')}[/bold] - Target: {exploit.get('target', 'Unknown')}",
+                            border_style=border_style
+                        )
+                        console.print(detail_panel)
+            
+        except Exception as e:
+            logger.error(f"Error displaying exploit results: {str(e)}")
+            console.print(f"[red]Error displaying exploit results: {str(e)}[/red]")
+            
+            # Fallback to simple text display
+            console.print("\n[bold]Executed Exploits:[/bold]")
+            for exploit in exploits:
+                console.print(f"  Target: {exploit.get('target', 'Unknown')}")
+                console.print(f"  Exploit: {exploit.get('exploit', 'Unknown')}")
+                console.print(f"  Status: {exploit.get('status', 'Unknown')}")
+
+    def display_ollama_scripts(self, scripts):
+        """Display Ollama script execution results in Rich formatted panels."""
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.console import Console
+            from rich.box import DOUBLE_EDGE
+            from rich.syntax import Syntax
+            
+            if not scripts or len(scripts) == 0:
+                console.print(Panel("[bold yellow]No AI-generated scripts were executed[/bold yellow]", 
+                                  title="Ollama Script Results", 
+                                  border_style="yellow",
+                                  box=DOUBLE_EDGE))
+                return
+            
+            # Create a table for script summaries
+            script_table = Table(title="AI-Generated Scripts", box=DOUBLE_EDGE, show_header=True, header_style="bold blue")
+            script_table.add_column("Target", style="cyan")
+            script_table.add_column("Script Type", style="green")
+            script_table.add_column("Description", style="yellow")
+            script_table.add_column("Status", style="red")
+            
+            # Add each script to the table
+            for script in scripts:
+                # Set status color based on success/failure
+                status = script.get('status', 'Unknown')
+                if status.lower() == 'success':
+                    status_style = "bold green"
+                elif status.lower() == 'failed':
+                    status_style = "bold red"
+                else:
+                    status_style = "yellow"
+                
+                # Add the row
+                script_table.add_row(
+                    script.get('target', 'Unknown'),
+                    script.get('type', 'Unknown'),
+                    script.get('description', 'N/A')[:50] + ('...' if len(script.get('description', '')) > 50 else ''),
+                    f"[{status_style}]{status}[/{status_style}]"
+                )
+            
+            # Create panel to contain the table
+            script_panel = Panel(
+                script_table,
+                title="[bold blue]AI-Generated Script Execution Results[/bold blue]",
+                border_style="blue",
+                box=DOUBLE_EDGE
+            )
+            
+            console.print(script_panel)
+            
+            # Display script code and execution output in separate panels
+            console.print("\n[bold]Script Details:[/bold]")
+            for i, script in enumerate(scripts):
+                if 'code' in script and script['code']:
+                    # Show script code with syntax highlighting
+                    language = "python"  # Default to Python
+                    if script.get('type', '').lower() == 'bash':
+                        language = "bash"
+                    elif script.get('type', '').lower() == 'ruby':
+                        language = "ruby"
+                    
+                    code_syntax = Syntax(script['code'], language, theme="monokai", line_numbers=True)
+                    
+                    code_panel = Panel(
+                        code_syntax,
+                        title=f"[bold blue]Script for {script.get('target', 'Unknown')}[/bold blue]",
+                        border_style="blue"
+                    )
+                    console.print(code_panel)
+                
+                if 'output' in script and script['output']:
+                    # Show script output
+                    output_panel = Panel(
+                        script['output'],
+                        title=f"[bold green]Execution Output - {script.get('target', 'Unknown')}[/bold green]",
+                        border_style="green" if script.get('status', '').lower() == 'success' else "red"
+                    )
+                    console.print(output_panel)
+            
+        except Exception as e:
+            logger.error(f"Error displaying script results: {str(e)}")
+            console.print(f"[red]Error displaying script results: {str(e)}[/red]")
+            
+            # Fallback to simple text display
+            console.print("\n[bold]Executed Scripts:[/bold]")
+            for script in scripts:
+                console.print(f"  Target: {script.get('target', 'Unknown')}")
+                console.print(f"  Type: {script.get('type', 'Unknown')}")
+                console.print(f"  Status: {script.get('status', 'Unknown')}")
+
+    def generate_terminal_report(self, data):
+        """Generate a comprehensive terminal report with Rich formatting."""
+        try:
+            from rich.panel import Panel
+            from rich.columns import Columns
+            from rich.text import Text
+            from rich.box import DOUBLE_EDGE
+            
+            # Create a header panel
+            header_text = Text.from_markup(
+                f"[bold]AI_MAL Penetration Test Report[/bold]\n"
+                f"Target: [cyan]{data.get('target', 'N/A')}[/cyan]\n"
+                f"Date: [yellow]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/yellow]"
+            )
+            
+            console.print(Panel(
+                header_text,
+                title="[bold red]PENETRATION TEST SUMMARY[/bold red]",
+                border_style="red",
+                box=DOUBLE_EDGE
+            ))
+            
+            # Display statistics
+            stats = [
+                Panel(f"[bold]{len(data.get('hosts', []))}[/bold]", title="Hosts Discovered", border_style="blue"),
+                Panel(f"[bold]{len(data.get('vulnerabilities', []))}[/bold]", title="Vulnerabilities", border_style="red"),
+                Panel(f"[bold]{len(data.get('exploits', []))}[/bold]", title="Exploits Executed", border_style="magenta"),
+                Panel(f"[bold]{len(data.get('scripts', []))}[/bold]", title="AI Scripts", border_style="green")
+            ]
+            
+            console.print(Columns(stats))
+            
+            # Display scan results with filtering/processing
+            if 'hosts' in data and data['hosts']:
+                self.vscanner.display_scan_results(data['hosts'])
+            
+            # Display vulnerability results
+            if 'vulnerabilities' in data and data['vulnerabilities']:
+                self.vscanner.display_vulnerabilities(data['vulnerabilities'])
+            
+            # Display exploit results
+            if 'exploits' in data and data['exploits']:
+                self.display_msf_exploits(data['exploits'])
+            
+            # Display AI script results
+            if 'scripts' in data and data['scripts']:
+                self.display_ollama_scripts(data['scripts'])
+            
+        except Exception as e:
+            logger.error(f"Error generating terminal report: {str(e)}")
+            console.print(f"[red]Error generating terminal report: {str(e)}[/red]")
+            
+            # Fallback display
+            console.print("[bold]AI_MAL Penetration Test Results[/bold]")
+            console.print(f"Target: {data.get('target', 'N/A')}")
+            console.print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            console.print(f"Hosts discovered: {len(data.get('hosts', []))}")
+            console.print(f"Vulnerabilities found: {len(data.get('vulnerabilities', []))}")
+            console.print(f"Exploits executed: {len(data.get('exploits', []))}")
+            console.print(f"AI scripts generated: {len(data.get('scripts', []))}") 

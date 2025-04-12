@@ -289,3 +289,214 @@ class Scanner:
         except Exception as e:
             self.logger.error(f"Error converting IP range: {str(e)}")
             return [ip_range]  # Return as is in case of error 
+
+    def display_results(self, hosts):
+        """
+        Display scan results in a Rich formatted panel and table.
+        
+        Args:
+            hosts (list): List of host dictionaries
+        """
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.console import Console
+            from rich.box import DOUBLE_EDGE
+            from rich.text import Text
+            from rich import box
+            
+            if not hosts or len(hosts) == 0:
+                console.print(Panel("[bold yellow]No hosts discovered[/bold yellow]", 
+                                  title="Network Scan Results", 
+                                  border_style="yellow",
+                                  box=DOUBLE_EDGE))
+                return
+            
+            # Create a table for the results
+            table = Table(title="Discovered Hosts", box=box.DOUBLE_EDGE, show_header=True, header_style="bold cyan")
+            table.add_column("IP Address", style="green")
+            table.add_column("MAC Address", style="blue")
+            table.add_column("Hostname", style="cyan")
+            table.add_column("OS", style="magenta")
+            table.add_column("Open Ports", style="yellow")
+            
+            # Process hosts to combine port information
+            unique_hosts = {}
+            for host in hosts:
+                ip = host.get('ip', 'Unknown')
+                if ip not in unique_hosts:
+                    unique_hosts[ip] = {
+                        'mac': host.get('mac', 'Unknown'),
+                        'hostname': host.get('hostname', 'Unknown'),
+                        'os': host.get('os', 'Unknown'),
+                        'ports': []
+                    }
+                
+                # Add port if it exists and not already in the list
+                port = host.get('port')
+                if port and port not in unique_hosts[ip]['ports']:
+                    unique_hosts[ip]['ports'].append(port)
+            
+            # Add each host to the table
+            for ip, host_info in unique_hosts.items():
+                # Format ports list
+                ports_str = ", ".join(sorted(host_info['ports'], key=lambda x: int(x.split('/')[0]) if '/' in x and x.split('/')[0].isdigit() else 0)) if host_info['ports'] else "None detected"
+                
+                table.add_row(
+                    ip,
+                    host_info['mac'],
+                    host_info['hostname'],
+                    host_info['os'],
+                    ports_str
+                )
+            
+            # Create panel to contain the table
+            host_panel = Panel(
+                table,
+                title="[bold green]Network Scan Results[/bold green]",
+                border_style="green",
+                box=DOUBLE_EDGE
+            )
+            
+            console.print(host_panel)
+            
+            # Display a summary of findings
+            summary = f"[bold]Summary:[/bold] Found {len(unique_hosts)} hosts with {sum(len(h['ports']) for h in unique_hosts.values())} open ports"
+            console.print(Panel(summary, border_style="blue"))
+            
+        except Exception as e:
+            self.logger.error(f"Error displaying results: {e}")
+            console.print(f"[red]Error displaying results: {e}[/red]")
+            
+            # Fallback to simple text display
+            console.print("\n[bold]Discovered Hosts:[/bold]")
+            for host in hosts:
+                console.print(f"  IP: {host.get('ip', 'Unknown')}, Hostname: {host.get('hostname', 'Unknown')}")
+                if 'port' in host and host['port']:
+                    console.print(f"    Port: {host['port']}")
+
+    def display_service_scan_results(self, hosts):
+        """
+        Display service scan results in a Rich formatted panel and table.
+        
+        Args:
+            hosts (list): List of host dictionaries with service information
+        """
+        try:
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.console import Console
+            from rich.box import DOUBLE_EDGE
+            from rich import box
+            
+            if not hosts or len(hosts) == 0:
+                console.print(Panel("[bold yellow]No services discovered[/bold yellow]", 
+                                  title="Service Scan Results", 
+                                  border_style="yellow",
+                                  box=DOUBLE_EDGE))
+                return
+            
+            # Create a table for services
+            service_table = Table(title="Discovered Services", box=box.DOUBLE_EDGE, show_header=True, header_style="bold cyan")
+            service_table.add_column("IP Address", style="green")
+            service_table.add_column("Port", style="yellow")
+            service_table.add_column("Protocol", style="blue")
+            service_table.add_column("Service", style="magenta")
+            service_table.add_column("Version", style="cyan")
+            
+            # Process hosts
+            for host in hosts:
+                if 'port' in host and host['port'] and 'service' in host and host['service']:
+                    # Parse port/protocol if in format "80/tcp"
+                    port_str = host.get('port', '')
+                    port = port_str
+                    protocol = 'tcp'  # default
+                    
+                    if '/' in port_str:
+                        parts = port_str.split('/')
+                        port = parts[0]
+                        protocol = parts[1]
+                    
+                    service_table.add_row(
+                        host.get('ip', 'Unknown'),
+                        port,
+                        protocol,
+                        host.get('service', 'Unknown'),
+                        host.get('version', 'Unknown')
+                    )
+            
+            # Create panel to contain the table
+            service_panel = Panel(
+                service_table,
+                title="[bold blue]Service Detection Results[/bold blue]",
+                border_style="blue",
+                box=DOUBLE_EDGE
+            )
+            
+            console.print(service_panel)
+            
+        except Exception as e:
+            self.logger.error(f"Error displaying service results: {e}")
+            console.print(f"[red]Error displaying service results: {e}[/red]")
+            
+            # Fallback to simple text display
+            console.print("\n[bold]Discovered Services:[/bold]")
+            for host in hosts:
+                if 'port' in host and 'service' in host:
+                    console.print(f"  IP: {host.get('ip', 'Unknown')}, Port: {host.get('port', 'Unknown')}, Service: {host.get('service', 'Unknown')}")
+
+    def scan_network(self, target=None, scan_type='quick'):
+        """
+        Scan a network target.
+        
+        Args:
+            target (str, optional): The target to scan. Defaults to self.target.
+            scan_type (str, optional): The type of scan to perform. Defaults to 'quick'.
+        
+        Returns:
+            list: List of discovered hosts
+        """
+        target = target or self.target
+        
+        # Create a rich Panel for the scan header
+        from rich.panel import Panel
+        from rich.text import Text
+        
+        header_text = Text.from_markup(f"[bold]Network Scan[/bold]\nTarget: [cyan]{target}[/cyan]\nScan Type: [yellow]{scan_type.upper()}[/yellow]")
+        
+        console.print(Panel(
+            header_text,
+            title="[bold blue]AI_MAL Network Scanner[/bold blue]",
+            border_style="blue"
+        ))
+        
+        # Display a progress indicator during the scan
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(f"[cyan]Scanning {target}...", total=None)
+            
+            try:
+                # Parse target to determine scan approach
+                if '/' in target:  # CIDR notation
+                    progress.update(task, description=f"[cyan]Running network scan on {target}...")
+                    # ... rest of the code remains the same ...
+                # ... rest of the code remains the same ...
+            
+            except Exception as e:
+                self.logger.exception(f"Error during scanning: {str(e)}")
+                return []
+        
+        # After scan completes, display results
+        if hosts:
+            progress.update(task, description=f"[green]Scan completed! Found {len(hosts)} hosts")
+        else:
+            progress.update(task, description="[yellow]Scan completed! No hosts found")
+        
+        return hosts 

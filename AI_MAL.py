@@ -26,6 +26,8 @@ from gvm.connections import TLSConnection
 from gvm.protocols.latest import Gmp
 from gvm.transforms import EtreeTransform
 from gvm.xml import pretty_print
+import platform
+from shutil import which
 
 # Import core modules
 from src.core.logger import setup_logger
@@ -38,6 +40,32 @@ from src.core.terminal_gui import TerminalGUI
 from src.core.report_generator import ReportGenerator
 from src.core.exfiltration import DataExfiltration  # Import the exfiltration module
 from src.core.implant import ImplantDeployer  # Import the implant deployer module
+
+# Import the web interface if requested
+if args.web_interface:
+    try:
+        from src.web.run import main as run_web_interface
+        args_list = []
+        if args.web_host:
+            args_list.extend(['--host', args.web_host])
+        if args.web_port:
+            args_list.extend(['--port', str(args.web_port)])
+        if args.debug:
+            args_list.append('--debug')
+        
+        logger.info(f"Starting web interface on {args.web_host}:{args.web_port}")
+        
+        # Run the web interface
+        import sys
+        sys.argv = [sys.argv[0]] + args_list
+        run_web_interface()
+        
+        # Exit after web interface is stopped
+        sys.exit(0)
+    except ImportError as e:
+        logger.error(f"Failed to import web interface: {e}")
+        logger.error("Please ensure all required packages are installed: pip install flask flask-socketio eventlet")
+        sys.exit(1)
 
 __version__ = "1.0.0"
 
@@ -115,6 +143,11 @@ def parse_arguments():
     parser.add_argument("--full-auto", action="store_true", 
                         help="Enable full automation mode (equivalent to --msf --exploit --vuln --ai-analysis --custom-scripts --execute-scripts)")
     parser.add_argument("--custom-vuln", help="Path to custom vulnerability definitions")
+    
+    # Web interface options
+    parser.add_argument("--web-interface", action="store_true", help="Enable web interface")
+    parser.add_argument("--web-host", help="Web interface host")
+    parser.add_argument("--web-port", type=int, help="Web interface port")
     
     return parser.parse_args()
 
@@ -226,129 +259,155 @@ def check_openvas_availability():
         console.print(f"[red]Error checking OpenVAS availability: {e}[/red]")
         return False
 
-def main():
-    """Main function to execute the AI_MAL tool."""
-    # Parse arguments
-    args = parse_arguments()
+def check_environment_compatibility():
+    """Check if the environment is compatible with AI_MAL."""
+    console.print("[bold cyan]Checking environment compatibility...[/bold cyan]")
     
-    # Setup logging
-    log_level = getattr(logging, args.log_level.upper())
-    logger = setup_logger(log_level, args.log_file, args.quiet)
+    issues = []
     
+    # Check if running as administrator/root
+    if os.name == 'nt':  # Windows
+        import ctypes
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            issues.append("Not running as administrator (required for some scanning features)")
+    else:  # Unix-like systems
+        if os.geteuid() != 0:
+            issues.append("Not running as root (required for some scanning features)")
+    
+    # Check OS
+    os_info = platform.platform()
+    logger.info(f"Operating System: {os_info}")
+    
+    # Check for Kali Linux
+    is_kali = False
+    if "linux" in os_info.lower():
+        try:
+            with open("/etc/os-release", "r") as f:
+                for line in f:
+                    if "kali" in line.lower():
+                        is_kali = True
+                        break
+        except:
+            pass
+    
+    if is_kali:
+        logger.info("Kali Linux detected")
+    
+    # Check network scanning capabilities
+    ping_command = "ping -n 1 127.0.0.1" if os.name == 'nt' else "ping -c 1 127.0.0.1"
+    try:
+        subprocess.run(ping_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError:
+        issues.append("Network scanning capabilities might be limited (ping failed)")
+    
+    # Check for required command-line tools
+    required_tools = {
+        "nmap": "Nmap network scanner",
+        "msfconsole": "Metasploit Framework"
+    }
+    
+    for tool, description in required_tools.items():
+        if not which(tool):
+            issues.append(f"Missing {description} ({tool})")
+    
+    # Check OpenVAS availability
+    if os.name != 'nt':  # OpenVAS is not available on Windows
+        openvas_services = ["ospd-openvas", "gvmd"]
+        missing_services = []
+        
+        for service in openvas_services:
+            try:
+                result = subprocess.run(
+                    f"systemctl is-active {service}", 
+                    shell=True, 
+                    check=False,
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE
+                )
+                if result.stdout.decode().strip() != "active":
+                    missing_services.append(service)
+            except:
+                missing_services.append(service)
+        
+        if missing_services:
+            issues.append(f"OpenVAS services not running: {', '.join(missing_services)}")
+    
+    # Check Ollama availability
+    try:
+        result = subprocess.run(
+            "curl -s http://localhost:11434/api/version", 
+            shell=True, 
+            check=False,
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
+        )
+        if "error" in result.stdout.decode().lower() or not result.stdout:
+            issues.append("Ollama service not running (required for AI analysis)")
+    except:
+        issues.append("Ollama service not running (required for AI analysis)")
+    
+    # Display results
+    if issues:
+        console.print("[bold yellow]⚠️ Environment issues detected:[/bold yellow]")
+        for issue in issues:
+            console.print(f"  - [yellow]{issue}[/yellow]")
+        console.print("\n[bold yellow]Some features may be limited. Continue anyway? (y/n)[/bold yellow]")
+        response = input().lower()
+        if response != 'y':
+            console.print("[bold red]Exiting due to environment issues.[/bold red]")
+            sys.exit(1)
+    else:
+        console.print("[bold green]✓ Environment compatible with AI_MAL[/bold green]")
+    
+    return True
+
+def display_banner():
+    """Display the AI_MAL banner."""
     console.print(Panel.fit(
         f"[bold cyan]AI_MAL v{__version__}[/bold cyan]\n"
-        f"[yellow]Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/yellow]\n"
-        f"[green]Target: {args.target}[/green]",
-        title="[bold]AI_MAL Penetration Testing Tool[/bold]"
+        f"[yellow]Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/yellow]",
+        title="[bold]AI-Powered Penetration Testing Framework[/bold]"
     ))
+
+def main():
+    """Main function to execute the AI_MAL tool."""
+    global logger
     
-    try:
-        # Initialize scanner with progress bar
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]Initializing scanner...", total=None)
-            
-            scanner = Scanner(
-                target=args.target,
-                scan_type=args.scan_type,
-                stealth=args.stealth,
-                services=args.services or args.vuln,
-                version=args.version or args.vuln,
-                os_detection=args.os
-            )
-            
-            # Run initial scan
-            progress.update(task, description="[cyan]Running initial scan...")
-            scan_results = scanner.scan()
-            progress.update(task, description="[green]Initial scan completed!")
-            
-            # Display scan results
-            display_scan_results(scan_results)
-            
-            # Run vulnerability scanning if enabled
-            if args.vuln:
-                logger.info("Starting vulnerability scanning...")
-                progress.update(task, description="[cyan]Running vulnerability scan...")
-                
-                # First try to use OpenVAS
-                try:
-                    # Check if OpenVAS is available and running
-                    openvas_available = check_openvas_availability()
-                    
-                    if openvas_available:
-                        vuln_scanner = VulnerabilityScanner(
-                            target=args.target,
-                            scan_config=args.scan_config,
-                            timeout=3600,
-                            use_nmap=False,  # Force OpenVAS
-                            gmp_connection=connect_to_openvas()  # Pass the GMP connection
-                        )
-                        logger.info("Using OpenVAS for vulnerability scanning")
-                    else:
-                        logger.warning("OpenVAS not available, falling back to nmap")
-                        vuln_scanner = VulnerabilityScanner(
-                            target=args.target,
-                            scan_config=args.scan_config,
-                            timeout=3600,
-                            use_nmap=True
-                        )
-                except Exception as e:
-                    logger.warning(f"Error checking OpenVAS: {e}, falling back to nmap")
-                    vuln_scanner = VulnerabilityScanner(
-                        target=args.target,
-                        scan_config=args.scan_config,
-                        timeout=3600,
-                        use_nmap=True
-                    )
-                
-                vuln_results = vuln_scanner.scan()
-                scan_results['vulnerabilities'] = vuln_results
-                progress.update(task, description="[green]Vulnerability scan completed!")
-                
-                # Display vulnerability results
-                display_vulnerabilities(vuln_results)
-            
-            # Run AI analysis if enabled
-            if args.ai_analysis:
-                progress.update(task, description="[cyan]Running AI analysis...")
-                ai_analyzer = AIAnalyzer(
-                    model=args.model,
-                    fallback_model=args.fallback_model
-                )
-                analysis_results = ai_analyzer.analyze(scan_results)
-                scan_results['ai_analysis'] = analysis_results
-                progress.update(task, description="[green]AI analysis completed!")
-                
-                # Display AI analysis results
-                display_ai_analysis(analysis_results)
-            
-            # Generate report
-            progress.update(task, description="[cyan]Generating report...")
-            report_gen = ReportGenerator(
-                output_dir=args.output_dir,
-                output_format=args.output_format
-            )
-            report_path = report_gen.generate_report(scan_results)
-            progress.update(task, description="[green]Report generated!")
-            
-            console.print(Panel(
-                f"[bold green]Report saved to:[/bold green] {report_path}",
-                title="[bold]Operation Complete[/bold]"
-            ))
-            
-    except KeyboardInterrupt:
-        console.print("[yellow]Operation interrupted by user.[/yellow]")
-        return 1
-    except Exception as e:
-        console.print(f"[bold red]An error occurred:[/bold red] {str(e)}")
-        if args.debug:
-            console.print_exception()
-        return 1
+    # Setup argparse to handle command-line arguments
+    parser = argparse.ArgumentParser(
+        description="AI_MAL - AI-Powered Penetration Testing Framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument(
+        "target",
+        help="Target IP address, range (CIDR notation), or hostname"
+    )
+    
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Output file for scan results",
+        default=None
+    )
+    
+    # ... [rest of the argparse setup]
+    
+    # Parse the arguments
+    args = parser.parse_args()
+    
+    # Configure logging
+    logger = configure_logging(args.verbose)
+    logger.info("Starting AI_MAL")
+    
+    # Check environment compatibility
+    check_environment_compatibility()
+    
+    # Display initial banner
+    if not args.quiet:
+        display_banner()
+        
+    # ... [rest of the main function]
 
 if __name__ == "__main__":
     sys.exit(main()) 
