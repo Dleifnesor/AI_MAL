@@ -21,11 +21,6 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.syntax import Syntax
 from rich.markdown import Markdown
-import gvm
-from gvm.connections import TLSConnection
-from gvm.protocols.latest import Gmp
-from gvm.transforms import EtreeTransform
-from gvm.xml import pretty_print
 import platform
 from shutil import which
 
@@ -41,36 +36,26 @@ from src.core.report_generator import ReportGenerator
 from src.core.exfiltration import DataExfiltration  # Import the exfiltration module
 from src.core.implant import ImplantDeployer  # Import the implant deployer module
 
-# Import the web interface if requested
-if args.web_interface:
-    try:
-        from src.web.run import main as run_web_interface
-        args_list = []
-        if args.web_host:
-            args_list.extend(['--host', args.web_host])
-        if args.web_port:
-            args_list.extend(['--port', str(args.web_port)])
-        if args.debug:
-            args_list.append('--debug')
-        
-        logger.info(f"Starting web interface on {args.web_host}:{args.web_port}")
-        
-        # Run the web interface
-        import sys
-        sys.argv = [sys.argv[0]] + args_list
-        run_web_interface()
-        
-        # Exit after web interface is stopped
-        sys.exit(0)
-    except ImportError as e:
-        logger.error(f"Failed to import web interface: {e}")
-        logger.error("Please ensure all required packages are installed: pip install flask flask-socketio eventlet")
-        sys.exit(1)
-
+# Set default variables
 __version__ = "1.0.0"
 
 # Initialize rich console
 console = Console()
+
+# Initialize global logger variable
+logger = None
+
+def configure_logging(verbose=False):
+    """Configure logging for the application.
+    
+    Args:
+        verbose (bool): Whether to enable verbose logging
+        
+    Returns:
+        logging.Logger: Configured logger
+    """
+    log_level = logging.DEBUG if verbose else logging.INFO
+    return setup_logger(log_level=log_level, log_file="logs/AI_MAL.log", quiet=False)
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -146,8 +131,9 @@ def parse_arguments():
     
     # Web interface options
     parser.add_argument("--web-interface", action="store_true", help="Enable web interface")
-    parser.add_argument("--web-host", help="Web interface host")
-    parser.add_argument("--web-port", type=int, help="Web interface port")
+    parser.add_argument("--web-host", default="127.0.0.1", help="Web interface host")
+    parser.add_argument("--web-port", type=int, default=5000, help="Web interface port")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     
     return parser.parse_args()
 
@@ -219,6 +205,18 @@ def display_ai_analysis(analysis_results):
 def connect_to_openvas():
     """Connect to OpenVAS/GVM and return the connection."""
     try:
+        # Import necessary GVM modules here to handle potential import errors gracefully
+        try:
+            import gvm
+            from gvm.connections import TLSConnection
+            from gvm.protocols.latest import Gmp
+            from gvm.transforms import EtreeTransform
+            from gvm.xml import pretty_print
+        except ImportError:
+            console.print("[yellow]GVM library not installed. OpenVAS functionality will be limited.[/yellow]")
+            console.print("[yellow]Install with: pip install python-gvm[/yellow]")
+            return None
+            
         # Try to connect to OpenVAS on localhost:9392
         connection = TLSConnection(hostname='127.0.0.1', port=9392)
         transform = EtreeTransform()
@@ -276,7 +274,8 @@ def check_environment_compatibility():
     
     # Check OS
     os_info = platform.platform()
-    logger.info(f"Operating System: {os_info}")
+    if logger:
+        logger.info(f"Operating System: {os_info}")
     
     # Check for Kali Linux
     is_kali = False
@@ -290,7 +289,7 @@ def check_environment_compatibility():
         except:
             pass
     
-    if is_kali:
+    if is_kali and logger:
         logger.info("Kali Linux detected")
     
     # Check network scanning capabilities
@@ -348,7 +347,7 @@ def check_environment_compatibility():
     
     # Display results
     if issues:
-        console.print("[bold yellow]⚠️ Environment issues detected:[/bold yellow]")
+        console.print("[bold yellow]⚠ Environment issues detected:[/bold yellow]")
         for issue in issues:
             console.print(f"  - [yellow]{issue}[/yellow]")
         console.print("\n[bold yellow]Some features may be limited. Continue anyway? (y/n)[/bold yellow]")
@@ -373,32 +372,38 @@ def main():
     """Main function to execute the AI_MAL tool."""
     global logger
     
-    # Setup argparse to handle command-line arguments
-    parser = argparse.ArgumentParser(
-        description="AI_MAL - AI-Powered Penetration Testing Framework",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    
-    parser.add_argument(
-        "target",
-        help="Target IP address, range (CIDR notation), or hostname"
-    )
-    
-    parser.add_argument(
-        "--output",
-        "-o",
-        help="Output file for scan results",
-        default=None
-    )
-    
-    # ... [rest of the argparse setup]
-    
-    # Parse the arguments
-    args = parser.parse_args()
+    # Parse command line arguments
+    args = parse_arguments()
     
     # Configure logging
     logger = configure_logging(args.verbose)
     logger.info("Starting AI_MAL")
+
+    # Import the web interface if requested
+    if args.web_interface:
+        try:
+            from src.web.run import main as run_web_interface
+            args_list = []
+            if args.web_host:
+                args_list.extend(['--host', args.web_host])
+            if args.web_port:
+                args_list.extend(['--port', str(args.web_port)])
+            if args.debug:
+                args_list.append('--debug')
+            
+            logger.info(f"Starting web interface on {args.web_host}:{args.web_port}")
+            
+            # Run the web interface
+            import sys
+            sys.argv = [sys.argv[0]] + args_list
+            run_web_interface()
+            
+            # Exit after web interface is stopped
+            sys.exit(0)
+        except ImportError as e:
+            logger.error(f"Failed to import web interface: {e}")
+            logger.error("Please ensure all required packages are installed: pip install flask flask-socketio eventlet")
+            sys.exit(1)
     
     # Check environment compatibility
     check_environment_compatibility()
@@ -407,7 +412,14 @@ def main():
     if not args.quiet:
         display_banner()
         
-    # ... [rest of the main function]
+    # Now process the rest of the main function
+    # This is where you would add the actual scanning and analysis logic
+    
+    # Example placeholder for actual implementation
+    console.print("[bold green]AI_MAL initialized successfully. Ready to perform scans.[/bold green]")
+    
+    # Return success code
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main()) 

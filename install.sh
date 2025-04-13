@@ -3,32 +3,95 @@
 # AI_MAL Installation Script
 # This script installs the AI_MAL tool and makes it available as a system command
 
-# Colors for terminal output
+# ANSI color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
 NC='\033[0m' # No Color
+BOLD='\033[1m'
+UNDERLINE='\033[4m'
 
-# Function to display messages with proper formatting
+# Get terminal width
+TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}' || echo 80)
+[ -z "$TERM_WIDTH" ] && TERM_WIDTH=80
+
+# Logging functions
 log_info() {
-    echo -e "${GREEN}[+]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[!]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[!]${NC} $1"
-}
-
-log_status() {
-    echo -e "${BLUE}[*]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_status() {
+    echo -e "${CYAN}[STATUS]${NC} $1"
+}
+
+# Section display function
+section() {
+    local section_title="$1"
+    local title_length=${#section_title}
+    local padding=$(( (TERM_WIDTH - title_length - 4) / 2 ))
+    local padding_left=$padding
+    local padding_right=$padding
+    
+    # Adjust if odd length
+    if (( (title_length + 4 + padding * 2) != TERM_WIDTH )); then
+        padding_right=$((padding + 1))
+    fi
+    
+    echo
+    echo -e "${MAGENTA}$(printf '═%.0s' $(seq 1 $TERM_WIDTH))${NC}"
+    echo -e "${MAGENTA}$(printf '═%.0s' $(seq 1 $padding_left))${WHITE} ${BOLD}${section_title}${NC} ${MAGENTA}$(printf '═%.0s' $(seq 1 $padding_right))${NC}"
+    echo -e "${MAGENTA}$(printf '═%.0s' $(seq 1 $TERM_WIDTH))${NC}"
+    echo
+}
+
+# Function to draw a box around text
+draw_box() {
+    local title="$1"
+    local content="$2"
+    local width=$((TERM_WIDTH - 4))
+    local title_length=${#title}
+    
+    # Calculate padding for title
+    local title_padding=$(( (width - title_length) / 2 ))
+    local title_padding_left=$title_padding
+    local title_padding_right=$title_padding
+    
+    # Adjust if odd length
+    if (( (title_length + title_padding * 2) != width )); then
+        title_padding_right=$((title_padding + 1))
+    fi
+    
+    echo
+    echo -e "${CYAN}╔$(printf '═%.0s' $(seq 1 $width))╗${NC}"
+    echo -e "${CYAN}║${YELLOW}$(printf ' %.0s' $(seq 1 $title_padding_left))${BOLD}${title}${NC}${YELLOW}$(printf ' %.0s' $(seq 1 $title_padding_right))${CYAN}║${NC}"
+    echo -e "${CYAN}╠$(printf '═%.0s' $(seq 1 $width))╣${NC}"
+    
+    # Process each line of content
+    IFS=$'\n'
+    for line in $content; do
+        local line_length=${#line}
+        local line_padding=$(( width - line_length ))
+        echo -e "${CYAN}║${WHITE} ${line}${NC}$(printf ' %.0s' $(seq 1 $line_padding))${CYAN}║${NC}"
+    done
+    
+    echo -e "${CYAN}╚$(printf '═%.0s' $(seq 1 $width))╝${NC}"
+    echo
 }
 
 # Check if running as root
@@ -177,6 +240,13 @@ if ! check_openvas_installed; then
             sed -i '/GVM_PASSWORD=/d' ~/.bashrc
             # Add the new password to bashrc
             echo "export GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.bashrc
+            # Also add to /etc/environment for system-wide persistence
+            if ! grep -q "GVM_PASSWORD=" /etc/environment; then
+                echo "GVM_PASSWORD=\"$GVM_PASSWORD\"" >> /etc/environment
+            else
+                sed -i "s/GVM_PASSWORD=.*/GVM_PASSWORD=\"$GVM_PASSWORD\"/" /etc/environment
+            fi
+            echo "[+] Password saved to environment variables and ~/.bashrc"
         fi
         
         # Set socket permissions
@@ -190,6 +260,9 @@ if ! check_openvas_installed; then
         echo "[+] OpenVAS setup completed successfully."
         echo "[+] Username: admin"
         echo "[+] Password: $GVM_PASSWORD"
+        
+        # Confirm the password is correct
+        confirm_gvm_password
     fi
 else
     log_status "OpenVAS/Greenbone Vulnerability Manager is already installed"
@@ -215,6 +288,9 @@ if [ -z "$GVM_PASSWORD" ]; then
 else
     log_info "Using existing OpenVAS password: $GVM_PASSWORD"
 fi
+
+# Confirm the password with user
+confirm_gvm_password
 
 # Verify OpenVAS connection
 log_status "Verifying OpenVAS service..."
@@ -490,9 +566,8 @@ echo "    full-auto [target] - Complete automated assessment"
 echo ""
 echo "[+] Example implant available at: ./scripts/implants/example_implant.py"
 echo ""
-echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
-echo "║                                                                               ║"
+section "IMPORTANT: OLLAMA SERVICE STATUS"
+
 if [ "$OLLAMA_RUNNING" = true ]; then
   echo "║         Ollama service is running properly!                                   ║"
   echo "║                                                                               ║"
@@ -508,173 +583,486 @@ echo "╚═══════════════════════�
 
 # Function to check if OpenVAS/GVM is installed
 check_openvas_installed() {
-    if command -v gvm-cli &> /dev/null && command -v gvmd &> /dev/null; then
+    if command -v gvm-cli &> /dev/null; then
+        echo "[+] OpenVAS/GVM is installed"
         return 0
     else
+        echo "[!] OpenVAS/GVM is not installed"
         return 1
     fi
 }
 
-# Function to extract OpenVAS admin password from logs or output
+# Function to confirm OpenVAS password with user
+confirm_gvm_password() {
+    section "CONFIRM OPENVAS PASSWORD"
+    
+    if [ -z "$GVM_PASSWORD" ]; then
+        log_warning "No OpenVAS password found. Using default 'admin'."
+        GVM_PASSWORD="admin"
+    fi
+    
+    # Show current password to user for confirmation
+    draw_box "OpenVAS Password" "Current OpenVAS admin password: $GVM_PASSWORD\n\nIs this the correct password? (y/n)"
+    read -r is_correct
+    
+    if [[ "$is_correct" != "y" && "$is_correct" != "Y" ]]; then
+        log_info "Please enter the correct OpenVAS admin password:"
+        read -r -s new_password
+        echo
+        
+        # Confirm password
+        log_info "Please confirm the password by entering it again:"
+        read -r -s confirm_password
+        echo
+        
+        if [[ "$new_password" == "$confirm_password" ]]; then
+            GVM_PASSWORD="$new_password"
+            export GVM_PASSWORD
+            save_credentials
+            log_success "Password successfully updated and saved."
+        else
+            log_error "Passwords do not match. Please try again."
+            # Recursive call to try again
+            confirm_gvm_password
+            return
+        fi
+    else
+        log_success "Using confirmed password: $GVM_PASSWORD"
+    fi
+    
+    # Test connection with confirmed password
+    log_info "Testing connection with confirmed password..."
+    # First find a suitable socket
+    SOCKET_PATH=""
+    for path in "/var/run/gvmd/gvmd.sock" "/run/gvmd/gvmd.sock" "/var/run/gvmd.sock" "/run/gvmd.sock"; do
+        if [ -S "$path" ]; then
+            SOCKET_PATH="$path"
+            break
+        fi
+    done
+    
+    if [ -n "$SOCKET_PATH" ]; then
+        if gvm-cli socket --socketpath="$SOCKET_PATH" --gmp-username=admin --gmp-password="$GVM_PASSWORD" --xml "<get_version/>" &> /dev/null; then
+            log_success "Successfully connected with confirmed password!"
+        else
+            log_warning "Could not connect with confirmed password. You may need to verify it again later."
+        fi
+    else
+        log_warning "Could not find GVM socket to test password. Connection test skipped."
+    fi
+    
+    return 0
+}
+
+# Function to extract and save OpenVAS admin password
 get_openvas_password() {
-    local password=""
+    section "RETRIEVING OPENVAS PASSWORD"
     
-    # Try different password formats and sources
+    # Check if we already have the password in environment
+    if [ -n "$GVM_PASSWORD" ]; then
+        log_success "Using OpenVAS password from environment: $GVM_PASSWORD"
+        validate_openvas_password "$GVM_PASSWORD"
+        return 0
+    fi
     
-    # Format: "Password: 85fa7cd2-d80e-4a45-afe5-22ad16aecd70" (direct output format)
-    if [ -f "/tmp/gvm-setup.log" ]; then
-        password=$(grep -a "Password:" "/tmp/gvm-setup.log" | tail -1 | awk '{print $NF}' | tr -d '\r\n')
-        if [ -n "$password" ]; then
-            log_info "Found admin password in temporary setup log"
-            echo "$password"
+    # Ensure directory exists with proper permissions
+    mkdir -p ~/.config/ai_mal
+    chmod 700 ~/.config/ai_mal
+    
+    # Define encryption key file
+    KEY_FILE=~/.config/ai_mal/.key
+    
+    # Check if credentials file exists and source it
+    if [ -f ~/.config/ai_mal/credentials.enc ] && [ -f "$KEY_FILE" ]; then
+        # Decrypt credentials
+        PASSWORD=$(openssl enc -aes-256-cbc -d -in ~/.config/ai_mal/credentials.enc -pass file:"$KEY_FILE" 2>/dev/null | grep GVM_PASSWORD | cut -d= -f2 | tr -d '"')
+        
+        if [ -n "$PASSWORD" ]; then
+            GVM_PASSWORD="$PASSWORD"
+            log_success "Retrieved OpenVAS password from encrypted credentials file"
+            validate_openvas_password "$GVM_PASSWORD"
+            return 0
+        fi
+    elif [ -f ~/.config/ai_mal/credentials ]; then
+        # Legacy support for unencrypted credentials
+        source ~/.config/ai_mal/credentials
+        if [ -n "$GVM_PASSWORD" ]; then
+            log_success "Retrieved OpenVAS password from credentials file"
+            validate_openvas_password "$GVM_PASSWORD"
+            # Upgrade to encrypted storage
+            encrypt_credentials
             return 0
         fi
     fi
     
-    # Format: "User created with password '85fa7cd2-d80e-4a45-afe5-22ad16aecd70'" (gvm-setup.log format)
-    if [ -f "/var/log/gvm/gvm-setup.log" ]; then
-        password=$(grep -a "User created with password" /var/log/gvm/gvm-setup.log | tail -1 | grep -o "'.*'" | tr -d "'")
-        if [ -n "$password" ]; then
-            log_info "Found admin password in gvm-setup.log"
-            echo "$password"
+    log_info "Searching for OpenVAS password in log files..."
+    
+    # Method 1: Check log file for password
+    if [ -f /var/log/gvm/gvm-setup.log ]; then
+        PASSWORD=$(grep -a "User created with password" /var/log/gvm/gvm-setup.log | tail -1 | sed -e 's/.*password *//' -e 's/ *\.//')
+        
+        if [ -z "$PASSWORD" ]; then
+            PASSWORD=$(grep -a "Password:" /var/log/gvm/gvm-setup.log | tail -1 | awk '{print $2}')
+        fi
+        
+        if [ -n "$PASSWORD" ]; then
+            log_success "Found OpenVAS password in logs: $PASSWORD"
+            GVM_PASSWORD="$PASSWORD"
+            export GVM_PASSWORD
+            save_credentials
+            validate_openvas_password "$GVM_PASSWORD"
             return 0
         fi
+    else
+        log_warning "Log file /var/log/gvm/gvm-setup.log not found"
     fi
     
-    # Format: "Created admin user with password '85fa7cd2-d80e-4a45-afe5-22ad16aecd70'" (gvmd.log format)
-    if [ -f "/var/log/gvm/gvmd.log" ]; then
-        password=$(grep -a "Created admin user with password" /var/log/gvm/gvmd.log | tail -1 | grep -o "'.*'" | tr -d "'")
-        if [ -n "$password" ]; then
-            log_info "Found admin password in gvmd.log"
-            echo "$password"
-            return 0
-        fi
-    fi
-    
-    # Try to extract from live gvm-setup output
-    if command -v gvm-setup >/dev/null 2>&1; then
-        local setup_output=$(sudo gvm-setup 2>&1 | grep -a "password:" || true)
-        if [ -n "$setup_output" ]; then
-            password=$(echo "$setup_output" | tail -1 | grep -o "[a-zA-Z0-9-]\{36\}" || awk '{print $NF}')
-            if [ -n "$password" ]; then
-                log_info "Found admin password from gvm-setup output"
-                echo "$password"
+    # Method 2: Try to use gvmd --get-users to find admin user and password
+    if command -v gvmd &> /dev/null; then
+        log_info "Attempting to retrieve password using gvmd command..."
+        
+        # This might work in some configurations, but not all
+        ADMIN_INFO=$(sudo gvmd --get-users 2>/dev/null | grep admin)
+        if [ -n "$ADMIN_INFO" ]; then
+            # Extract password if present in the output
+            PASSWORD=$(echo "$ADMIN_INFO" | grep -oP 'password=\K[^ ]+')
+            if [ -n "$PASSWORD" ]; then
+                log_success "Found OpenVAS admin password using gvmd: $PASSWORD"
+                GVM_PASSWORD="$PASSWORD"
+                export GVM_PASSWORD
+                save_credentials
+                validate_openvas_password "$GVM_PASSWORD"
                 return 0
             fi
         fi
     fi
     
-    # If all else fails, check if it's already in the environment
-    if [ -n "$GVM_PASSWORD" ]; then
-        log_info "Using existing GVM_PASSWORD from environment"
-        echo "$GVM_PASSWORD"
-        return 0
-    fi
-    
-    log_warning "Could not find OpenVAS admin password"
-    echo "admin"
-    return 1
-}
-
-# Function to check and set OpenVAS socket permissions
-check_openvas_socket() {
-    local socket_found=false
-    
-    # Check both possible socket locations
-    if [ -S "/var/run/ospd/ospd.sock" ]; then
-        log_info "Found OpenVAS socket at /var/run/ospd/ospd.sock"
-        
-        # Set the correct user/group ownership
-        if id -u _gvm >/dev/null 2>&1; then
-            sudo chown _gvm:_gvm /var/run/ospd/ospd.sock
-            log_info "Set socket ownership to _gvm:_gvm (Kali)"
-        else
-            sudo chown gvm:gvm /var/run/ospd/ospd.sock
-            log_info "Set socket ownership to gvm:gvm (Debian/Ubuntu)"
+    # Method 3: Try to read from a potential password file
+    for PASSWORD_FILE in /var/lib/gvm/admin-password /usr/local/var/lib/gvm/admin-password; do
+        if [ -f "$PASSWORD_FILE" ]; then
+            PASSWORD=$(cat "$PASSWORD_FILE")
+            if [ -n "$PASSWORD" ]; then
+                log_success "Found OpenVAS password in $PASSWORD_FILE: $PASSWORD"
+                GVM_PASSWORD="$PASSWORD"
+                export GVM_PASSWORD
+                save_credentials
+                validate_openvas_password "$GVM_PASSWORD"
+                return 0
+            fi
         fi
-        
-        sudo chmod 666 /var/run/ospd/ospd.sock
-        socket_found=true
-    fi
+    done
     
-    if [ -S "/run/ospd/ospd.sock" ]; then
-        log_info "Found OpenVAS socket at /run/ospd/ospd.sock"
-        
-        # Set the correct user/group ownership
-        if id -u _gvm >/dev/null 2>&1; then
-            sudo chown _gvm:_gvm /run/ospd/ospd.sock
-            log_info "Set socket ownership to _gvm:_gvm (Kali)"
-        else
-            sudo chown gvm:gvm /run/ospd/ospd.sock
-            log_info "Set socket ownership to gvm:gvm (Debian/Ubuntu)"
-        fi
-        
-        sudo chmod 666 /run/ospd/ospd.sock
-        socket_found=true
-    fi
-    
-    # Add sudoers entry for ospd-openvas
-    if id -u _gvm >/dev/null 2>&1; then
-        log_info "Adding sudoers entry for _gvm (Kali)"
-        echo "_gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" | sudo tee /etc/sudoers.d/ospd-openvas > /dev/null
-    else
-        log_info "Adding sudoers entry for gvm (Debian/Ubuntu)"
-        echo "gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" | sudo tee /etc/sudoers.d/ospd-openvas > /dev/null
-    fi
-    sudo chmod 440 /etc/sudoers.d/ospd-openvas
-    
-    if [ "$socket_found" = false ]; then
-        log_warning "OpenVAS socket not found. Services may need to be started."
-    fi
-}
-
-# Function to test OpenVAS connection
-test_openvas_connection() {
-    log_info "Testing OpenVAS connection..."
-    
-    # Check if gvm-cli is available
-    if ! command -v gvm-cli >/dev/null 2>&1; then
-        log_error "gvm-cli command not found. OpenVAS may not be installed correctly."
-        return 1
-    fi
-    
-    # Try with password from environment
-    local password="$GVM_PASSWORD"
-    if [ -n "$password" ]; then
-        if gvm-cli socket --gmp-username admin --gmp-password "$password" --xml "<get_version/>" >/dev/null 2>&1; then
-            log_success "Successfully connected to OpenVAS with saved password."
+    # Method 4: Try to retrieve from gvmd.log
+    if [ -f /var/log/gvm/gvmd.log ]; then
+        PASSWORD=$(grep -a "password" /var/log/gvm/gvmd.log | grep -v "hash" | grep -oP '(?<=password ")[^"]+' | tail -1)
+        if [ -n "$PASSWORD" ]; then
+            log_success "Found OpenVAS password in gvmd.log: $PASSWORD"
+            GVM_PASSWORD="$PASSWORD"
+            export GVM_PASSWORD
+            save_credentials
+            validate_openvas_password "$GVM_PASSWORD"
             return 0
         fi
     fi
     
-    # Try with default password
-    if gvm-cli socket --gmp-username admin --gmp-password "admin" --xml "<get_version/>" >/dev/null 2>&1; then
-        log_success "Successfully connected to OpenVAS with default password 'admin'."
-        GVM_PASSWORD="admin"
-        return 0
+    # Default to "admin" if no password found
+    log_warning "Could not find OpenVAS password, defaulting to 'admin'"
+    GVM_PASSWORD="admin"
+    export GVM_PASSWORD
+    save_credentials
+    
+    draw_box "OpenVAS Password" "Using default password: 'admin'\nIf this doesn't work, please set the correct password manually:\n\nexport GVM_PASSWORD='your_password'"
+    
+    return 0
+}
+
+# Function to encrypt credentials
+encrypt_credentials() {
+    if [ ! -f ~/.config/ai_mal/credentials.enc ]; then
+        log_info "Upgrading to encrypted credential storage..."
+        
+        # Generate a strong random encryption key if it doesn't exist
+        if [ ! -f "$KEY_FILE" ]; then
+            openssl rand -base64 32 > "$KEY_FILE"
+            chmod 600 "$KEY_FILE"
+        fi
+        
+        # Encrypt credentials
+        if [ -f ~/.config/ai_mal/credentials ]; then
+            openssl enc -aes-256-cbc -salt -in ~/.config/ai_mal/credentials -out ~/.config/ai_mal/credentials.enc -pass file:"$KEY_FILE" 2>/dev/null
+            if [ $? -eq 0 ]; then
+                chmod 600 ~/.config/ai_mal/credentials.enc
+                log_success "Credentials encrypted successfully"
+                # Keep original as backup but restrict access
+                chmod 600 ~/.config/ai_mal/credentials
+                mv ~/.config/ai_mal/credentials ~/.config/ai_mal/credentials.bak
+            else
+                log_error "Failed to encrypt credentials"
+            fi
+        fi
+    fi
+}
+
+# Function to validate OpenVAS password
+validate_openvas_password() {
+    local password=$1
+    
+    # Password should not be empty or just whitespace
+    if [ -z "$password" ] || [ "$password" = "$(echo "$password" | tr -d '[:space:]')" ]; then
+        log_warning "OpenVAS password validation: Password seems unusually short or empty"
+        return 1
     fi
     
-    # Try with no credentials
-    if gvm-cli socket --xml "<get_version/>" >/dev/null 2>&1; then
-        log_success "Successfully connected to OpenVAS without credentials."
-        return 0
+    # Check if password meets minimum complexity requirements (optional check)
+    if [ ${#password} -lt 8 ]; then
+        log_warning "OpenVAS password validation: Password is less than 8 characters"
     fi
     
-    log_error "Failed to connect to OpenVAS with any credentials."
-    log_warning "You may need to run 'sudo gvm-check-setup' and 'sudo gvm-setup' to initialize OpenVAS."
+    return 0
+}
+
+# Helper function to save credentials
+save_credentials() {
+    # Save to credentials file
+    mkdir -p ~/.config/ai_mal
+    chmod 700 ~/.config/ai_mal
+    
+    # Create credentials file with proper permissions
+    echo "GVM_USERNAME=admin" > ~/.config/ai_mal/credentials
+    echo "GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.config/ai_mal/credentials
+    chmod 600 ~/.config/ai_mal/credentials
+    log_success "Saved credentials to ~/.config/ai_mal/credentials"
+    
+    # Encrypt the credentials
+    encrypt_credentials
+    
+    # Add to current session
+    export GVM_USERNAME=admin
+    export GVM_PASSWORD
+    
+    # Add to .bashrc if it doesn't contain GVM_PASSWORD already
+    if ! grep -q "export GVM_PASSWORD" ~/.bashrc 2>/dev/null; then
+        echo "# AI_MAL: OpenVAS credentials" >> ~/.bashrc
+        echo "export GVM_USERNAME=admin" >> ~/.bashrc
+        echo "export GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.bashrc
+        log_success "Added credentials to ~/.bashrc for future sessions"
+    fi
+    
+    # Try to add to system-wide environment if we have sudo access
+    if command -v sudo &> /dev/null && sudo -n true 2>/dev/null; then
+        if ! sudo grep -q "GVM_PASSWORD" /etc/environment 2>/dev/null; then
+            sudo sh -c "echo 'GVM_USERNAME=admin' >> /etc/environment"
+            sudo sh -c "echo 'GVM_PASSWORD=\"$GVM_PASSWORD\"' >> /etc/environment"
+            log_success "Added credentials to system-wide environment"
+        fi
+    fi
+    
+    draw_box "OpenVAS Credentials" "Username: admin\nPassword: $GVM_PASSWORD\n\nCredentials have been securely saved for future use."
+}
+
+# Function to check OpenVAS socket
+check_openvas_socket() {
+    # Check for common socket locations
+    if [ -S "/var/run/ospd/ospd.sock" ]; then
+        echo "/var/run/ospd/ospd.sock"
+        return 0
+    elif [ -S "/var/run/ospd.sock" ]; then
+        echo "/var/run/ospd.sock"
+        return 0
+    else
+        # Try to extract from service configuration
+        socket_path=$(systemctl show ospd-openvas --property=ExecStart | grep -o -- "--socket-path=.*" | cut -d' ' -f1 | cut -d'=' -f2)
+        if [ -n "$socket_path" ] && [ -S "$socket_path" ]; then
+            echo "$socket_path"
+            return 0
+        fi
+    fi
+
+    # If nothing found, return default path
+    echo "/var/run/ospd/ospd.sock"
     return 1
 }
 
-# Function to convert Python files to Unix format, excluding venv and site-packages
-convert_python_files() {
-    log_status "Converting Python files to Unix format..."
-    find . -type f -name "*.py" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
-}
-
-# Function to convert shell script files to Unix format, excluding venv and site-packages
-convert_shell_scripts() {
-    log_status "Converting shell scripts to Unix format..."
-    find . -type f -name "*.sh" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
+# Test OpenVAS connection
+test_openvas_connection() {
+    section "TESTING OPENVAS CONNECTION"
+    
+    # Check if gvm-cli is available
+    if ! command -v gvm-cli &> /dev/null; then
+        log_error "gvm-cli not found. OpenVAS may not be properly installed."
+        draw_box "Missing Component" "You need to install the GVM command line interface.\nTry: sudo apt install gvm-tools"
+        return 1
+    fi
+    
+    log_info "Attempting to connect to OpenVAS/GVM..."
+    
+    # Source credentials from our encrypted storage if available
+    if [ -f ~/.config/ai_mal/credentials.enc ] && [ -f ~/.config/ai_mal/.key ]; then
+        log_info "Using encrypted credentials from ~/.config/ai_mal/credentials.enc"
+        PASSWORD=$(openssl enc -aes-256-cbc -d -in ~/.config/ai_mal/credentials.enc -pass file:~/.config/ai_mal/.key 2>/dev/null | grep GVM_PASSWORD | cut -d= -f2 | tr -d '"')
+        if [ -n "$PASSWORD" ]; then
+            GVM_PASSWORD="$PASSWORD"
+            export GVM_PASSWORD
+        fi
+    # Legacy support for unencrypted credentials
+    elif [ -f ~/.config/ai_mal/credentials ]; then
+        source ~/.config/ai_mal/credentials
+        log_info "Using credentials from ~/.config/ai_mal/credentials"
+    fi
+    
+    # Comprehensive test for socket path with priority order
+    log_info "Searching for GVM socket..."
+    SOCKET_PATH=""
+    
+    # Priority 1: Check the most common locations by distribution
+    for path in "/var/run/gvmd/gvmd.sock" "/run/gvmd/gvmd.sock" "/var/run/gvmd.sock" "/run/gvmd.sock"; do
+        if [ -S "$path" ]; then
+            SOCKET_PATH="$path"
+            log_success "Found GVM socket at: $SOCKET_PATH"
+            break
+        fi
+    done
+    
+    # Priority 2: Check system service files if not found yet
+    if [ -z "$SOCKET_PATH" ]; then
+        log_info "Checking service configuration for socket path..."
+        # Check gvmd service file
+        GVMD_SOCK=$(systemctl show gvmd --property=ExecStart 2>/dev/null | grep -o -- "--listen=.*/.*\.sock" | cut -d'=' -f2)
+        if [ -n "$GVMD_SOCK" ] && [ -S "$GVMD_SOCK" ]; then
+            SOCKET_PATH="$GVMD_SOCK"
+            log_success "Found GVM socket from service configuration: $SOCKET_PATH"
+        fi
+    fi
+    
+    # Priority 3: Last resort - search the filesystem
+    if [ -z "$SOCKET_PATH" ]; then
+        log_info "Searching filesystem for GVM socket..."
+        FOUND_SOCK=$(find /var/run /run -name "gvmd*.sock" -type s 2>/dev/null | head -1)
+        if [ -n "$FOUND_SOCK" ]; then
+            SOCKET_PATH="$FOUND_SOCK"
+            log_success "Found GVM socket by filesystem search: $SOCKET_PATH"
+        fi
+    fi
+    
+    if [ -z "$SOCKET_PATH" ]; then
+        log_error "GVM socket not found. OpenVAS services may not be running."
+        log_info "Attempting to start OpenVAS services..."
+        
+        # Try to start the services
+        for service in ospd-openvas gvmd; do
+            if systemctl is-active $service >/dev/null 2>&1; then
+                log_info "$service is already running"
+            else
+                log_info "Starting $service..."
+                systemctl start $service
+                sleep 2
+                if systemctl is-active $service >/dev/null 2>&1; then
+                    log_success "Successfully started $service"
+                else
+                    log_error "Failed to start $service"
+                fi
+            fi
+        done
+        
+        # Check again after trying to start services
+        sleep 5
+        for path in "/var/run/gvmd/gvmd.sock" "/run/gvmd/gvmd.sock" "/var/run/gvmd.sock" "/run/gvmd.sock"; do
+            if [ -S "$path" ]; then
+                SOCKET_PATH="$path"
+                log_success "Found GVM socket after service restart: $SOCKET_PATH"
+                break
+            fi
+        done
+        
+        if [ -z "$SOCKET_PATH" ]; then
+            log_error "Still could not find GVM socket. Check OpenVAS installation."
+            draw_box "OpenVAS Connection Failed" "GVM socket not found after service restart.\n\nService Status:\nospd-openvas: $OSPD_STATUS\ngvmd: $GVMD_STATUS\n\nDetected socket: $SOCKET_PATH\n\nNext steps:\n1. Run 'sudo gvm-check-setup' for diagnostics\n2. Run 'sudo gvm-setup' if first-time setup\n3. Check logs with 'journalctl -u gvmd -u ospd-openvas'"
+            return 1
+        fi
+    fi
+    
+    # Test connection using stored password
+    if [ -n "$GVM_PASSWORD" ]; then
+        log_status "Attempting connection with stored credentials..."
+        CONNECTION_OUTPUT=$(gvm-cli socket --socketpath="$SOCKET_PATH" --gmp-username=admin --gmp-password="$GVM_PASSWORD" --xml "<get_version/>" 2>&1)
+        if [ $? -eq 0 ]; then
+            log_success "Successfully connected to OpenVAS/GVM using stored credentials"
+            VERSION=$(echo "$CONNECTION_OUTPUT" | grep -oP '(?<=<version>)[^<]+' | head -1)
+            if [ -n "$VERSION" ]; then
+                log_info "OpenVAS/GVM version: $VERSION"
+            fi
+            return 0
+        else
+            log_warning "Could not connect using stored credentials. Trying alternative methods..."
+            CONNECTION_ERROR=$(echo "$CONNECTION_OUTPUT" | grep -i "error" | head -1)
+            if [ -n "$CONNECTION_ERROR" ]; then
+                log_warning "Connection error: $CONNECTION_ERROR"
+            fi
+        fi
+    fi
+    
+    # Try with default admin password
+    log_status "Attempting connection with default 'admin' password..."
+    CONNECTION_OUTPUT=$(gvm-cli socket --socketpath="$SOCKET_PATH" --gmp-username=admin --gmp-password="admin" --xml "<get_version/>" 2>&1)
+    if [ $? -eq 0 ]; then
+        log_success "Successfully connected to OpenVAS/GVM using default 'admin' password"
+        VERSION=$(echo "$CONNECTION_OUTPUT" | grep -oP '(?<=<version>)[^<]+' | head -1)
+        if [ -n "$VERSION" ]; then
+            log_info "OpenVAS/GVM version: $VERSION"
+        fi
+        
+        # Update stored credentials
+        GVM_PASSWORD="admin"
+        export GVM_PASSWORD
+        save_credentials
+        return 0
+    fi
+    
+    # Try without password (some installations)
+    log_status "Attempting connection without password..."
+    CONNECTION_OUTPUT=$(gvm-cli socket --socketpath="$SOCKET_PATH" --gmp-username=admin --xml "<get_version/>" 2>&1)
+    if [ $? -eq 0 ]; then
+        log_success "Successfully connected to OpenVAS/GVM without password"
+        VERSION=$(echo "$CONNECTION_OUTPUT" | grep -oP '(?<=<version>)[^<]+' | head -1)
+        if [ -n "$VERSION" ]; then
+            log_info "OpenVAS/GVM version: $VERSION"
+        fi
+        return 0
+    fi
+    
+    # Final attempt: run the get_openvas_password function to extract and try again
+    log_info "Attempting to retrieve password from system..."
+    get_openvas_password
+    
+    if [ -n "$GVM_PASSWORD" ]; then
+        log_status "Attempting connection with newly retrieved password..."
+        CONNECTION_OUTPUT=$(gvm-cli socket --socketpath="$SOCKET_PATH" --gmp-username=admin --gmp-password="$GVM_PASSWORD" --xml "<get_version/>" 2>&1)
+        if [ $? -eq 0 ]; then
+            log_success "Successfully connected to OpenVAS/GVM with newly retrieved password"
+            VERSION=$(echo "$CONNECTION_OUTPUT" | grep -oP '(?<=<version>)[^<]+' | head -1)
+            if [ -n "$VERSION" ]; then
+                log_info "OpenVAS/GVM version: $VERSION"
+            fi
+            return 0
+        else
+            CONNECTION_ERROR=$(echo "$CONNECTION_OUTPUT" | grep -i "error" | head -1)
+            if [ -n "$CONNECTION_ERROR" ]; then
+                log_warning "Connection error with new password: $CONNECTION_ERROR"
+            fi
+        fi
+    fi
+    
+    # If we get here, all attempts failed
+    log_error "Failed to connect to OpenVAS/GVM after multiple attempts."
+    log_error "Try running 'sudo gvm-check-setup' to diagnose issues."
+    log_error "You may need to initialize OpenVAS with 'sudo gvm-setup'."
+    
+    # Determine and report active services
+    OSPD_STATUS=$(systemctl is-active ospd-openvas)
+    GVMD_STATUS=$(systemctl is-active gvmd)
+    
+    draw_box "OpenVAS Connection Failed" "Please ensure OpenVAS is properly installed and running.\n\nService Status:\nospd-openvas: $OSPD_STATUS\ngvmd: $GVMD_STATUS\n\nDetected socket: $SOCKET_PATH\n\nNext steps:\n1. Run 'sudo gvm-check-setup' for diagnostics\n2. Run 'sudo gvm-setup' if first-time setup\n3. Check logs with 'journalctl -u gvmd -u ospd-openvas'"
+    return 1
 }
 
 # Function to check if Metasploit is installed
@@ -683,23 +1071,14 @@ check_msf_installed() {
         echo "[+] Metasploit Framework is installed"
         return 0
     else
-        echo "[!] Metasploit Framework not found"
-        if [ "$IS_KALI" = true ]; then
-            echo "[+] Installing Metasploit Framework..."
-            apt-get update && apt-get install -y metasploit-framework
-            return $?
-        else
-            echo "[!] Please install Metasploit Framework manually"
-            return 1
-        fi
+        echo "[!] Metasploit Framework is not installed"
+        return 1
     fi
 }
 
 # OpenVAS / Greenbone Vulnerability Management setup
 if [ "$INSTALL_OPENVAS" = true ] || [ -z "$INSTALL_OPENVAS" ]; then
-    echo "╔═════════════════════════════════════════════════════════════════════╗"
-    echo "║                 Installing OpenVAS Scanner                          ║"
-    echo "╚═════════════════════════════════════════════════════════════════════╝"
+    section "Installing OpenVAS Scanner"
     
     # Install all prerequisites from INSTALL.md
     echo "[+] Installing OpenVAS prerequisites..."
@@ -870,6 +1249,21 @@ EOF
     echo "export GVM_PASSWORD='$GVM_PASSWORD'" >> ~/.bashrc
     export GVM_USERNAME=admin
     export GVM_PASSWORD="$GVM_PASSWORD"
+    
+    # Also add to /etc/environment for system-wide persistence
+    if ! grep -q "GVM_USERNAME=" /etc/environment; then
+        echo "GVM_USERNAME=admin" >> /etc/environment
+    else
+        sed -i "s/GVM_USERNAME=.*/GVM_USERNAME=admin/" /etc/environment
+    fi
+
+    if ! grep -q "GVM_PASSWORD=" /etc/environment; then
+        echo "GVM_PASSWORD=\"$GVM_PASSWORD\"" >> /etc/environment
+    else
+        sed -i "s/GVM_PASSWORD=.*/GVM_PASSWORD=\"$GVM_PASSWORD\"/" /etc/environment
+    fi
+
+    echo "[+] OpenVAS credentials saved system-wide"
     
     # Configure socket permissions - check for Kali Linux vs Ubuntu/Debian user names
     if [ -e "/run/ospd/ospd.sock" ]; then
