@@ -154,21 +154,47 @@ class VulnerabilityScanner:
         
         # Check if Redis is properly set up
         redis_ok = False
-        if hasattr(self, 'redis_socket') and os.path.exists(self.redis_socket):
-            try:
-                # Check if Redis has NVTs loaded
-                import redis
-                r = redis.Redis(unix_socket_path=self.redis_socket)
-                if r.ping():
-                    redis_ok = True
-                    self.logger.info("Redis connection successful")
-                    console.print("[green]Redis connection successful[/green]")
-                else:
-                    self.logger.warning("Redis ping failed")
-                    console.print("[yellow]Redis ping failed[/yellow]")
-            except Exception as e:
-                self.logger.error(f"Error connecting to Redis: {str(e)}")
-                console.print(f"[red]Error connecting to Redis: {str(e)}[/red]")
+        redis_socket_paths = [
+            "/run/redis-openvas/redis.sock",
+            "/var/run/redis-openvas/redis.sock",
+            "/var/run/redis/redis.sock",
+            "/run/redis/redis.sock",
+            "/tmp/redis.sock"
+        ]
+        
+        # Find the first available Redis socket
+        for redis_path in redis_socket_paths:
+            if os.path.exists(redis_path):
+                self.redis_socket = redis_path
+                self.logger.info(f"Found Redis socket at {redis_path}")
+                console.print(f"[green]Found Redis socket at {redis_path}[/green]")
+                try:
+                    # Check if Redis has NVTs loaded
+                    import redis
+                    r = redis.Redis(unix_socket_path=redis_path)
+                    if r.ping():
+                        redis_ok = True
+                        self.logger.info("Redis connection successful")
+                        console.print("[green]Redis connection successful[/green]")
+                        break
+                    else:
+                        self.logger.warning(f"Redis ping failed for {redis_path}")
+                        console.print(f"[yellow]Redis ping failed for {redis_path}[/yellow]")
+                except Exception as e:
+                    self.logger.error(f"Error connecting to Redis at {redis_path}: {str(e)}")
+                    console.print(f"[yellow]Error connecting to Redis at {redis_path}: {str(e)}[/yellow]")
+        
+        if not redis_ok:
+            self.logger.warning("Could not connect to Redis for OpenVAS")
+            console.print("[yellow]Could not connect to Redis for OpenVAS[/yellow]")
+            console.print("[blue]Try these commands to fix Redis for OpenVAS:[/blue]")
+            console.print("1. sudo systemctl restart redis-server@openvas")
+            console.print("2. Check if Redis socket exists: ls -la /run/redis-openvas/")
+            console.print("3. Create socket dir if needed: sudo mkdir -p /run/redis-openvas && sudo chown redis:redis /run/redis-openvas")
+            console.print("4. Edit Redis config: sudo nano /etc/redis/redis-openvas.conf")
+            console.print("5. Add line: unixsocket /run/redis-openvas/redis.sock")
+            console.print("6. Add line: unixsocketperm 770")
+            console.print("7. Restart Redis: sudo systemctl restart redis-server@openvas")
         
         # If socket not found or services not running, give guidance
         if not socket_found:

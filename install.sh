@@ -3,23 +3,6 @@
 # AI_MAL Installation Script
 # This script installs the AI_MAL tool and makes it available as a system command
 
-# Logging functions with color
-log_info() {
-    echo -e "\033[0;34m[INFO]\033[0m $1"
-}
-
-log_status() {
-    echo -e "\033[0;36m[STATUS]\033[0m $1"
-}
-
-log_warning() {
-    echo -e "\033[0;33m[WARNING]\033[0m $1"
-}
-
-log_error() {
-    echo -e "\033[0;31m[ERROR]\033[0m $1"
-}
-
 # Colors for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -42,6 +25,10 @@ log_error() {
 
 log_status() {
     echo -e "${BLUE}[*]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
 }
 
 # Check if running as root
@@ -75,27 +62,6 @@ else
     OPENVAS_USER="gvm"
     OPENVAS_GROUP="gvm"
 fi
-
-# Function to check if Ollama is running
-check_ollama_running() {
-  max_attempts=10
-  attempt=1
-  echo "[+] Verifying Ollama service is running..."
-  
-  while [ $attempt -le $max_attempts ]; do
-    if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
-      echo "[+] Ollama service is running!"
-      return 0
-    else
-      echo "[*] Waiting for Ollama service to start (attempt $attempt/$max_attempts)..."
-      sleep 3
-      attempt=$((attempt+1))
-    fi
-  done
-  
-  echo "[!] Ollama service did not start properly after multiple attempts."
-  return 1
-}
 
 # Install Python dependencies
 echo "[+] Installing Python dependencies..."
@@ -175,48 +141,46 @@ if ! check_openvas_installed; then
         # Check if setup has been run before
         if [ ! -f /var/lib/gvm/GVM_VERSION ]; then
             echo "[+] Running OpenVAS setup (this may take 10-15 minutes)..."
+            # Capture the full output to search for password
             gvm-setup > /tmp/gvm-setup.log 2>&1 || echo "[!] Warning: gvm-setup returned non-zero exit code"
+            
+            # Immediately check for password in the setup output
+            if grep -q "Password:" /tmp/gvm-setup.log; then
+                GVM_PASSWORD=$(grep "Password:" /tmp/gvm-setup.log | tail -1 | awk '{print $NF}' | tr -d '\r\n')
+                if [ -n "$GVM_PASSWORD" ]; then
+                    echo "[+] Found OpenVAS password in setup log: $GVM_PASSWORD"
+                fi
+            fi
         else
             echo "[+] OpenVAS already set up, checking status..."
             gvm-check-setup > /tmp/gvm-check.log 2>&1
         fi
         
-        # Extract password from logs
-        if [ -f /var/log/gvm/gvm-setup.log ]; then
-            GVM_PASSWORD=$(grep "User created with password" /var/log/gvm/gvm-setup.log | awk -F"'" '{print $2}')
-        elif [ -f /tmp/gvm-setup.log ]; then
-            GVM_PASSWORD=$(grep "User created with password" /tmp/gvm-setup.log | awk -F"'" '{print $2}')
-        fi
-        
-        # Use default if not found
+        # If password not set yet, try our comprehensive extraction function
         if [ -z "$GVM_PASSWORD" ]; then
-            echo "[!] Could not find OpenVAS password in logs, using default"
-            GVM_PASSWORD="admin"
-        else
-            echo "[+] Found OpenVAS password in logs"
+            # Use the extraction function to find the password in various logs
+            GVM_PASSWORD=$(get_openvas_password)
         fi
         
-        # Export password for the scanner to use
+        # At this point, GVM_PASSWORD should contain the password or "admin" as fallback
+        if [ "$GVM_PASSWORD" = "admin" ]; then
+            echo "[!] Warning: Could not find the generated password, using default 'admin'"
+            echo "[!] This may not work if OpenVAS generated a random password"
+        else
+            echo "[+] Using OpenVAS admin password: $GVM_PASSWORD"
+        fi
+        
+        # Save the password to environment and bashrc for persistence
         export GVM_PASSWORD
-        echo "export GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.bashrc
-        
-        # Set socket permissions based on OS (Kali uses _gvm, Ubuntu uses gvm)
-        if getent passwd _gvm > /dev/null; then
-            echo "[+] Setting socket permissions for Kali Linux (_gvm user)..."
-            chmod 666 /run/ospd/ospd.sock 2>/dev/null || true
-            chown _gvm:_gvm /run/ospd/ospd.sock 2>/dev/null || true
-        else
-            echo "[+] Setting socket permissions for Ubuntu/Debian (gvm user)..."
-            chmod 666 /run/ospd/ospd.sock 2>/dev/null || true
-            chown gvm:gvm /run/ospd/ospd.sock 2>/dev/null || true
+        if ! grep -q "GVM_PASSWORD=" ~/.bashrc || ! grep -q "$GVM_PASSWORD" ~/.bashrc; then
+            # Remove any existing GVM_PASSWORD lines to avoid duplication
+            sed -i '/GVM_PASSWORD=/d' ~/.bashrc
+            # Add the new password to bashrc
+            echo "export GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.bashrc
         fi
         
-        # Add sudoers entry for ospd-openvas
-        if getent passwd _gvm > /dev/null; then
-            echo "_gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" > /etc/sudoers.d/ospd-openvas
-        else
-            echo "gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" > /etc/sudoers.d/ospd-openvas
-        fi
+        # Set socket permissions
+        check_openvas_socket
         
         # Start services
         echo "[+] Starting OpenVAS services..."
@@ -231,18 +195,26 @@ else
     log_status "OpenVAS/Greenbone Vulnerability Manager is already installed"
 fi
 
-# Check and set OpenVAS socket permissions
-check_openvas_socket
-
-# Get OpenVAS password
-GVM_PASSWORD=$(get_openvas_password)
-log_info "OpenVAS admin password: $GVM_PASSWORD"
-
-# Add OpenVAS credentials to environment
-log_status "Setting up OpenVAS credentials in environment..."
-echo "export GVM_USERNAME=admin" >> ~/.bashrc
-echo "export GVM_PASSWORD='$GVM_PASSWORD'" >> ~/.bashrc
-source ~/.bashrc
+# Verify the OpenVAS setup is complete
+log_status "Verifying OpenVAS configuration..."
+# Only run if we don't have a password yet (first install)
+if [ -z "$GVM_PASSWORD" ]; then
+    # Extract password using our comprehensive function
+    GVM_PASSWORD=$(get_openvas_password)
+    log_info "Extracted OpenVAS admin password: $GVM_PASSWORD"
+    
+    # Save to environment for this session and future ones
+    export GVM_PASSWORD
+    if ! grep -q "GVM_PASSWORD=" ~/.bashrc || ! grep -q "$GVM_PASSWORD" ~/.bashrc; then
+        # Clean up existing entries to avoid duplicates
+        sed -i '/GVM_PASSWORD=/d' ~/.bashrc
+        echo "export GVM_USERNAME=admin" >> ~/.bashrc
+        echo "export GVM_PASSWORD=\"$GVM_PASSWORD\"" >> ~/.bashrc
+        log_info "Saved OpenVAS credentials to .bashrc"
+    fi
+else
+    log_info "Using existing OpenVAS password: $GVM_PASSWORD"
+fi
 
 # Verify OpenVAS connection
 log_status "Verifying OpenVAS service..."
@@ -272,27 +244,62 @@ fi
 check_msf_installed
 
 # Install and setup Ollama for AI features
-if ! check_ollama_installed; then
-    install_ollama
+echo "[+] Setting up Ollama for AI features..."
+if command -v ollama >/dev/null 2>&1; then
+    echo "[+] Ollama is already installed"
+else
+    echo "[+] Installing Ollama..."
+    # Use the official install script
+    if curl -fsSL https://ollama.com/install.sh | sh; then
+        echo "[+] Ollama installation successful"
+    else
+        echo "[!] Error: Ollama installation failed"
+        echo "[!] You'll need to manually install Ollama to use AI features:"
+        echo "    curl -fsSL https://ollama.com/install.sh | sh"
+        OLLAMA_INSTALLED=false
+    fi
 fi
 
-# Make sure Ollama is running
-if start_ollama; then
-    echo "[+] Downloading artifish/llama3.2-uncensored model (this may take a while)..."
-    ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1
+# Only try to start and pull models if Ollama was successfully installed
+if command -v ollama >/dev/null 2>&1; then
+    echo "[+] Starting Ollama service..."
+    # Try to start Ollama service
+    nohup ollama serve > /tmp/ollama.log 2>&1 &
     
-    # Ask if user wants to download additional models
-    echo "[?] Do you want to download the backup AI model qwen2.5-coder:7b (will use ~3GB) (y/n)"
-    read -r response
-    if [[ "$response" == "y" ]]; then
-        echo "[+] Downloading additional AI model..."
-        ollama pull qwen2.5-coder:7b > /dev/null 2>&1
+    # Wait for service to start (max 30 seconds)
+    echo "[+] Waiting for Ollama service to initialize..."
+    for i in {1..30}; do
+        if curl -s localhost:11434/api/tags >/dev/null 2>&1; then
+            OLLAMA_RUNNING=true
+            echo "[+] Ollama service started successfully"
+            break
+        fi
+        sleep 1
+        echo "[*] Waiting for Ollama service to start (attempt $i/30)..."
+    done
+    
+    # Only try to pull models if service is running
+    if [ "$OLLAMA_RUNNING" = true ]; then
+        echo "[+] Downloading artifish/llama3.2-uncensored model (this may take a while)..."
+        ollama pull artifish/llama3.2-uncensored > /dev/null 2>&1 &
+        echo "[+] Model download started in background"
+        
+        # Ask if user wants to download additional models
+        echo "[?] Do you want to download the backup AI model qwen2.5-coder:7b (will use ~3GB) (y/n)"
+        read -r response
+        if [[ "$response" == "y" ]]; then
+            echo "[+] Downloading additional AI model in background..."
+            ollama pull qwen2.5-coder:7b > /dev/null 2>&1 &
+        fi
+    else
+        echo "[!] Warning: Could not start Ollama service. AI features may not work."
+        echo "[!] To use AI features, you'll need to manually start Ollama:"
+        echo "    sudo ollama serve"
+        echo "    ollama pull artifish/llama3.2-uncensored"
     fi
 else
-    echo "[!] Warning: Could not start Ollama service. AI features may not work."
-    echo "[!] To use AI features, you'll need to manually start Ollama:"
-    echo "    sudo ollama serve"
-    echo "    ollama pull artifish/llama3.2-uncensored"
+    echo "[!] Ollama is not installed. AI features will not be available."
+    echo "[!] To install Ollama, run: curl -fsSL https://ollama.com/install.sh | sh"
 fi
 
 # Make AI_MAL.py executable
@@ -486,7 +493,7 @@ echo ""
 echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
 echo "║                  IMPORTANT: OLLAMA SERVICE STATUS                             ║"
 echo "║                                                                               ║"
-if check_ollama_running; then
+if [ "$OLLAMA_RUNNING" = true ]; then
   echo "║         Ollama service is running properly!                                   ║"
   echo "║                                                                               ║"
   echo "║      AI features will work automatically.                                     ║"
@@ -508,32 +515,33 @@ check_openvas_installed() {
     fi
 }
 
-# Function to convert Python files to Unix format, excluding venv and site-packages
-convert_python_files() {
-    log_status "Converting Python files to Unix format..."
-    find . -type f -name "*.py" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
-}
-
-# Function to convert shell script files to Unix format, excluding venv and site-packages
-convert_shell_scripts() {
-    log_status "Converting shell scripts to Unix format..."
-    find . -type f -name "*.sh" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
-}
-
 # Function to extract OpenVAS admin password from logs or output
 get_openvas_password() {
     local password=""
     
-    # Check GVM setup log
-    if [ -f "/var/log/gvm/gvm-setup.log" ]; then
-        password=$(grep -a "User created with password" /var/log/gvm/gvm-setup.log | tail -1 | grep -o "'.*'" | tr -d "'")
+    # Try different password formats and sources
+    
+    # Format: "Password: 85fa7cd2-d80e-4a45-afe5-22ad16aecd70" (direct output format)
+    if [ -f "/tmp/gvm-setup.log" ]; then
+        password=$(grep -a "Password:" "/tmp/gvm-setup.log" | tail -1 | awk '{print $NF}' | tr -d '\r\n')
         if [ -n "$password" ]; then
-            log_info "Found admin password in gvm-setup.log"
+            log_info "Found admin password in temporary setup log"
+            echo "$password"
             return 0
         fi
     fi
     
-    # Check gvmd log
+    # Format: "User created with password '85fa7cd2-d80e-4a45-afe5-22ad16aecd70'" (gvm-setup.log format)
+    if [ -f "/var/log/gvm/gvm-setup.log" ]; then
+        password=$(grep -a "User created with password" /var/log/gvm/gvm-setup.log | tail -1 | grep -o "'.*'" | tr -d "'")
+        if [ -n "$password" ]; then
+            log_info "Found admin password in gvm-setup.log"
+            echo "$password"
+            return 0
+        fi
+    fi
+    
+    # Format: "Created admin user with password '85fa7cd2-d80e-4a45-afe5-22ad16aecd70'" (gvmd.log format)
     if [ -f "/var/log/gvm/gvmd.log" ]; then
         password=$(grep -a "Created admin user with password" /var/log/gvm/gvmd.log | tail -1 | grep -o "'.*'" | tr -d "'")
         if [ -n "$password" ]; then
@@ -543,19 +551,28 @@ get_openvas_password() {
         fi
     fi
     
-    # Check output of gvm-setup command
+    # Try to extract from live gvm-setup output
     if command -v gvm-setup >/dev/null 2>&1; then
-        local setup_output=$(sudo gvm-setup 2>&1 || true)
-        password=$(echo "$setup_output" | grep -a "password:" | tail -1 | awk '{print $NF}')
-        if [ -n "$password" ]; then
-            log_info "Found admin password from gvm-setup output"
-            echo "$password"
-            return 0
+        local setup_output=$(sudo gvm-setup 2>&1 | grep -a "password:" || true)
+        if [ -n "$setup_output" ]; then
+            password=$(echo "$setup_output" | tail -1 | grep -o "[a-zA-Z0-9-]\{36\}" || awk '{print $NF}')
+            if [ -n "$password" ]; then
+                log_info "Found admin password from gvm-setup output"
+                echo "$password"
+                return 0
+            fi
         fi
     fi
     
+    # If all else fails, check if it's already in the environment
+    if [ -n "$GVM_PASSWORD" ]; then
+        log_info "Using existing GVM_PASSWORD from environment"
+        echo "$GVM_PASSWORD"
+        return 0
+    fi
+    
     log_warning "Could not find OpenVAS admin password"
-    echo ""
+    echo "admin"
     return 1
 }
 
@@ -566,15 +583,45 @@ check_openvas_socket() {
     # Check both possible socket locations
     if [ -S "/var/run/ospd/ospd.sock" ]; then
         log_info "Found OpenVAS socket at /var/run/ospd/ospd.sock"
+        
+        # Set the correct user/group ownership
+        if id -u _gvm >/dev/null 2>&1; then
+            sudo chown _gvm:_gvm /var/run/ospd/ospd.sock
+            log_info "Set socket ownership to _gvm:_gvm (Kali)"
+        else
+            sudo chown gvm:gvm /var/run/ospd/ospd.sock
+            log_info "Set socket ownership to gvm:gvm (Debian/Ubuntu)"
+        fi
+        
         sudo chmod 666 /var/run/ospd/ospd.sock
         socket_found=true
     fi
     
     if [ -S "/run/ospd/ospd.sock" ]; then
         log_info "Found OpenVAS socket at /run/ospd/ospd.sock"
+        
+        # Set the correct user/group ownership
+        if id -u _gvm >/dev/null 2>&1; then
+            sudo chown _gvm:_gvm /run/ospd/ospd.sock
+            log_info "Set socket ownership to _gvm:_gvm (Kali)"
+        else
+            sudo chown gvm:gvm /run/ospd/ospd.sock
+            log_info "Set socket ownership to gvm:gvm (Debian/Ubuntu)"
+        fi
+        
         sudo chmod 666 /run/ospd/ospd.sock
         socket_found=true
     fi
+    
+    # Add sudoers entry for ospd-openvas
+    if id -u _gvm >/dev/null 2>&1; then
+        log_info "Adding sudoers entry for _gvm (Kali)"
+        echo "_gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" | sudo tee /etc/sudoers.d/ospd-openvas > /dev/null
+    else
+        log_info "Adding sudoers entry for gvm (Debian/Ubuntu)"
+        echo "gvm ALL=(ALL) NOPASSWD: /usr/sbin/ospd-openvas" | sudo tee /etc/sudoers.d/ospd-openvas > /dev/null
+    fi
+    sudo chmod 440 /etc/sudoers.d/ospd-openvas
     
     if [ "$socket_found" = false ]; then
         log_warning "OpenVAS socket not found. Services may need to be started."
@@ -618,6 +665,18 @@ test_openvas_connection() {
     return 1
 }
 
+# Function to convert Python files to Unix format, excluding venv and site-packages
+convert_python_files() {
+    log_status "Converting Python files to Unix format..."
+    find . -type f -name "*.py" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
+}
+
+# Function to convert shell script files to Unix format, excluding venv and site-packages
+convert_shell_scripts() {
+    log_status "Converting shell scripts to Unix format..."
+    find . -type f -name "*.sh" -not -path "./venv/*" -not -path "*/site-packages/*" -print0 | xargs -0 dos2unix -q 2>/dev/null || true
+}
+
 # Function to check if Metasploit is installed
 check_msf_installed() {
     if command -v msfconsole &> /dev/null; then
@@ -636,63 +695,6 @@ check_msf_installed() {
     fi
 }
 
-# Function to check if Ollama is installed
-check_ollama_installed() {
-    if command -v ollama &> /dev/null; then
-        echo "[+] Ollama is installed"
-        return 0
-    else
-        echo "[!] Ollama not found, will attempt to install"
-        return 1
-    fi
-}
-
-# Function to install Ollama
-install_ollama() {
-    echo "[+] Installing Ollama..."
-    if curl -fsSL https://ollama.com/install.sh | sh; then
-        echo "[+] Ollama installation successful"
-        return 0
-    else
-        echo "[!] Ollama installation failed"
-        return 1
-    fi
-}
-
-# Function to check if Ollama service is running
-check_ollama_running() {
-    if pgrep -x "ollama" > /dev/null; then
-        return 0
-    elif curl -s localhost:11434/api/tags >/dev/null 2>&1; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Start ollama in a more reliable way
-start_ollama() {
-    if ! check_ollama_running; then
-        echo "[+] Starting Ollama service..."
-        nohup ollama serve > /tmp/ollama.log 2>&1 &
-        
-        # Wait for service to start
-        echo "[+] Waiting for Ollama service to initialize..."
-        for i in {1..30}; do
-            if curl -s localhost:11434/api/tags >/dev/null 2>&1; then
-                echo "[+] Ollama service started successfully"
-                return 0
-            fi
-            sleep 1
-        done
-        echo "[!] Timed out waiting for Ollama service"
-        return 1
-    else
-        echo "[+] Ollama service is already running"
-        return 0
-    fi
-}
-
 # OpenVAS / Greenbone Vulnerability Management setup
 if [ "$INSTALL_OPENVAS" = true ] || [ -z "$INSTALL_OPENVAS" ]; then
     echo "╔═════════════════════════════════════════════════════════════════════╗"
@@ -707,34 +709,80 @@ if [ "$INSTALL_OPENVAS" = true ] || [ -z "$INSTALL_OPENVAS" ]; then
         libsnmp-dev libgcrypt20-dev redis-server libbsd-dev libcurl4-gnutls-dev \
         krb5-multidev cmake doxygen
     
+    # Enhance Redis setup for OpenVAS
     echo "[+] Setting up Redis for OpenVAS..."
-    # Copy Redis config from template
+    # Create Redis configuration for OpenVAS if it doesn't exist
     if [ -f "/etc/redis/redis-openvas.conf" ]; then
         echo "[*] Redis OpenVAS config already exists"
     else
         echo "[+] Creating Redis OpenVAS config..."
-        cp ./openvas-scanner-23.16.1/config/redis-openvas.conf /etc/redis/
+        cat > /etc/redis/redis-openvas.conf << EOF
+unixsocket /run/redis-openvas/redis.sock
+unixsocketperm 770
+port 0
+timeout 0
+databases 128
+EOF
         chown redis:redis /etc/redis/redis-openvas.conf
     fi
-    
-    # Ensure Redis socket directory exists
+
+    # Ensure Redis socket directory exists with proper permissions
     mkdir -p /run/redis-openvas
     chown redis:redis /run/redis-openvas
-    
+
+    # Set the correct group based on OS detection
+    if id -u _gvm >/dev/null 2>&1; then
+        # Kali Linux uses _gvm
+        usermod -a -G redis _gvm
+    else
+        # Ubuntu/Debian uses gvm
+        usermod -a -G redis gvm
+    fi
+
     # Configure OpenVAS to use the Redis socket
     mkdir -p /etc/openvas
     echo "db_address = /run/redis-openvas/redis.sock" > /etc/openvas/openvas.conf
-    
-    # Start the Redis service for OpenVAS
+
+    # Stop any running Redis instances
+    systemctl stop redis-server 2>/dev/null || true
+    systemctl stop redis-server@openvas 2>/dev/null || true
+
+    # Start Redis with the OpenVAS configuration
     echo "[+] Starting Redis for OpenVAS..."
     systemctl start redis-server@openvas.service
     systemctl enable redis-server@openvas.service
-    
-    if ! systemctl is-active --quiet redis-server@openvas.service; then
-        echo "[!] Warning: Redis service for OpenVAS failed to start"
-        echo "    Starting in standard mode instead..."
+
+    # Verify Redis is running with the correct socket
+    if [ -S "/run/redis-openvas/redis.sock" ]; then
+        echo "[+] Redis socket created successfully"
+    else
+        echo "[!] Redis socket not created, trying alternative configuration..."
+        # Start Redis in standard mode as fallback
         systemctl start redis-server
         systemctl enable redis-server
+        
+        # Check if we need to modify the main Redis config
+        if ! grep -q "unixsocket /run/redis-openvas/redis.sock" /etc/redis/redis.conf; then
+            echo "[+] Updating main Redis config to support OpenVAS..."
+            cp /etc/redis/redis.conf /etc/redis/redis.conf.bak
+            cat >> /etc/redis/redis.conf << EOF
+
+# OpenVAS configuration
+unixsocket /run/redis-openvas/redis.sock
+unixsocketperm 770
+EOF
+            systemctl restart redis-server
+        fi
+    fi
+
+    # Wait a moment for socket creation
+    sleep 5
+
+    # Final check for Redis socket
+    if [ -S "/run/redis-openvas/redis.sock" ]; then
+        echo "[+] Redis configured successfully for OpenVAS"
+    else
+        echo "[!] Warning: Redis socket for OpenVAS not found. Scanning may not work properly."
     fi
 
     # Building and installing OpenVAS from source if not already installed
